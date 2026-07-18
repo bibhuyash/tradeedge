@@ -53,7 +53,7 @@ func NewCandleSeries(
 	if err := subscription.Validate(); err != nil || len(candles) > subscription.Lookback {
 		return CandleSeries{}, ErrInvalidCandleFrame
 	}
-	if subscription.Required && len(candles) != subscription.Lookback {
+	if subscription.Required && len(candles) == 0 {
 		return CandleSeries{}, ErrInvalidCandleFrame
 	}
 	copied := append([]marketmodel.CompletedCandleEvent(nil), candles...)
@@ -117,7 +117,7 @@ func NewCandleFrame(spec CandleFrameSpec) (CandleFrame, error) {
 		series, found := byRole[subscription.Role]
 		if !found || series.InstrumentID != subscription.InstrumentID ||
 			series.Interval != subscription.Interval ||
-			(subscription.Required && len(series.Candles) != subscription.Lookback) {
+			(subscription.Required && len(series.Candles) == 0) {
 			return CandleFrame{}, ErrInvalidCandleFrame
 		}
 		validatedSeries, err := NewCandleSeries(subscription, series.Candles)
