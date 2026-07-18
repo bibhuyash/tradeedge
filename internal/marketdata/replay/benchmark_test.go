@@ -15,7 +15,8 @@ func BenchmarkReplay1000Events(b *testing.B) {
 	base := time.Date(2026, 7, 18, 4, 0, 0, 0, time.UTC)
 	repository := storage.NewMemoryRepository()
 	writer, _ := repository.Create(context.Background(), storage.DraftManifest{
-		MasterVersion: "benchmark", Source: "memory", OrderingVersion: "v1", CreatedAt: base,
+		MasterVersion: "benchmark", CalendarVersion: "calendar-v1",
+		Source: "memory", OrderingVersion: "v1", CreatedAt: base,
 	})
 	for index := 0; index < 1000; index++ {
 		id, _ := domain.InstrumentIDFromCanonicalKey(fmt.Sprintf("instrument-%03d", index%250))

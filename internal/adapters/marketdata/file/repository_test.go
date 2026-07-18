@@ -11,6 +11,7 @@ import (
 	"github.com/bibhuyash/tradeedge/internal/domain"
 	"github.com/bibhuyash/tradeedge/internal/marketdata"
 	"github.com/bibhuyash/tradeedge/internal/marketdata/model"
+	"github.com/bibhuyash/tradeedge/internal/marketdata/replay"
 	"github.com/bibhuyash/tradeedge/internal/marketdata/storage"
 )
 
@@ -18,8 +19,9 @@ func TestRepositoryRoundTripAndChecksumValidation(t *testing.T) {
 	root := t.TempDir()
 	repository := Repository{Root: root}
 	writer, err := repository.Create(context.Background(), storage.DraftManifest{
-		MasterVersion: "v1", InstrumentMaster: []byte("{\"version\":\"v1\"}\n"),
-		Source: "fixture", OrderingVersion: "v1", CreatedAt: time.Unix(0, 0),
+		MasterVersion: "v1", CalendarVersion: "calendar-v1",
+		InstrumentMaster: []byte("{\"version\":\"v1\"}\n"),
+		Source:           "fixture", OrderingVersion: "v1", CreatedAt: time.Unix(0, 0),
 	})
 	if err != nil {
 		t.Fatalf("Create() error = %v", err)
@@ -99,6 +101,69 @@ func TestFileSourceReadsVersionedFixture(t *testing.T) {
 	}
 }
 
+func TestPublicationGenerationsIgnoreIncompleteDirectories(t *testing.T) {
+	ctx := context.Background()
+	root := t.TempDir()
+	repository := Repository{Root: root}
+	create := func(source string, parent storage.DatasetID, reason, requestID string) storage.DatasetManifest {
+		writer, err := repository.Create(ctx, storage.DraftManifest{
+			ParentID: parent, MasterVersion: "master-v1", CalendarVersion: "calendar-v1",
+			Source: source, OrderingVersion: "ordering-v1", CreatedAt: time.Now().UTC(),
+			CorrectionReason: reason, RequestID: requestID, Series: "series",
+		})
+		if err != nil {
+			t.Fatalf("Create() error = %v", err)
+		}
+		if err := writer.Append(ctx, testQuote(t)); err != nil {
+			t.Fatalf("Append() error = %v", err)
+		}
+		manifest, err := writer.Commit(ctx)
+		if err != nil {
+			t.Fatalf("Commit() error = %v", err)
+		}
+		return manifest
+	}
+	parent := create("root", "", "", "")
+	child := create("child", parent.ID, "correction", "correction-1")
+	first, err := repository.Publish(ctx, storage.PublicationRequest{
+		Series: "series", DatasetID: parent.ID, Action: storage.PublicationPublish,
+		Reason: "initial", RequestID: "publication-1", PublishedAt: time.Unix(1, 0),
+	})
+	if err != nil {
+		t.Fatalf("Publish(parent) error = %v", err)
+	}
+	incomplete := filepath.Join(root, "publications", "series", ".00000000000000000002.tmp")
+	if err := os.MkdirAll(incomplete, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	second, err := repository.Publish(ctx, storage.PublicationRequest{
+		Series: "series", DatasetID: child.ID, ExpectedCurrentID: parent.ID,
+		Action: storage.PublicationPublish, Reason: "correction", RequestID: "publication-2",
+		PublishedAt: time.Unix(2, 0),
+	})
+	if err != nil || second.Generation != first.Generation+1 {
+		t.Fatalf("Publish(child) = %#v, %v", second, err)
+	}
+	current, err := repository.CurrentPublication(ctx, "series")
+	if err != nil || current.DatasetID != child.ID {
+		t.Fatalf("CurrentPublication() = %#v, %v", current, err)
+	}
+	reader, err := repository.Open(ctx, current.DatasetID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer reader.Close()
+	count := 0
+	engine := replay.NewEngine(replay.NewManualClock(time.Unix(0, 0)), nil)
+	if err := engine.Replay(ctx, reader, replay.Request{Rate: replay.MaximumRate()},
+		func(context.Context, model.Event) error {
+			count++
+			return nil
+		}); err != nil || count != 1 {
+		t.Fatalf("Replay() count = %d, error = %v", count, err)
+	}
+}
+
 func testQuote(t *testing.T) model.QuoteEvent {
 	t.Helper()
 	id, _ := domain.InstrumentIDFromCanonicalKey("instrument")
@@ -119,7 +184,7 @@ func BenchmarkRepositoryScan1000Events(b *testing.B) {
 	repository := Repository{Root: b.TempDir()}
 	base := time.Date(2026, 7, 18, 4, 0, 0, 0, time.UTC)
 	writer, err := repository.Create(context.Background(), storage.DraftManifest{
-		MasterVersion: "benchmark", Source: "benchmark",
+		MasterVersion: "benchmark", CalendarVersion: "calendar-v1", Source: "benchmark",
 		OrderingVersion: "v1", CreatedAt: base,
 	})
 	if err != nil {

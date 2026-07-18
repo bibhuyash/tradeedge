@@ -7,6 +7,7 @@ import (
 	"encoding/hex"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"io"
 	"os"
 	"path/filepath"
@@ -15,23 +16,37 @@ import (
 
 	"github.com/bibhuyash/tradeedge/internal/marketdata/model"
 	"github.com/bibhuyash/tradeedge/internal/marketdata/storage"
+	"github.com/bibhuyash/tradeedge/internal/marketdata/telemetry"
 )
 
-const schemaVersion = 1
+const schemaVersion = 2
 
 type Repository struct {
-	Root string
+	Root      string
+	Telemetry telemetry.Recorder
 }
 
-var _ storage.DatasetRepository = Repository{}
+var _ storage.RevisionRepository = Repository{}
 
 func (r Repository) Create(ctx context.Context, draft storage.DraftManifest) (storage.DatasetWriter, error) {
 	if err := ctx.Err(); err != nil {
 		return nil, err
 	}
-	if draft.MasterVersion == "" || draft.Source == "" || draft.OrderingVersion == "" || draft.CreatedAt.IsZero() {
-		return nil, storage.ErrDatasetCorrupt
+	var parent *storage.DatasetManifest
+	if draft.ParentID != "" {
+		reader, err := r.Open(ctx, draft.ParentID)
+		if err != nil {
+			return nil, err
+		}
+		value := reader.Manifest()
+		_ = reader.Close()
+		parent = &value
 	}
+	normalized, err := storage.NormalizeDraft(draft, parent)
+	if err != nil {
+		return nil, err
+	}
+	draft = normalized
 	if err := os.MkdirAll(r.Root, 0o750); err != nil {
 		return nil, err
 	}
@@ -84,8 +99,14 @@ func (r Repository) Open(ctx context.Context, id storage.DatasetID) (storage.Dat
 	if err != nil {
 		return nil, err
 	}
+	decoder := json.NewDecoder(strings.NewReader(string(manifestBytes)))
+	decoder.DisallowUnknownFields()
 	var manifest storage.DatasetManifest
-	if err := json.Unmarshal(manifestBytes, &manifest); err != nil ||
+	if err := decoder.Decode(&manifest); err != nil {
+		return nil, storage.ErrDatasetCorrupt
+	}
+	var trailing any
+	if err := decoder.Decode(&trailing); !errors.Is(err, io.EOF) ||
 		manifest.SchemaVersion != schemaVersion || manifest.ID != id {
 		return nil, storage.ErrDatasetCorrupt
 	}
@@ -100,6 +121,36 @@ func (r Repository) Open(ctx context.Context, id storage.DatasetID) (storage.Dat
 	for _, check := range checks {
 		got, err := fileSHA256(filepath.Join(dir, check.name))
 		if err != nil || got != check.want {
+			r.recorder().ChecksumFailure()
+			return nil, storage.ErrDatasetCorrupt
+		}
+	}
+	if computeDatasetID(manifest) != id {
+		r.recorder().ChecksumFailure()
+		return nil, storage.ErrDatasetCorrupt
+	}
+	if manifest.MasterVersion == "" || manifest.CalendarVersion == "" ||
+		manifest.Source == "" || manifest.OrderingVersion == "" ||
+		len(manifest.SourceSHA256) != sha256.Size*2 ||
+		len(manifest.BuildKey) != sha256.Size*2 || manifest.CreatedAt.IsZero() {
+		return nil, storage.ErrDatasetCorrupt
+	}
+	if manifest.ParentID == "" {
+		if manifest.Revision != 1 {
+			return nil, storage.ErrDatasetCorrupt
+		}
+	} else {
+		if !validDatasetID(manifest.ParentID) || manifest.ParentID == id ||
+			manifest.Revision <= 1 || manifest.CorrectionReason == "" || manifest.RequestID == "" {
+			return nil, storage.ErrDatasetCorrupt
+		}
+		parent, err := r.Open(ctx, manifest.ParentID)
+		if err != nil {
+			return nil, storage.ErrDatasetCorrupt
+		}
+		parentManifest := parent.Manifest()
+		_ = parent.Close()
+		if manifest.Revision != parentManifest.Revision+1 {
 			return nil, storage.ErrDatasetCorrupt
 		}
 	}
@@ -168,6 +219,7 @@ func (w *writer) RecordQuality(ctx context.Context, record model.QualityRecord) 
 }
 
 func (w *writer) Commit(ctx context.Context) (storage.DatasetManifest, error) {
+	started := time.Now()
 	if err := ctx.Err(); err != nil {
 		return storage.DatasetManifest{}, err
 	}
@@ -191,14 +243,31 @@ func (w *writer) Commit(ctx context.Context) (storage.DatasetManifest, error) {
 	if err != nil {
 		return storage.DatasetManifest{}, err
 	}
-	idDigest := sha256.Sum256([]byte(w.draft.MasterVersion + "|" + eventsHash + "|" + qualityHash + "|" + masterHash))
-	id := storage.DatasetID(hex.EncodeToString(idDigest[:]))
 	manifest := storage.DatasetManifest{
-		SchemaVersion: schemaVersion, ID: id, ParentID: w.draft.ParentID,
-		MasterVersion: w.draft.MasterVersion, Source: w.draft.Source,
-		OrderingVersion: w.draft.OrderingVersion, CreatedAt: w.draft.CreatedAt.UTC(),
-		Start: w.start, End: w.end, EventCount: w.eventCount, QualityCount: w.qualityCount,
+		SchemaVersion: schemaVersion, ParentID: w.draft.ParentID,
+		Revision: w.draft.Revision, MasterVersion: w.draft.MasterVersion,
+		CalendarVersion: w.draft.CalendarVersion, Source: w.draft.Source,
+		SourceSHA256: w.draft.SourceSHA256, OrderingVersion: w.draft.OrderingVersion,
+		BuildKey: w.draft.BuildKey, CorrectionReason: w.draft.CorrectionReason,
+		RequestID: w.draft.RequestID, Series: w.draft.Series,
+		CreatedAt: w.draft.CreatedAt.UTC(),
+		Start:     w.start, End: w.end, EventCount: w.eventCount, QualityCount: w.qualityCount,
 		EventsSHA256: eventsHash, QualitySHA256: qualityHash, MasterSHA256: masterHash,
+	}
+	manifest.ID = computeDatasetID(manifest)
+	id := manifest.ID
+	if existing, found, findErr := w.repository.findByBuildKey(context.Background(), manifest.BuildKey); findErr != nil {
+		_ = os.RemoveAll(w.tempDir)
+		return storage.DatasetManifest{}, findErr
+	} else if found {
+		_ = os.RemoveAll(w.tempDir)
+		if existing.EventsSHA256 == manifest.EventsSHA256 &&
+			existing.QualitySHA256 == manifest.QualitySHA256 &&
+			existing.MasterSHA256 == manifest.MasterSHA256 {
+			w.repository.recorder().DatasetCommit("idempotent", time.Since(started), 0)
+			return existing, nil
+		}
+		return storage.DatasetManifest{}, storage.ErrDatasetCorrupt
 	}
 	manifestBytes, err := json.MarshalIndent(manifest, "", "  ")
 	if err != nil {
@@ -211,14 +280,92 @@ func (w *writer) Commit(ctx context.Context) (storage.DatasetManifest, error) {
 	finalDir := filepath.Join(w.repository.Root, string(id))
 	if _, err := os.Stat(finalDir); err == nil {
 		_ = os.RemoveAll(w.tempDir)
-		return storage.DatasetManifest{}, storage.ErrDatasetSealed
+		existing, openErr := w.repository.Open(context.Background(), id)
+		if openErr != nil {
+			return storage.DatasetManifest{}, storage.ErrDatasetCorrupt
+		}
+		existingManifest := existing.Manifest()
+		_ = existing.Close()
+		if existingManifest.BuildKey == manifest.BuildKey &&
+			existingManifest.EventsSHA256 == manifest.EventsSHA256 &&
+			existingManifest.QualitySHA256 == manifest.QualitySHA256 &&
+			existingManifest.MasterSHA256 == manifest.MasterSHA256 {
+			w.repository.recorder().DatasetCommit("idempotent", time.Since(started), 0)
+			return existingManifest, nil
+		}
+		return storage.DatasetManifest{}, storage.ErrDatasetCorrupt
 	} else if !errors.Is(err, os.ErrNotExist) {
 		return storage.DatasetManifest{}, err
 	}
 	if err := os.Rename(w.tempDir, finalDir); err != nil {
 		return storage.DatasetManifest{}, err
 	}
+	w.repository.recorder().DatasetCommit("committed", time.Since(started), datasetBytes(finalDir))
 	return manifest, nil
+}
+
+func (r Repository) recorder() telemetry.Recorder {
+	if r.Telemetry == nil {
+		return telemetry.NopRecorder{}
+	}
+	return r.Telemetry
+}
+
+func datasetBytes(directory string) int64 {
+	var total int64
+	entries, err := os.ReadDir(directory)
+	if err != nil {
+		return 0
+	}
+	for _, entry := range entries {
+		info, err := entry.Info()
+		if err == nil && !info.IsDir() {
+			total += info.Size()
+		}
+	}
+	return total
+}
+
+func computeDatasetID(manifest storage.DatasetManifest) storage.DatasetID {
+	digest := sha256.Sum256([]byte(strings.Join([]string{
+		"v2", string(manifest.ParentID), fmt.Sprintf("%d", manifest.Revision),
+		manifest.MasterVersion, manifest.CalendarVersion, manifest.SourceSHA256,
+		manifest.OrderingVersion, manifest.BuildKey, manifest.EventsSHA256,
+		manifest.QualitySHA256, manifest.MasterSHA256,
+	}, "|")))
+	return storage.DatasetID(hex.EncodeToString(digest[:]))
+}
+
+func (r Repository) findByBuildKey(
+	ctx context.Context,
+	buildKey string,
+) (storage.DatasetManifest, bool, error) {
+	entries, err := os.ReadDir(r.Root)
+	if errors.Is(err, os.ErrNotExist) {
+		return storage.DatasetManifest{}, false, nil
+	}
+	if err != nil {
+		return storage.DatasetManifest{}, false, err
+	}
+	for _, entry := range entries {
+		if err := ctx.Err(); err != nil {
+			return storage.DatasetManifest{}, false, err
+		}
+		id := storage.DatasetID(entry.Name())
+		if !entry.IsDir() || !validDatasetID(id) {
+			continue
+		}
+		reader, err := r.Open(ctx, id)
+		if err != nil {
+			return storage.DatasetManifest{}, false, err
+		}
+		manifest := reader.Manifest()
+		_ = reader.Close()
+		if manifest.BuildKey == buildKey {
+			return manifest, true, nil
+		}
+	}
+	return storage.DatasetManifest{}, false, nil
 }
 
 func (w *writer) Abort(ctx context.Context) error {

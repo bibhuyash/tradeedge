@@ -184,7 +184,8 @@ func datasetReader(t *testing.T, events []model.Event) storage.DatasetReader {
 	t.Helper()
 	repository := storage.NewMemoryRepository()
 	writer, err := repository.Create(context.Background(), storage.DraftManifest{
-		MasterVersion: "v1", Source: "test", OrderingVersion: "v1", CreatedAt: time.Unix(0, 0),
+		MasterVersion: "v1", CalendarVersion: "calendar-v1",
+		Source: "test", OrderingVersion: "v1", CreatedAt: time.Unix(0, 0),
 	})
 	if err != nil {
 		t.Fatalf("Create() error = %v", err)
