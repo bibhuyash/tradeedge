@@ -30,6 +30,7 @@ func TestRunStopsGracefullyWhenContextIsCancelled(t *testing.T) {
 	}()
 
 	time.Sleep(25 * time.Millisecond)
+	shutdownStarted := time.Now()
 	cancel()
 
 	select {
@@ -37,7 +38,13 @@ func TestRunStopsGracefullyWhenContextIsCancelled(t *testing.T) {
 		if err != nil {
 			t.Fatalf("Run() error = %v", err)
 		}
-	case <-time.After(2 * time.Second):
+		elapsed := time.Since(shutdownStarted)
+		if elapsed > cfg.ShutdownTimeout+500*time.Millisecond {
+			t.Fatalf("shutdown took %s, limit is %s",
+				elapsed, cfg.ShutdownTimeout+500*time.Millisecond)
+		}
+		t.Logf("graceful shutdown completed in %s", elapsed)
+	case <-time.After(cfg.ShutdownTimeout + 500*time.Millisecond):
 		t.Fatal("Run() did not stop within deadline")
 	}
 }

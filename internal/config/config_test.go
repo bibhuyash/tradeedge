@@ -20,16 +20,20 @@ func TestLoadWithLookupDefaults(t *testing.T) {
 
 func TestLoadWithLookupOverrides(t *testing.T) {
 	cfg, err := LoadWithLookup(mapLookup(map[string]string{
-		"TRADEEDGE_ENV":              "test",
-		"TRADEEDGE_HTTP_ADDR":        "127.0.0.1:9090",
-		"TRADEEDGE_LOG_LEVEL":        "DEBUG",
-		"TRADEEDGE_SHUTDOWN_TIMEOUT": "250ms",
-		"TRADEEDGE_TRADING_MODE":     "PAPER",
+		"TRADEEDGE_ENV":                     "test",
+		"TRADEEDGE_HTTP_ADDR":               "127.0.0.1:9090",
+		"TRADEEDGE_LOG_LEVEL":               "DEBUG",
+		"TRADEEDGE_SHUTDOWN_TIMEOUT":        "250ms",
+		"TRADEEDGE_TRADING_MODE":            "PAPER",
+		"TRADEEDGE_MARKETDATA_CALENDAR":     "configs/nse-calendar.json",
+		"TRADEEDGE_MARKETDATA_DATASET_ROOT": "data/marketdata",
 	}))
 	if err != nil {
 		t.Fatalf("LoadWithLookup() error = %v", err)
 	}
-	if cfg.LogLevel != "debug" || cfg.ShutdownTimeout != 250*time.Millisecond || cfg.TradingMode != ModePaper {
+	if cfg.LogLevel != "debug" || cfg.ShutdownTimeout != 250*time.Millisecond || cfg.TradingMode != ModePaper ||
+		cfg.MarketDataCalendarPath != "configs/nse-calendar.json" ||
+		cfg.MarketDataDatasetRoot != "data/marketdata" {
 		t.Fatalf("unexpected overrides: %#v", cfg)
 	}
 }
