@@ -15,6 +15,9 @@ Telemetry systems may fail and must not become trading truth. Correlation identi
 - Count accepted, duplicate, late, malformed, missing, corrected, and stale market-data outcomes.
 - Measure exchange-to-ingestion lag, reorder-buffer depth, dataset checksums, replay throughput, consumer time, scheduled waits, and pause duration.
 - Preserve material automated decisions as append-only audit events.
+- Count bounded strategy-runner starts, committed results, readiness blocks,
+  duplicates, timeouts, panics, invalid outputs, conflicts, publication
+  failures, duration, publication duration, state size, and in-flight work.
 
 ## Invariants
 
@@ -48,3 +51,19 @@ The catalog is `tradeedge_marketdata_{observations_total,quality_total,normaliza
 Labels are restricted to provider, exchange, segment, event kind, candle interval, quality/disposition/outcome, bounded readiness scope/state/reason, terminal state, and bounded watchlist ID. Instrument, event, dataset, replay, request, strategy, account, token, symbol, path, error, and free-text reason labels are prohibited.
 
 Processing, lag/age, and long-operation histograms use the approved fixed bucket sets. Instrument IDs remain available in paginated diagnostics, not metric labels.
+
+## Phase 2 Milestone 3 Metric Catalog
+
+The adapter exposes
+`tradeedge_strategy_{evaluations_total,evaluation_duration_seconds,publication_duration_seconds,state_bytes,in_flight}`.
+Only stable definition ID and typed outcome label the counter and histograms.
+Instance, frame, trigger, evaluation, proposal, instrument, configuration, and
+state identities are prohibited labels. The runner imports only its
+provider-neutral telemetry contract; Prometheus remains adapter-only.
+
+The GET-only strategy API exposes bounded metadata for definitions, versions,
+instances, checkpoints, recent evaluations, observations, advisory proposals,
+and runner health under `/api/v1/strategy/`. Raw runtime state, configuration
+payloads, arbitrary diagnostics, provider tokens, credentials, mutation,
+activation, risk, and execution controls are not exposed. List limits default
+to 50 and cannot exceed 100.

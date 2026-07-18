@@ -3,13 +3,14 @@
 ## Scope
 
 Phase 2 builds a deterministic, explainable, provider-neutral strategy
-evaluation framework on canonical Phase 1.1 market data. Milestones 1 and 2 are
-implemented: domain contracts plus deterministic repositories, checksummed
-checkpoint restoration, and atomic evaluation publication.
+evaluation framework on canonical Phase 1.1 market data. Milestones 1, 2, and
+3 are implemented: domain contracts, deterministic repositories, checksummed
+checkpoint restoration, atomic evaluation publication, and a bounded runner
+with replay integration and one engineering fixture.
 
-It does not implement a runner, timeout or panic isolation, replay integration,
-an actual strategy, automatic lifecycle decisions, allocation, Phase 3 risk
-policy, order execution, live connectivity, or credentials.
+It does not implement automatic lifecycle decisions, production strategy
+promotion, allocation, Phase 3 risk policy, executable quantity, order
+execution, live connectivity, or credentials.
 
 ## Assumptions
 
@@ -42,14 +43,21 @@ Milestone 2 owns:
 - a concurrency-safe bounded in-memory adapter using immutable snapshot swaps;
 - deterministic ordered queries and test-only pre-commit failure injection.
 
-Later bounded milestones will own:
+Milestone 3 owns:
 
-1. a bounded serial runner with trigger deduplication, readiness gating,
-   timeout, panic containment, and failure quarantine;
-2. replay integration, telemetry, and read-only operational diagnostics;
-3. a moving-average crossover engineering fixture and determinism/property
-   tests;
-4. release evidence and operating documentation.
+- an in-process version registry backed by accepted definition contracts;
+- synchronous `EvaluateFrame`, per-instance serialization, keyed-state
+  retirement, and a four-evaluation default cross-instance semaphore;
+- deterministic trigger/evaluation/proposal identities and committed versus
+  in-progress duplicate outcomes;
+- Phase 1.1 readiness adaptation, lifecycle gating, a 100 ms cooperative
+  deadline, parent cancellation, bounded panic diagnostics, and typed failures;
+- candidate-state validation and publication solely through the Milestone 2
+  atomic publisher;
+- completed-candle replay framing with synchronous backpressure;
+- provider-neutral telemetry, adapter-only Prometheus metrics, bounded GET-only
+  diagnostics, and runner shutdown composition;
+- the `NON_PRODUCTION_ENGINEERING_FIXTURE` moving-average crossover.
 
 ## Invariants
 
@@ -81,7 +89,10 @@ Later bounded milestones will own:
   validity reject proposals.
 - Corrupted or mismatched checkpoints, stale revisions, cancellation, capacity
   exhaustion, and injected storage failure fail without partial publication.
-- Runner panics and timeouts remain explicitly deferred.
+- A readiness block, timeout, cancellation, panic, invalid result, conflict, or
+  publication failure publishes no candidate effects.
+- Timeout cancellation is cooperative; a strategy that ignores context can
+  exceed its deadline, but the runner never creates an unbounded kill goroutine.
 
 ## Trade-offs
 
@@ -93,11 +104,14 @@ Later bounded milestones will own:
   proportional strategies but preserve maximum-age checks.
 - Full immutable snapshot copies make atomicity simple and testable at the
   approved scale, but are not intended for high-volume durable production.
+- Synchronous evaluation makes backpressure and serialization explicit. It
+  avoids queues and goroutine-per-instance retention at the cost of requiring
+  callers to tolerate backpressure.
 
 ## Unresolved Questions
 
-- Approve default evaluation timeout, repeated-failure quarantine, and
-  operator-recovery policy.
+- Approve production evaluation timeout, repeated-failure quarantine, and
+  operator-recovery policy. The 100 ms value is an engineering default only.
 - Approve persistence retention and whether the first durable adapter remains
   file-backed before PostgreSQL.
 - Approve the initial instance/watchlist set and lifecycle evidence policy.
@@ -123,3 +137,13 @@ Later bounded milestones will own:
 - Failure injection and cancellation expose no partial checkpoint, record,
   observation, or proposal.
 - `go test ./...`, `go vet ./...`, formatting, and build checks pass.
+- Ten race-enabled runner/replay repetitions pass in the Ubuntu strategy stress
+  workflow.
+
+## Milestone 3 accepted-contract correction
+
+Milestone 1 originally required every required series to contain exactly its
+declared lookback. That made deterministic warm-up impossible. A required
+series now contains between one and `Lookback` completed candles; zero remains
+invalid. The runner and strategy decide `INSUFFICIENT_HISTORY` without inventing
+data. This is the only accepted Milestone 1 contract changed by Milestone 3.
