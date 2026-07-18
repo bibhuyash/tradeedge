@@ -30,6 +30,7 @@ type Snapshot struct {
 	TotalPublish  time.Duration
 	LastStateSize int
 	InFlight      int
+	MaxInFlight   int
 }
 
 type MemoryRecorder struct {
@@ -51,6 +52,9 @@ func (recorder *MemoryRecorder) Record(event Event) {
 		recorder.snapshot.LastStateSize = event.StateBytes
 	}
 	recorder.snapshot.InFlight = event.InFlight
+	if event.InFlight > recorder.snapshot.MaxInFlight {
+		recorder.snapshot.MaxInFlight = event.InFlight
+	}
 }
 
 func (recorder *MemoryRecorder) Snapshot() Snapshot {
