@@ -7,12 +7,6 @@ import (
 
 var ErrInvalidOrderRequest = errors.New("invalid order request")
 
-type MarketEvent struct {
-	Instrument Instrument
-	Price      Price
-	ObservedAt time.Time
-}
-
 type Signal struct {
 	StrategyID StrategyID
 	Instrument Instrument
