@@ -100,5 +100,7 @@ honor cancellation.
 - Panic and timeout are recoverable without advancing state.
 - Committed and in-progress duplicates are distinct.
 - Repeated and checkpoint-restored replay are byte stable.
-- Ubuntu CI runs race-enabled strategy/replay tests ten times and uploads
-  machine-readable evidence.
+- Ubuntu CI runs the full race suite and ten independent race-enabled
+  strategy/replay tests. It uploads checksummed machine-readable evidence for
+  concurrency, duplicate suppression, containment, publication integrity,
+  replay equivalence, and bounded resources.

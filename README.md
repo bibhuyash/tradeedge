@@ -255,4 +255,22 @@ snapshot swap. Exact retries are idempotent; stale revisions, changed payloads
 under an existing identity, checksum mismatch, cancellation, or injected
 storage failure publish nothing.
 
+### Phase 2 closure evidence
+
+The manual Ubuntu release gate runs ordinary checks, the complete Go race
+suite, ten independent race-enabled strategy stress repetitions, and the
+deterministic closure harness:
+
+```sh
+gh workflow run strategy-runner-stress.yml --ref <branch-or-commit>
+```
+
+Its authoritative artifact is
+`phase-2-milestone-3-strategy-stress.json`, accompanied by a SHA-256 file and
+the underlying logs. The workflow fails on concurrent same-instance execution,
+cross-instance limit violations, duplicate publication, result loss, failed
+containment, replay divergence, resource growth beyond explicit tolerances, or
+artifact failure. See
+`docs/runbooks/PHASE_2_STRATEGY_RELEASE_GATE.md` for the evidence contract.
+
 See `docs/` for the product, architecture, trading, reliability, integration, and phase plans.
