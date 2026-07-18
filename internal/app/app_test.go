@@ -3,6 +3,9 @@ package app
 import (
 	"bytes"
 	"context"
+	"encoding/json"
+	"net"
+	"net/http"
 	"strings"
 	"testing"
 	"time"
@@ -104,5 +107,59 @@ func TestRunShutsDownInjectedStrategyRunner(t *testing.T) {
 	}
 	if err := <-result; err != nil {
 		t.Fatal(err)
+	}
+}
+
+func TestDefaultRuntimeStartsWithoutStrategyInstances(t *testing.T) {
+	listener, err := net.Listen("tcp", "127.0.0.1:0")
+	if err != nil {
+		t.Fatal(err)
+	}
+	address := listener.Addr().String()
+	if err := listener.Close(); err != nil {
+		t.Fatal(err)
+	}
+	logger, _ := logging.New("error", &bytes.Buffer{})
+	cfg := config.Config{
+		Environment: "test", HTTPAddress: address, LogLevel: "error",
+		ShutdownTimeout: time.Second, TradingMode: config.ModePaper,
+		StrategyMaxConcurrency: 4, StrategyTimeout: 100 * time.Millisecond,
+	}
+	ctx, cancel := context.WithCancel(context.Background())
+	result := make(chan error, 1)
+	go func() {
+		result <- Run(ctx, cfg, logger)
+	}()
+	defer func() {
+		cancel()
+		if err := <-result; err != nil {
+			t.Errorf("Run() error = %v", err)
+		}
+	}()
+
+	client := &http.Client{Timeout: 100 * time.Millisecond}
+	var response *http.Response
+	for attempt := 0; attempt < 25; attempt++ {
+		response, err = client.Get("http://" + address + "/api/v1/strategy/instances")
+		if err == nil {
+			break
+		}
+		time.Sleep(20 * time.Millisecond)
+	}
+	if err != nil {
+		t.Fatalf("query strategy instances: %v", err)
+	}
+	defer response.Body.Close()
+	if response.StatusCode != http.StatusOK {
+		t.Fatalf("status = %d", response.StatusCode)
+	}
+	var body struct {
+		Items []json.RawMessage `json:"items"`
+	}
+	if err := json.NewDecoder(response.Body).Decode(&body); err != nil {
+		t.Fatal(err)
+	}
+	if len(body.Items) != 0 {
+		t.Fatalf("default runtime started with %d strategy instances", len(body.Items))
 	}
 }

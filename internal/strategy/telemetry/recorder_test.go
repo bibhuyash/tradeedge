@@ -32,6 +32,9 @@ func TestMemoryRecorderCopiesAndSupportsConcurrentRecording(t *testing.T) {
 		snapshot.LastStateSize != 12 || snapshot.InFlight != 2 {
 		t.Fatalf("snapshot = %#v", snapshot)
 	}
+	if snapshot.MaxInFlight != 2 {
+		t.Fatalf("maximum in-flight = %d", snapshot.MaxInFlight)
+	}
 	snapshot.Counts["COMMITTED_NO_ACTION"] = 0
 	if recorder.Snapshot().Counts["COMMITTED_NO_ACTION"] != 20 {
 		t.Fatal("returned telemetry mutated recorder")

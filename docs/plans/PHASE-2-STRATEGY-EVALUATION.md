@@ -137,8 +137,12 @@ Milestone 3 owns:
 - Failure injection and cancellation expose no partial checkpoint, record,
   observation, or proposal.
 - `go test ./...`, `go vet ./...`, formatting, and build checks pass.
-- Ten race-enabled runner/replay repetitions pass in the Ubuntu strategy stress
-  workflow.
+- The Ubuntu strategy release workflow passes the full race suite and ten
+  independent race-enabled runner/replay repetitions.
+- `phase-2-milestone-3-strategy-stress.json` proves bounded concurrency and
+  resources, duplicate suppression, fail-closed containment, zero unexpected
+  result loss or publication, replay determinism, checkpoint continuation
+  equivalence, validated evidence, and successful artifact upload.
 
 ## Milestone 3 accepted-contract correction
 

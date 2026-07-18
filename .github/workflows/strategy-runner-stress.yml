@@ -1,9 +1,10 @@
-name: Phase 2 strategy-runner stress
+name: Phase 2 strategy-runner release gate
 
 on:
   workflow_dispatch:
   pull_request:
     paths:
+      - "cmd/tradeedge-strategy-gate/**"
       - "internal/strategy/**"
       - "internal/adapters/strategy/**"
       - "internal/adapters/metrics/prometheus/**"
@@ -13,14 +14,14 @@ permissions:
   contents: read
 
 concurrency:
-  group: strategy-runner-stress-${{ github.ref }}
+  group: phase-2-strategy-release-gate-${{ github.ref }}
   cancel-in-progress: true
 
 jobs:
-  stress:
-    name: Race and deterministic replay stress
+  release-gate:
+    name: Race, containment, and deterministic replay
     runs-on: ubuntu-latest
-    timeout-minutes: 15
+    timeout-minutes: 30
     steps:
       - uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10 # v6
 
@@ -29,54 +30,362 @@ jobs:
           go-version-file: go.mod
           cache: false
 
-      - name: Run race-heavy runner and replay repetitions
-        id: stress
+      - name: Verify runner environment
+        id: environment
+        continue-on-error: true
         shell: bash
         run: |
           set -euo pipefail
-          mkdir -p artifacts
-          go test -race ./internal/strategy/... ./internal/adapters/strategy/... \
-            -count=10 -timeout=10m 2>&1 | tee artifacts/strategy-runner-race.log
+          mkdir -p artifacts/logs
+          {
+            go version
+            gcc --version
+            uname -a
+          } 2>&1 | tee artifacts/logs/environment.log
 
-      - name: Write machine-readable evidence
+      - name: Run formatting, tests, vet, and build
+        id: ordinary
+        continue-on-error: true
+        shell: bash
+        run: |
+          set -euo pipefail
+          {
+            test -z "$(gofmt -l .)"
+            go test ./... -timeout=10m
+            go vet ./...
+            go build ./...
+          } 2>&1 | tee artifacts/logs/ordinary-checks.log
+
+      - name: Run full race suite
+        id: race
+        continue-on-error: true
+        shell: bash
+        run: |
+          set -euo pipefail
+          go test -race ./... -count=1 -timeout=15m \
+            2>&1 | tee artifacts/logs/full-race-suite.log
+
+      - name: Verify runtime and ownership boundaries
+        id: boundaries
+        continue-on-error: true
+        shell: bash
+        run: |
+          set -euo pipefail
+          {
+            go test ./internal/app \
+              -run '^TestDefaultRuntimeStartsWithoutStrategyInstances$' \
+              -count=1
+            go test ./internal/strategy/opshttp \
+              -run '^TestOperationalAPIIsGETOnlyAndBounded$' \
+              -count=1
+            imports="$(
+              go list -f '{{range .Imports}}{{println .}}{{end}}' \
+                ./internal/strategy/... ./cmd/tradeedge-strategy-gate
+            )"
+            if printf '%s\n' "${imports}" |
+              grep -E '/(execution|risk|portfolio|adapters/broker)(/|$)'; then
+              echo "forbidden strategy dependency detected" >&2
+              exit 1
+            fi
+          } 2>&1 | tee artifacts/logs/runtime-boundaries.log
+
+      - name: Run ten independent race-enabled stress repetitions
+        id: repeated
+        continue-on-error: true
+        shell: bash
+        run: |
+          set -uo pipefail
+          passed=0
+          failed=0
+          for repetition in $(seq 1 10); do
+            log="artifacts/logs/race-repetition-${repetition}.log"
+            if go test -race \
+              ./internal/strategy/... \
+              ./internal/adapters/strategy/... \
+              -count=1 -timeout=3m 2>&1 | tee "${log}"; then
+              passed=$((passed + 1))
+            else
+              failed=$((failed + 1))
+            fi
+          done
+          printf '%s\n' "${passed}" > artifacts/repeated-race-passed.txt
+          printf '%s\n' "${failed}" > artifacts/repeated-race-failed.txt
+          echo "passed=${passed}" >> "${GITHUB_OUTPUT}"
+          echo "failed=${failed}" >> "${GITHUB_OUTPUT}"
+          test "${passed}" -eq 10
+          test "${failed}" -eq 0
+
+      - name: Run deterministic strategy closure harness
+        id: harness
+        continue-on-error: true
+        shell: bash
+        run: |
+          set -o pipefail
+          go run ./cmd/tradeedge-strategy-gate \
+            > artifacts/strategy-gate-measurements.json \
+            2> artifacts/logs/strategy-gate.stderr.log
+
+      - name: Upload pre-summary logs
+        id: log_upload
         if: always()
+        continue-on-error: true
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7
+        with:
+          name: tradeedge-phase-2-milestone-3-logs-${{ github.run_id }}-${{ github.run_attempt }}
+          path: |
+            artifacts/logs/
+            artifacts/repeated-race-passed.txt
+            artifacts/repeated-race-failed.txt
+            artifacts/strategy-gate-measurements.json
+          if-no-files-found: error
+          retention-days: 90
+
+      - name: Build and validate authoritative evidence
+        id: summary
+        if: always()
+        continue-on-error: true
         shell: bash
         env:
-          OUTCOME: ${{ steps.stress.outcome }}
+          ENVIRONMENT_OUTCOME: ${{ steps.environment.outcome }}
+          ORDINARY_OUTCOME: ${{ steps.ordinary.outcome }}
+          RACE_OUTCOME: ${{ steps.race.outcome }}
+          BOUNDARIES_OUTCOME: ${{ steps.boundaries.outcome }}
+          REPEATED_OUTCOME: ${{ steps.repeated.outcome }}
+          REPEATED_PASSED: ${{ steps.repeated.outputs.passed }}
+          HARNESS_OUTCOME: ${{ steps.harness.outcome }}
+          LOG_UPLOAD_OUTCOME: ${{ steps.log_upload.outcome }}
           RUN_ID: ${{ github.run_id }}
           RUN_ATTEMPT: ${{ github.run_attempt }}
           COMMIT_SHA: ${{ github.sha }}
+          ARTIFACT_NAME: tradeedge-phase-2-milestone-3-${{ github.run_id }}-${{ github.run_attempt }}
         run: |
           python3 - <<'PY'
+          import hashlib
           import json
           import os
           from pathlib import Path
 
-          summary = {
-              "schema_version": 1,
-              "run_id": os.environ["RUN_ID"],
-              "run_attempt": os.environ["RUN_ATTEMPT"],
-              "commit_sha": os.environ["COMMIT_SHA"],
-              "race_enabled": True,
-              "repetitions": 10,
-              "runner_and_replay_outcome": os.environ["OUTCOME"],
-              "passed": os.environ["OUTCOME"] == "success",
+          artifact_dir = Path("artifacts")
+          measurements_path = artifact_dir / "strategy-gate-measurements.json"
+          failures = []
+          validation_failures = []
+
+          try:
+              measurements = json.loads(measurements_path.read_text(encoding="utf-8"))
+          except Exception as exc:
+              measurements = {}
+              validation_failures.append(f"invalid harness JSON: {exc}")
+
+          outcomes = {
+              "environment": os.environ.get("ENVIRONMENT_OUTCOME", ""),
+              "ordinary_checks": os.environ.get("ORDINARY_OUTCOME", ""),
+              "full_race_suite": os.environ.get("RACE_OUTCOME", ""),
+              "runtime_and_ownership_boundaries": os.environ.get("BOUNDARIES_OUTCOME", ""),
+              "repeated_race_suite": os.environ.get("REPEATED_OUTCOME", ""),
+              "strategy_harness": os.environ.get("HARNESS_OUTCOME", ""),
+              "pre_summary_artifact_upload": os.environ.get("LOG_UPLOAD_OUTCOME", ""),
           }
-          Path("artifacts").mkdir(exist_ok=True)
-          Path("artifacts/phase-2-milestone-3-strategy-stress.json").write_text(
-              json.dumps(summary, indent=2, sort_keys=True) + "\n",
+          for name, outcome in outcomes.items():
+              if outcome != "success":
+                  failures.append(f"{name} outcome was {outcome or 'missing'}")
+
+          try:
+              repeated = int(os.environ.get("REPEATED_PASSED", "0"))
+          except ValueError:
+              repeated = 0
+          if repeated != 10:
+              failures.append(f"race-enabled repetitions passed {repeated}/10")
+
+          required_fields = {
+              "passed": bool,
+              "total_evaluations": int,
+              "committed_no_action_count": int,
+              "committed_observation_count": int,
+              "committed_proposal_count": int,
+              "readiness_blocked_count": int,
+              "readiness_blocked_strategy_invocations": int,
+              "duplicate_committed_count": int,
+              "duplicate_in_progress_count": int,
+              "timeout_count": int,
+              "panic_count": int,
+              "cancellation_count": int,
+              "shutdown_count": int,
+              "invalid_output_count": int,
+              "revision_conflict_count": int,
+              "unexpected_result_loss": int,
+              "unexpected_duplicate_publication": int,
+              "maximum_concurrent_evaluations": int,
+              "configured_maximum_concurrent_evaluations": int,
+              "maximum_same_instance_concurrency": int,
+              "replay_determinism_passed": bool,
+              "checkpoint_continuation_equivalence_passed": bool,
+              "starting_goroutine_count": int,
+              "peak_goroutine_count": int,
+              "ending_goroutine_count": int,
+              "ending_goroutine_tolerance": int,
+              "peak_goroutine_growth_limit": int,
+              "starting_heap_allocation_bytes": int,
+              "peak_heap_allocation_bytes": int,
+              "ending_heap_allocation_bytes": int,
+              "ending_heap_growth_limit_bytes": int,
+              "peak_heap_growth_limit_bytes": int,
+              "garbage_collection_cycles": int,
+              "maximum_cancellation_shutdown_duration_nanoseconds": int,
+              "cancellation_shutdown_limit_nanoseconds": int,
+          }
+          for field, expected_type in required_fields.items():
+              if field not in measurements:
+                  validation_failures.append(f"missing harness field {field}")
+              elif type(measurements[field]) is not expected_type:
+                  validation_failures.append(f"invalid type for harness field {field}")
+          failures.extend(validation_failures)
+
+          def require(condition, message):
+              if not condition:
+                  failures.append(message)
+
+          if all(field in measurements for field in required_fields):
+              require(measurements["passed"], "harness enforcement failed")
+              require(measurements["total_evaluations"] > 0, "no evaluations executed")
+              require(measurements["committed_no_action_count"] > 0, "NO_ACTION was not committed")
+              require(measurements["committed_observation_count"] > 0, "observation was not committed")
+              require(measurements["committed_proposal_count"] > 0, "proposal was not committed")
+              require(measurements["readiness_blocked_count"] == 1, "readiness block count changed")
+              require(measurements["readiness_blocked_strategy_invocations"] == 0,
+                      "readiness-blocked input invoked strategy code")
+              require(measurements["duplicate_committed_count"] == 1,
+                      "committed duplicate suppression count changed")
+              require(measurements["duplicate_in_progress_count"] == 1,
+                      "in-progress duplicate suppression count changed")
+              require(measurements["timeout_count"] == 1, "timeout containment count changed")
+              require(measurements["panic_count"] == 1, "panic containment count changed")
+              require(measurements["cancellation_count"] == 1, "cancellation containment count changed")
+              require(measurements["shutdown_count"] == 1, "shutdown containment count changed")
+              require(measurements["invalid_output_count"] == 1,
+                      "invalid-output rejection count changed")
+              require(measurements["revision_conflict_count"] == 1,
+                      "revision-conflict count changed")
+              require(measurements["unexpected_result_loss"] == 0,
+                      "unexpected event/result loss detected")
+              require(measurements["unexpected_duplicate_publication"] == 0,
+                      "duplicate successful publication detected")
+              require(measurements["maximum_same_instance_concurrency"] == 1,
+                      "same-instance strategy invocation was concurrent")
+              require(measurements["maximum_concurrent_evaluations"] <=
+                      measurements["configured_maximum_concurrent_evaluations"],
+                      "cross-instance concurrency exceeded configuration")
+              require(measurements["replay_determinism_passed"],
+                      "repeated replay was not deterministic")
+              require(measurements["checkpoint_continuation_equivalence_passed"],
+                      "checkpoint-restored continuation differed")
+              require(measurements["ending_goroutine_count"] <=
+                      measurements["starting_goroutine_count"] +
+                      measurements["ending_goroutine_tolerance"],
+                      "ending goroutine count exceeded tolerance")
+              require(measurements["peak_goroutine_count"] <=
+                      measurements["starting_goroutine_count"] +
+                      measurements["peak_goroutine_growth_limit"],
+                      "peak goroutine growth exceeded tolerance")
+              require(measurements["ending_heap_allocation_bytes"] <=
+                      measurements["starting_heap_allocation_bytes"] +
+                      measurements["ending_heap_growth_limit_bytes"],
+                      "ending heap growth exceeded tolerance")
+              require(measurements["peak_heap_allocation_bytes"] <=
+                      measurements["starting_heap_allocation_bytes"] +
+                      measurements["peak_heap_growth_limit_bytes"],
+                      "peak heap growth exceeded tolerance")
+              require(measurements["maximum_cancellation_shutdown_duration_nanoseconds"] <=
+                      measurements["cancellation_shutdown_limit_nanoseconds"],
+                      "cancellation or shutdown exceeded its deadline")
+
+          passed = not failures
+          summary = {
+              **measurements,
+              "schema_version": 1,
+              "workflow_run_id": os.environ["RUN_ID"],
+              "commit_sha": os.environ["COMMIT_SHA"],
+              "run_attempt": int(os.environ["RUN_ATTEMPT"]),
+              "workflow_conclusion": "success" if passed else "failure",
+              "race_suite_result": "passed" if outcomes["full_race_suite"] == "success" else "failed",
+              "repeated_stress_count": repeated,
+              "artifact_name": os.environ["ARTIFACT_NAME"],
+              "artifact_json_validation": (
+                  "passed" if not validation_failures else "failed"
+              ),
+              "artifact_upload_result": (
+                  "passed" if outcomes["pre_summary_artifact_upload"] == "success" else "failed"
+              ),
+              "operational_endpoints_bounded_read_only": (
+                  outcomes["runtime_and_ownership_boundaries"] == "success"
+              ),
+              "runtime_starts_without_active_strategy": (
+                  outcomes["runtime_and_ownership_boundaries"] == "success"
+              ),
+              "forbidden_strategy_dependencies_absent": (
+                  outcomes["runtime_and_ownership_boundaries"] == "success"
+              ),
+              "final_enforcement_result": "passed" if passed else "failed",
+              "failure_reasons": failures,
+              "passed": passed,
+          }
+
+          summary_path = artifact_dir / "phase-2-milestone-3-strategy-stress.json"
+          summary_bytes = (
+              json.dumps(summary, indent=2, sort_keys=True) + "\n"
+          ).encode("utf-8")
+          summary_path.write_bytes(summary_bytes)
+          digest = hashlib.sha256(summary_bytes).hexdigest()
+          (artifact_dir / "phase-2-milestone-3-strategy-stress.json.sha256").write_text(
+              f"{digest}  {summary_path.name}\n",
               encoding="utf-8",
           )
-          if not summary["passed"]:
+
+          with Path(os.environ["GITHUB_STEP_SUMMARY"]).open("a", encoding="utf-8") as output:
+              output.write("## Phase 2 Milestone 3 release gate\n\n")
+              output.write(f"- Final enforcement: **{summary['final_enforcement_result']}**\n")
+              output.write(f"- Full race suite: **{summary['race_suite_result']}**\n")
+              output.write(f"- Repeated race stress: **{repeated}/10**\n")
+              output.write(f"- Artifact: `{summary['artifact_name']}`\n")
+              output.write(f"- Summary SHA-256: `{digest}`\n")
+              if failures:
+                  output.write("\n### Failure reasons\n")
+                  for failure in failures:
+                      output.write(f"- {failure}\n")
+
+          if not passed:
               raise SystemExit(1)
           PY
 
-      - name: Upload stress evidence
+      - name: Upload authoritative release evidence
+        id: evidence_upload
         if: always()
+        continue-on-error: true
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7
         with:
           name: tradeedge-phase-2-milestone-3-${{ github.run_id }}-${{ github.run_attempt }}
           path: artifacts/
           if-no-files-found: error
-          retention-days: 30
+          retention-days: 90
 
+      - name: Enforce all release gates
+        if: always()
+        shell: bash
+        env:
+          SUMMARY_OUTCOME: ${{ steps.summary.outcome }}
+          EVIDENCE_UPLOAD_OUTCOME: ${{ steps.evidence_upload.outcome }}
+        run: |
+          set -euo pipefail
+          test "${SUMMARY_OUTCOME}" = "success"
+          test "${EVIDENCE_UPLOAD_OUTCOME}" = "success"
+          python3 - <<'PY'
+          import json
+          from pathlib import Path
+
+          summary = json.loads(
+              Path("artifacts/phase-2-milestone-3-strategy-stress.json").read_text(
+                  encoding="utf-8"
+              )
+          )
+          if summary.get("final_enforcement_result") != "passed":
+              raise SystemExit("authoritative evidence did not pass enforcement")
+          PY
