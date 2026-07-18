@@ -68,6 +68,29 @@ make format
 
 These run `go build ./...`, `go test ./...`, `go vet ./...`, and `gofmt` respectively.
 
+## GitHub Actions
+
+The repository has two safety-scoped workflows:
+
+- **CI** runs formatting verification, race-enabled tests, `go vet`, and a
+  complete build for pull requests and pushes to `main`.
+- **Delivery** runs the same verification and packages the two Linux AMD64
+  commands with SHA-256 checksums for `v*` tags or an explicit manual run.
+
+Delivery produces a short-lived GitHub Actions artifact. It does not create a
+GitHub Release, deploy an environment, access credentials, connect to Zerodha,
+or enable live trading. Production deployment remains blocked until hosting,
+static outbound IP, secret storage, approval gates, rollback, and kill-switch
+requirements are approved.
+
+Third-party actions are pinned to immutable commit SHAs. Dependabot checks
+monthly for GitHub Actions updates so those pins can be advanced through normal
+review and CI.
+
+Recommended `main` branch protection should require the CI job named
+`Format, test, vet, and build`, require pull-request review, and prohibit
+force-pushes. Configure these controls in GitHub after the workflows are pushed.
+
 ## Historical market-data tool
 
 Phase 1 provides an offline local-file tool. It never connects to Zerodha.
