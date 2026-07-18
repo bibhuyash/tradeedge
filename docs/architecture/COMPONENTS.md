@@ -37,9 +37,13 @@ Interfaces are small and owned by their consumers. Cross-module shared values ar
 - Strategy definitions consume immutable, readiness-backed candle frames and
   return exactly one deterministic result: `NO_ACTION`, `OBSERVATION`, or an
   advisory `TRADE_PROPOSAL`, together with the next bounded runtime state.
-- A future strategy runner will own trigger deduplication, timeouts, failure
-  isolation, and atomic publication; those runtime capabilities are not part of
-  the Phase 2 Milestone 1 contracts.
+- A future strategy runner will own trigger deduplication, timeouts, and failure
+  isolation, then invoke the Milestone 2 atomic publication boundary.
+- Strategy storage owns definition/version registration, lifecycle-revision
+  persistence, checksummed runtime checkpoints, evaluation records,
+  observations, advisory proposals, and their atomic publication contract.
+- The in-memory strategy adapter prepares immutable repository snapshots and
+  swaps one snapshot only after optimistic revision and integrity validation.
 - Lifecycle establishes eligibility.
 - Portfolio allocates constrained capital.
 - Risk approves or rejects proposed exposure.
@@ -56,6 +60,8 @@ Interfaces are small and owned by their consumers. Cross-module shared values ar
   capability. A proposal contains sizing intent but no executable quantity.
 - Strategy versions, configurations, instance revisions, frames, evaluations,
   and proposals have stable content-derived identities.
+- An evaluation record, optional output, and its next checkpoint are committed
+  together or not at all. Exact canonical retries are idempotent.
 - Allocation and risk precede submission.
 - Audit records accompany material decisions.
 
@@ -81,3 +87,4 @@ Additional packages and contracts create ceremony but make unsafe coupling visib
 - Calendar, readiness, correction, and operations packages contain no strategy or broker capability.
 - Strategy contracts import only provider-neutral domain, market-data model,
   and readiness types.
+- Strategy storage contracts do not import the in-memory adapter.
