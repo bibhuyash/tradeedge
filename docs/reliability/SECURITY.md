@@ -16,6 +16,7 @@ Production outbound traffic will originate from an approved static public IP. Cr
 - Patch dependencies and maintain a reviewable software supply chain.
 - Run pull-request CI with read-only repository permissions and no secrets.
 - Produce checksummed delivery artifacts without granting deployment authority.
+- Keep `/metrics` and market-data operational APIs read-only, bounded, and free of tokens, local paths, credentials, and free-text metric labels.
 
 ## Invariants
 
@@ -40,6 +41,8 @@ Strict access and rotation add operational effort but constrain blast radius.
 Secret storage, operator identity provider, retention access, artifact signing,
 production hosting, deployment approvals, and incident roles require deployment
 decisions.
+
+Production exposure and authentication policy for `/metrics` and `/api/v1/market-data/*` requires CEO approval. Phase 1.1 binds them to the existing HTTP listener and grants no mutation or trading authority.
 
 ## Acceptance Criteria
 

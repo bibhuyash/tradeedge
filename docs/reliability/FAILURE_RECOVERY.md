@@ -25,6 +25,8 @@ Recovery detects incomplete transitions, reconciles broker state, repairs derive
 
 Market-data recovery additionally verifies dataset schema and SHA-256 checksums before replay. Incomplete temporary datasets are never opened, and stale or missing required data remains fail-closed.
 
+Calendar failure is explicit: a verified version may be reused only inside its declared range. A correction creates a complete child revision after verifying its parent and inputs. Repeated builds use a deterministic key; disagreement for one key is corruption. Publication and rollback append checksummed generations using expected-current conflict detection.
+
 ## Invariants
 
 - Startup does not place orders while reconciliation is incomplete.
@@ -49,3 +51,4 @@ Recovery time and recovery point objectives require production infrastructure de
 - Failure drills have deterministic safe outcomes.
 - Unknown state remains visible and blocks exposure.
 - Resume actions and evidence are audited.
+- Incomplete generation directories are ignored, rollback retains every prior generation, and corrupt inputs cannot become current.

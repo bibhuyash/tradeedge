@@ -1,0 +1,2 @@
+{"Kind":"QUOTE","Provider":"fixture","ProviderToken":"1","ExchangeTime":"2026-07-17T04:00:01Z","IngestedAt":"2026-07-17T04:00:01.001Z","LastMinor":2520005,"Volume":90,"Currency":"INR"}
+{"Kind":"QUOTE","Provider":"fixture","ProviderToken":"1","ExchangeTime":"2026-07-17T04:00:02Z","IngestedAt":"2026-07-17T04:00:02.001Z","LastMinor":2520010,"Volume":100,"Currency":"INR"}

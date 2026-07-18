@@ -67,3 +67,23 @@ Synchronous control flow is simpler initially but may add latency. Messaging is 
 - Every order can be traced to market evidence, signal, allocation, and risk decision.
 - Every ambiguous outcome routes to reconciliation.
 - There is no direct strategy-to-broker path.
+
+## Phase 1.1 Operational Flow
+
+```mermaid
+flowchart LR
+    C["Verified versioned calendar"] --> E["Expected windows"]
+    S["Fixture source"] --> N["Normalize and validate"]
+    N --> O["Deduplicate and bounded reorder"]
+    E --> G["Calendar-aware gap detector"]
+    O --> G
+    G --> D["Immutable dataset revision"]
+    D --> V["Checksum verification"]
+    V --> P["Append-only publication generation"]
+    P --> R["Serial deterministic replay"]
+    O --> F["Freshness and readiness evaluator"]
+    E --> F
+    F --> H["readyz and operational diagnostics"]
+```
+
+Only a complete verified dataset can be published. Publication uses an expected-current ID; rollback appends a generation. Live-equivalent consumers still receive the same canonical event contract and synchronous backpressure remains explicit.

@@ -9,6 +9,8 @@ import (
 	"net/http"
 	"sync/atomic"
 	"time"
+
+	"github.com/bibhuyash/tradeedge/internal/marketdata/readiness"
 )
 
 type Readiness struct {
@@ -24,7 +26,21 @@ type Server struct {
 	listener  net.Listener
 }
 
+type MarketReadinessSource interface {
+	Snapshot(context.Context) readiness.Snapshot
+}
+
+type Options struct {
+	MarketReadiness MarketReadinessSource
+	Operations      http.Handler
+	Metrics         http.Handler
+}
+
 func New(address string, logger *slog.Logger, readiness *Readiness) (*Server, error) {
+	return NewWithOptions(address, logger, readiness, Options{})
+}
+
+func NewWithOptions(address string, logger *slog.Logger, readiness *Readiness, options Options) (*Server, error) {
 	if logger == nil {
 		return nil, errors.New("logger is required")
 	}
@@ -34,7 +50,7 @@ func New(address string, logger *slog.Logger, readiness *Readiness) (*Server, er
 	return &Server{
 		server: &http.Server{
 			Addr:              address,
-			Handler:           NewHandler(readiness),
+			Handler:           NewHandlerWithOptions(readiness, options),
 			ReadHeaderTimeout: 5 * time.Second,
 			ReadTimeout:       10 * time.Second,
 			WriteTimeout:      10 * time.Second,
@@ -46,17 +62,44 @@ func New(address string, logger *slog.Logger, readiness *Readiness) (*Server, er
 }
 
 func NewHandler(readiness *Readiness) http.Handler {
+	return NewHandlerWithOptions(readiness, Options{})
+}
+
+func NewHandlerWithOptions(process *Readiness, options Options) http.Handler {
 	mux := http.NewServeMux()
 	mux.HandleFunc("/healthz", methodGET(func(w http.ResponseWriter, _ *http.Request) {
 		writeStatus(w, http.StatusOK, "ok")
 	}))
-	mux.HandleFunc("/readyz", methodGET(func(w http.ResponseWriter, _ *http.Request) {
-		if !readiness.IsReady() {
+	mux.HandleFunc("/readyz", methodGET(func(w http.ResponseWriter, r *http.Request) {
+		if !process.IsReady() {
 			writeStatus(w, http.StatusServiceUnavailable, "not_ready")
 			return
 		}
-		writeStatus(w, http.StatusOK, "ready")
+		snapshot := readiness.Snapshot{
+			EvaluatedAt: time.Now().UTC(), State: readiness.StateDisabled,
+			Reasons: []readiness.ReasonCode{readiness.ReasonMarketDataDisabled},
+		}
+		if options.MarketReadiness != nil {
+			snapshot = options.MarketReadiness.Snapshot(r.Context())
+		}
+		status := http.StatusOK
+		text := "ready"
+		if !snapshot.OperationallyReady() {
+			status = http.StatusServiceUnavailable
+			text = "not_ready"
+		}
+		writeJSON(w, status, map[string]any{
+			"status": text, "trading_permitted": snapshot.TradingPermitted,
+			"market_data_state": snapshot.State, "reason_codes": snapshot.Reasons,
+			"evaluated_at": snapshot.EvaluatedAt, "calendar_version": snapshot.CalendarVersion,
+		})
 	}))
+	if options.Metrics != nil {
+		mux.Handle("/metrics", methodGETHandler(options.Metrics))
+	}
+	if options.Operations != nil {
+		mux.Handle("/api/v1/market-data/", options.Operations)
+	}
 	return mux
 }
 
@@ -101,8 +144,16 @@ func methodGET(next http.HandlerFunc) http.HandlerFunc {
 	}
 }
 
+func methodGETHandler(next http.Handler) http.Handler {
+	return methodGET(next.ServeHTTP)
+}
+
 func writeStatus(w http.ResponseWriter, code int, status string) {
+	writeJSON(w, code, map[string]string{"status": status})
+}
+
+func writeJSON(w http.ResponseWriter, code int, value any) {
 	w.Header().Set("Content-Type", "application/json")
 	w.WriteHeader(code)
-	_ = json.NewEncoder(w).Encode(map[string]string{"status": status})
+	_ = json.NewEncoder(w).Encode(value)
 }

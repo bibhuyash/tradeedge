@@ -9,6 +9,7 @@ import (
 
 	"github.com/bibhuyash/tradeedge/internal/marketdata/model"
 	"github.com/bibhuyash/tradeedge/internal/marketdata/storage"
+	"github.com/bibhuyash/tradeedge/internal/marketdata/telemetry"
 )
 
 var (
@@ -52,13 +53,21 @@ type Engine struct {
 	mu         sync.Mutex
 	running    bool
 	metrics    Metrics
+	recorder   telemetry.Recorder
 }
 
 func NewEngine(clock Clock, controller *Controller) *Engine {
+	return NewEngineWithTelemetry(clock, controller, telemetry.NopRecorder{})
+}
+
+func NewEngineWithTelemetry(clock Clock, controller *Controller, recorder telemetry.Recorder) *Engine {
 	if controller == nil {
 		controller = NewController(clock)
 	}
-	return &Engine{clock: clock, controller: controller}
+	if recorder == nil {
+		recorder = telemetry.NopRecorder{}
+	}
+	return &Engine{clock: clock, controller: controller, recorder: recorder}
 }
 
 func (e *Engine) Controller() *Controller { return e.controller }
@@ -155,7 +164,10 @@ func (e *Engine) setFinished(state State) {
 	e.metrics.PauseTime = e.controller.TotalPaused()
 	e.metrics.CompletedAt = e.clock.Now()
 	e.metrics.TerminalState = state
+	metrics := e.metrics
 	e.mu.Unlock()
+	e.recorder.Replay(string(state), metrics.Events, metrics.CompletedAt.Sub(metrics.StartedAt),
+		metrics.ConsumerTime, metrics.ConsumerTime, metrics.PauseTime)
 }
 
 func scaleDuration(duration time.Duration, rate Rate) time.Duration {

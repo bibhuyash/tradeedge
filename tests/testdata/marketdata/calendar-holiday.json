@@ -1,0 +1,11 @@
+{
+  "schema_version": 1,
+  "source": "tradeedge-holiday-fixture",
+  "published_at": "2026-07-16T12:00:00Z",
+  "timezone": "Asia/Kolkata",
+  "effective_from": "2026-07-19",
+  "effective_to": "2026-07-19",
+  "days": [
+    {"exchange": "NSE", "date": "2026-07-19", "status": "HOLIDAY"}
+  ]
+}

@@ -1,0 +1,22 @@
+{
+  "schema_version": 1,
+  "source": "tradeedge-test-fixture",
+  "published_at": "2026-07-16T12:00:00Z",
+  "timezone": "Asia/Kolkata",
+  "effective_from": "2026-07-17",
+  "effective_to": "2026-07-17",
+  "days": [
+    {
+      "exchange": "NSE",
+      "date": "2026-07-17",
+      "status": "TRADING",
+      "sessions": [
+        {
+          "open": "09:15:00",
+          "close": "15:30:00",
+          "kind": "REGULAR"
+        }
+      ]
+    }
+  ]
+}

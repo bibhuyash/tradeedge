@@ -1,0 +1,390 @@
+name: Phase 1.1 market-data release gate
+
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: tradeedge-phase-1-1-market-data-soak
+  cancel-in-progress: false
+
+jobs:
+  release-gate:
+    name: Race, classification, and 30-minute soak
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+    steps:
+      - uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10 # v6
+
+      - uses: actions/setup-go@924ae3a1cded613372ab5595356fb5720e22ba16 # v6
+        with:
+          go-version-file: go.mod
+          cache: false
+
+      - name: Verify runner and C compiler
+        id: environment
+        continue-on-error: true
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p artifacts
+          {
+            go version
+            uname -a
+            lscpu
+            command -v gcc
+            gcc --version
+          } > artifacts/runner.txt 2>&1
+          cat artifacts/runner.txt
+
+      - name: Run ordinary tests, vet, and build
+        id: ordinary
+        continue-on-error: true
+        shell: bash
+        run: |
+          set -euo pipefail
+          {
+            timeout --signal=TERM --kill-after=30s 3m go test ./...
+            timeout --signal=TERM --kill-after=30s 3m go vet ./...
+            timeout --signal=TERM --kill-after=30s 3m go build ./...
+          } 2>&1 | tee artifacts/ordinary-verification.log
+
+      - name: Run race detector
+        id: race
+        continue-on-error: true
+        shell: bash
+        run: |
+          set -euo pipefail
+          timeout --signal=TERM --kill-after=30s 5m \
+            go test -race ./... 2>&1 | tee artifacts/race-detector.log
+
+      - name: Prove bounded application shutdown repeatedly
+        id: shutdown
+        continue-on-error: true
+        shell: bash
+        run: |
+          set -euo pipefail
+          timeout --signal=TERM --kill-after=30s 1m \
+            go test -race ./internal/app \
+            -run '^TestRunStopsGracefullyWhenContextIsCancelled$' \
+            -count=10 -v 2>&1 | tee artifacts/bounded-shutdown.log
+
+      - name: Run classification and bounded-load profiles
+        id: profiles
+        continue-on-error: true
+        shell: bash
+        run: |
+          set -uo pipefail
+          status=0
+          for profile in normal burst duplicate late malformed slow-consumer; do
+            if ! /usr/bin/time -v -o "artifacts/marketdata-${profile}.resources.txt" \
+              timeout --signal=TERM --kill-after=30s 1m \
+                go run ./cmd/tradeedge-marketdata loadtest -profile="${profile}" \
+                > "artifacts/marketdata-${profile}.json" \
+                2> "artifacts/marketdata-${profile}.log"; then
+              status=1
+            fi
+          done
+          exit "${status}"
+
+      - name: Run non-shortenable 30-minute real-time soak
+        id: soak
+        continue-on-error: true
+        shell: bash
+        run: |
+          set -euo pipefail
+          /usr/bin/time -v -o artifacts/marketdata-soak.resources.txt \
+            timeout --signal=TERM --kill-after=30s 32m \
+              go run ./cmd/tradeedge-marketdata loadtest -profile=soak \
+              > artifacts/marketdata-soak.json \
+              2> artifacts/marketdata-soak.log
+
+      - name: Build machine-readable release summary
+        id: summary
+        if: always()
+        continue-on-error: true
+        shell: bash
+        env:
+          ENVIRONMENT_OUTCOME: ${{ steps.environment.outcome }}
+          ORDINARY_OUTCOME: ${{ steps.ordinary.outcome }}
+          RACE_OUTCOME: ${{ steps.race.outcome }}
+          SHUTDOWN_OUTCOME: ${{ steps.shutdown.outcome }}
+          PROFILES_OUTCOME: ${{ steps.profiles.outcome }}
+          SOAK_OUTCOME: ${{ steps.soak.outcome }}
+          RUN_ID: ${{ github.run_id }}
+          RUN_ATTEMPT: ${{ github.run_attempt }}
+          COMMIT_SHA: ${{ github.sha }}
+        run: |
+          python3 - <<'PY'
+          import json
+          import os
+          from pathlib import Path
+
+          artifact_dir = Path("artifacts")
+          artifact_dir.mkdir(exist_ok=True)
+          profile_names = [
+              "normal", "burst", "duplicate", "late", "malformed",
+              "slow-consumer", "soak",
+          ]
+          expected_reports = {
+              "normal": {
+                  "configured_duration": "1m0s",
+                  "configured_instrument_count": 250,
+                  "generated_event_count": 60000,
+                  "accepted_event_count": 60000,
+                  "duplicate_count": 0,
+                  "rejected_count": 0,
+                  "late_count": 0,
+                  "quarantined_count": 0,
+                  "readiness_transition_count": 2,
+                  "final_readiness_state": "READY",
+              },
+              "burst": {
+                  "configured_duration": "1m0s",
+                  "configured_instrument_count": 250,
+                  "generated_event_count": 300000,
+                  "accepted_event_count": 300000,
+                  "duplicate_count": 0,
+                  "rejected_count": 0,
+                  "late_count": 0,
+                  "quarantined_count": 0,
+                  "readiness_transition_count": 2,
+                  "final_readiness_state": "READY",
+              },
+              "duplicate": {
+                  "configured_duration": "1m0s",
+                  "configured_instrument_count": 250,
+                  "generated_event_count": 72000,
+                  "accepted_event_count": 60000,
+                  "duplicate_count": 12000,
+                  "rejected_count": 0,
+                  "late_count": 0,
+                  "quarantined_count": 0,
+                  "readiness_transition_count": 2,
+                  "final_readiness_state": "READY",
+              },
+              "late": {
+                  "configured_duration": "1m0s",
+                  "configured_instrument_count": 250,
+                  "generated_event_count": 63000,
+                  "accepted_event_count": 60000,
+                  "duplicate_count": 0,
+                  "rejected_count": 0,
+                  "late_count": 3000,
+                  "quarantined_count": 3000,
+                  "readiness_transition_count": 2,
+                  "final_readiness_state": "READY",
+              },
+              "malformed": {
+                  "configured_duration": "1m0s",
+                  "configured_instrument_count": 250,
+                  "generated_event_count": 60600,
+                  "accepted_event_count": 60000,
+                  "duplicate_count": 0,
+                  "rejected_count": 600,
+                  "late_count": 0,
+                  "quarantined_count": 600,
+                  "readiness_transition_count": 2,
+                  "final_readiness_state": "READY",
+              },
+              "slow-consumer": {
+                  "configured_duration": "1s",
+                  "configured_instrument_count": 100,
+                  "generated_event_count": 10000,
+                  "accepted_event_count": 10000,
+                  "duplicate_count": 0,
+                  "rejected_count": 0,
+                  "late_count": 0,
+                  "quarantined_count": 0,
+                  "readiness_transition_count": 1,
+                  "final_readiness_state": "WARMING_UP",
+              },
+              "soak": {
+                  "configured_duration": "30m0s",
+                  "configured_instrument_count": 250,
+                  "generated_event_count": 3000000,
+                  "accepted_event_count": 3000000,
+                  "duplicate_count": 0,
+                  "rejected_count": 0,
+                  "late_count": 0,
+                  "quarantined_count": 0,
+                  "readiness_transition_count": 2,
+                  "final_readiness_state": "READY",
+              },
+          }
+          outcomes = {
+              "runner_and_c_compiler": os.environ["ENVIRONMENT_OUTCOME"],
+              "ordinary_tests_vet_build": os.environ["ORDINARY_OUTCOME"],
+              "race_detector": os.environ["RACE_OUTCOME"],
+              "bounded_application_shutdown": os.environ["SHUTDOWN_OUTCOME"],
+              "classification_profiles": os.environ["PROFILES_OUTCOME"],
+              "real_time_soak": os.environ["SOAK_OUTCOME"],
+          }
+          reports = {}
+          failures = []
+
+          def number(report, field, failing_default):
+              value = report.get(field)
+              if isinstance(value, (int, float)) and not isinstance(value, bool):
+                  return value
+              return failing_default
+
+          for name, outcome in outcomes.items():
+              if outcome != "success":
+                  failures.append(f"{name} outcome was {outcome}")
+
+          for profile in profile_names:
+              path = artifact_dir / f"marketdata-{profile}.json"
+              if not path.is_file():
+                  reports[profile] = None
+                  failures.append(f"{profile} report is missing")
+                  continue
+              try:
+                  report = json.loads(path.read_text(encoding="utf-8"))
+              except (OSError, json.JSONDecodeError) as error:
+                  reports[profile] = None
+                  failures.append(f"{profile} report is invalid: {error}")
+                  continue
+              reports[profile] = report
+              if report.get("passed") is not True:
+                  reasons = report.get("failure_reasons")
+                  if not isinstance(reasons, list) or not reasons:
+                      reasons = ["unspecified failure"]
+                  failures.extend(f"{profile}: {reason}" for reason in reasons)
+              for field, expected in expected_reports[profile].items():
+                  actual = report.get(field)
+                  if actual != expected:
+                      failures.append(
+                          f"{profile}: {field} was {actual!r}, expected {expected!r}"
+                      )
+              expected_malformed = 600 if profile == "malformed" else 0
+              if report.get("malformed_count") != expected_malformed:
+                  failures.append(
+                      f"{profile}: malformed_count was "
+                      f"{report.get('malformed_count')!r}, expected "
+                      f"{expected_malformed}"
+                  )
+              accepted = number(report, "accepted_event_count", -1)
+              for field in (
+                  "downstream_delivery_count",
+                  "unique_downstream_delivery_count",
+              ):
+                  if report.get(field) != accepted:
+                      failures.append(
+                          f"{profile}: {field} did not equal accepted_event_count"
+                      )
+              zero_fields = (
+                  "unexpected_event_loss_count",
+                  "unexpected_duplicate_delivery_count",
+              )
+              for field in zero_fields:
+                  if report.get(field) != 0:
+                      failures.append(f"{profile}: {field} was not zero")
+              if report.get("concurrent_consumer_invocation_detected") is not False:
+                  failures.append(f"{profile}: concurrent consumer invocation detected")
+              if number(report, "peak_reorder_depth", 10001) > 10000:
+                  failures.append(f"{profile}: reorder depth exceeded 10000")
+              if number(report, "peak_heap_growth_bytes", (64 << 20) + 1) > 64 << 20:
+                  failures.append(f"{profile}: peak heap growth exceeded 64 MiB")
+              if (
+                  number(report, "ending_goroutine_count", 3)
+                  > number(report, "starting_goroutine_count", 0) + 2
+              ):
+                  failures.append(f"{profile}: ending goroutine tolerance exceeded")
+              if number(report, "maximum_cancellation_duration_nanoseconds", 500000001) > 500000000:
+                  failures.append(f"{profile}: cancellation exceeded 500 ms")
+              if number(report, "garbage_collection_cycles", 0) < 1:
+                  failures.append(f"{profile}: no garbage-collection cycle recorded")
+              expected_states = (
+                  ["WARMING_UP"]
+                  if profile == "slow-consumer"
+                  else ["WARMING_UP", "READY"]
+              )
+              if report.get("readiness_states") != expected_states:
+                  failures.append(f"{profile}: readiness transition sequence changed")
+              latency_limit = 50000000 if profile == "burst" else 10000000
+              if number(report, "p99_processing_latency_nanoseconds", latency_limit + 1) > latency_limit:
+                  failures.append(f"{profile}: p99 processing latency exceeded its limit")
+              if profile in ("normal", "burst") and number(report, "observations_per_second", 0) < 10000:
+                  failures.append(f"{profile}: processing capacity was below 10000/s")
+              if profile == "slow-consumer" and number(report, "backpressure_duration_nanoseconds", 0) <= 0:
+                  failures.append("slow-consumer: no backpressure duration was measured")
+              if profile == "soak":
+                  if number(report, "soak_heap_growth_after_warmup_bytes", (16 << 20) + 1) > 16 << 20:
+                      failures.append("soak: post-warm-up heap growth exceeded 16 MiB")
+                  if number(report, "total_processing_duration_nanoseconds", 0) < 1798000000000:
+                      failures.append("soak: measured duration was shorter than 29m58s")
+
+          summary = {
+              "schema_version": 1,
+              "run_id": os.environ["RUN_ID"],
+              "run_attempt": os.environ["RUN_ATTEMPT"],
+              "commit_sha": os.environ["COMMIT_SHA"],
+              "configured_soak_duration": "30m0s",
+              "checks": outcomes,
+              "profiles": reports,
+              "artifact_upload_required": True,
+              "passed": not failures,
+              "failure_reasons": failures,
+          }
+          output = artifact_dir / "phase-1.1-release-gate-summary.json"
+          output.write_text(
+              json.dumps(summary, indent=2, sort_keys=True) + "\n",
+              encoding="utf-8",
+          )
+
+          with Path(os.environ["GITHUB_STEP_SUMMARY"]).open("a", encoding="utf-8") as handle:
+              handle.write("# Phase 1.1 market-data release gate\n\n")
+              handle.write(f"- Commit: `{summary['commit_sha']}`\n")
+              handle.write(f"- Overall result: `{'PASS' if summary['passed'] else 'FAIL'}`\n")
+              handle.write("- Configured real-time soak: `30m0s`\n")
+              handle.write("- Machine summary: `phase-1.1-release-gate-summary.json`\n")
+              if failures:
+                  handle.write("\n## Failure reasons\n\n")
+                  for failure in failures:
+                      handle.write(f"- {failure}\n")
+          PY
+
+      - name: Upload durable release evidence
+        id: upload
+        if: always()
+        continue-on-error: true
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7
+        with:
+          name: tradeedge-phase-1-1-release-gate-${{ github.run_id }}-${{ github.run_attempt }}
+          path: artifacts/
+          if-no-files-found: error
+          retention-days: 90
+
+      - name: Enforce release gate
+        if: always()
+        shell: bash
+        env:
+          SUMMARY_OUTCOME: ${{ steps.summary.outcome }}
+          UPLOAD_OUTCOME: ${{ steps.upload.outcome }}
+        run: |
+          set -euo pipefail
+          if [[ "${SUMMARY_OUTCOME}" != "success" ]]; then
+            echo "Machine-readable summary generation failed." >&2
+            exit 1
+          fi
+          if [[ "${UPLOAD_OUTCOME}" != "success" ]]; then
+            echo "Durable evidence upload failed." >&2
+            exit 1
+          fi
+          python3 - <<'PY'
+          import json
+          from pathlib import Path
+
+          summary = json.loads(
+              Path("artifacts/phase-1.1-release-gate-summary.json").read_text(
+                  encoding="utf-8"
+              )
+          )
+          if summary.get("passed") is not True:
+              for reason in summary.get("failure_reasons", []):
+                  print(reason)
+              raise SystemExit(1)
+          PY

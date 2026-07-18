@@ -9,7 +9,9 @@ import (
 	"github.com/bibhuyash/tradeedge/internal/domain"
 	"github.com/bibhuyash/tradeedge/internal/instrumentmaster"
 	"github.com/bibhuyash/tradeedge/internal/marketdata"
+	"github.com/bibhuyash/tradeedge/internal/marketdata/calendar"
 	"github.com/bibhuyash/tradeedge/internal/marketdata/model"
+	"github.com/bibhuyash/tradeedge/internal/marketdata/quality"
 	"github.com/bibhuyash/tradeedge/internal/marketdata/storage"
 )
 
@@ -26,7 +28,7 @@ func TestIngestSuppressesDuplicatesAndOrdersDeterministically(t *testing.T) {
 	}
 	repository := storage.NewMemoryRepository()
 	writer, err := repository.Create(context.Background(), storage.DraftManifest{
-		MasterVersion: string(master.Version()), Source: "test",
+		MasterVersion: string(master.Version()), CalendarVersion: "calendar-v1", Source: "test",
 		OrderingVersion: "exchange-sequence-event-id/v1", CreatedAt: base,
 	})
 	if err != nil {
@@ -74,7 +76,7 @@ func TestIngestQuarantinesEventsOlderThanWatermark(t *testing.T) {
 	base := time.Date(2026, 7, 18, 4, 0, 0, 0, time.UTC)
 	repository := storage.NewMemoryRepository()
 	writer, _ := repository.Create(context.Background(), storage.DraftManifest{
-		MasterVersion: string(master.Version()), Source: "test", OrderingVersion: "v1", CreatedAt: base,
+		MasterVersion: string(master.Version()), CalendarVersion: "calendar-v1", Source: "test", OrderingVersion: "v1", CreatedAt: base,
 	})
 	service := Service{Normalizer: Normalizer{Resolver: resolver}, AllowedLateness: time.Second, BufferCapacity: 10}
 	source := memorysource.Source{Observations: []marketdata.Observation{
@@ -95,7 +97,7 @@ func TestIngestQuarantinesCurrencyAndTickMismatches(t *testing.T) {
 	base := time.Date(2026, 7, 18, 4, 0, 0, 0, time.UTC)
 	repository := storage.NewMemoryRepository()
 	writer, _ := repository.Create(context.Background(), storage.DraftManifest{
-		MasterVersion: string(master.Version()), Source: "test", OrderingVersion: "v1", CreatedAt: base,
+		MasterVersion: string(master.Version()), CalendarVersion: "calendar-v1", Source: "test", OrderingVersion: "v1", CreatedAt: base,
 	})
 	wrongCurrency := quoteObservation(base, 10000)
 	wrongCurrency.Currency = "USD"
@@ -113,11 +115,35 @@ func TestIngestQuarantinesCurrencyAndTickMismatches(t *testing.T) {
 }
 
 func TestIngestRecordsMissingCandleIntervals(t *testing.T) {
-	resolver, master, _ := testResolver(t)
+	resolver, master, instrument := testResolver(t)
 	base := time.Date(2026, 7, 18, 4, 0, 0, 0, time.UTC)
+	location, _ := time.LoadLocation("Asia/Kolkata")
+	tradingDate, _ := domain.NewCivilDate(2026, time.July, 18)
+	schedule, err := calendar.New(calendar.Spec{
+		Source:   calendar.Source{Name: "test", PublishedAt: base.Add(-time.Hour)},
+		Timezone: "Asia/Kolkata", EffectiveFrom: tradingDate, EffectiveTo: tradingDate,
+		Days: []calendar.TradingDay{{
+			Exchange: domain.ExchangeNSE, Date: tradingDate, Status: calendar.DayTrading,
+			Sessions: []calendar.Session{{
+				Open: base.In(location), Close: base.Add(3 * time.Minute).In(location),
+				Kind: calendar.SessionSpecial,
+			}},
+		}},
+	})
+	if err != nil {
+		t.Fatalf("calendar.New() error = %v", err)
+	}
+	rangeEnd := base.Add(3*time.Minute + time.Nanosecond)
+	gaps, err := quality.NewGapDetector(schedule, base, rangeEnd, []quality.GapRequirement{{
+		Provider: "fixture", InstrumentID: instrument.ID(), Exchange: domain.ExchangeNSE,
+		Interval: model.Interval1Minute,
+	}})
+	if err != nil {
+		t.Fatalf("quality.NewGapDetector() error = %v", err)
+	}
 	repository := storage.NewMemoryRepository()
 	writer, _ := repository.Create(context.Background(), storage.DraftManifest{
-		MasterVersion: string(master.Version()), Source: "test", OrderingVersion: "v1", CreatedAt: base,
+		MasterVersion: string(master.Version()), CalendarVersion: string(schedule.Version()), Source: "test", OrderingVersion: "v1", CreatedAt: base,
 	})
 	candle := func(start time.Time) marketdata.Observation {
 		return marketdata.Observation{
@@ -128,10 +154,13 @@ func TestIngestRecordsMissingCandleIntervals(t *testing.T) {
 			Volume: 10, EventCount: 2, Currency: "INR",
 		}
 	}
-	service := Service{Normalizer: Normalizer{Resolver: resolver}, AllowedLateness: time.Minute, BufferCapacity: 10}
+	service := Service{
+		Normalizer:      Normalizer{Resolver: resolver, Calendar: schedule},
+		AllowedLateness: time.Minute, BufferCapacity: 10, Completeness: gaps,
+	}
 	if err := service.Ingest(context.Background(), memorysource.Source{Observations: []marketdata.Observation{
 		candle(base), candle(base.Add(2 * time.Minute)),
-	}}, marketdata.SourceQuery{}, writer); err != nil {
+	}}, marketdata.SourceQuery{Start: base, End: rangeEnd}, writer); err != nil {
 		t.Fatalf("Ingest() error = %v", err)
 	}
 	manifest, _ := writer.Commit(context.Background())
