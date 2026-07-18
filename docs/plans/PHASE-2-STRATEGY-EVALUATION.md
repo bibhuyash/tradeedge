@@ -3,12 +3,13 @@
 ## Scope
 
 Phase 2 builds a deterministic, explainable, provider-neutral strategy
-evaluation framework on canonical Phase 1.1 market data. This change implements
-only Milestone 1: domain contracts and the definition boundary.
+evaluation framework on canonical Phase 1.1 market data. Milestones 1 and 2 are
+implemented: domain contracts plus deterministic repositories, checksummed
+checkpoint restoration, and atomic evaluation publication.
 
-It does not implement a runner, persistence, an actual strategy, automatic
-lifecycle decisions, allocation, Phase 3 risk policy, order execution, live
-connectivity, or credentials.
+It does not implement a runner, timeout or panic isolation, replay integration,
+an actual strategy, automatic lifecycle decisions, allocation, Phase 3 risk
+policy, order execution, live connectivity, or credentials.
 
 ## Assumptions
 
@@ -31,16 +32,24 @@ Milestone 1 owns:
 - explainable observations and bounded advisory multi-leg proposals;
 - a deterministic, broker-neutral `strategy.Definition` interface.
 
+Milestone 2 owns:
+
+- provider-neutral definition/version, instance, checkpoint, evaluation,
+  observation, proposal, and atomic-publication repositories;
+- deterministic revision-zero checkpoints and verified restoration;
+- optimistic `N` to `N+1` state progression;
+- exact canonical retry idempotency and typed identity-integrity failures;
+- a concurrency-safe bounded in-memory adapter using immutable snapshot swaps;
+- deterministic ordered queries and test-only pre-commit failure injection.
+
 Later bounded milestones will own:
 
-1. in-memory repositories, atomic state/evaluation/proposal publication, and
-   restoration;
-2. a bounded serial runner with trigger deduplication, readiness gating,
+1. a bounded serial runner with trigger deduplication, readiness gating,
    timeout, panic containment, and failure quarantine;
-3. replay integration, telemetry, and read-only operational diagnostics;
-4. a moving-average crossover engineering fixture and determinism/property
+2. replay integration, telemetry, and read-only operational diagnostics;
+3. a moving-average crossover engineering fixture and determinism/property
    tests;
-5. release evidence and operating documentation.
+4. release evidence and operating documentation.
 
 ## Invariants
 
@@ -53,6 +62,10 @@ Later bounded milestones will own:
   randomness are absent from the definition contract.
 - Money and prices use integer minor units; sizing uses integer basis points.
 - Every evaluation yields one result and one complete next state.
+- Checkpoint, evaluation record, and optional output publish together.
+- An evaluation starting from revision `N` can publish only `N+1`.
+- Identity reuse with changed canonical content fails as corruption; exact
+  retries are idempotent.
 - A `TRADE_PROPOSAL` is advisory and cannot authorize an order.
 - `SUSPENDED` and `RETIRED` instances are not evaluable.
 - `NO_TRADE` remains correct when no safe proposal exists.
@@ -66,9 +79,9 @@ Later bounded milestones will own:
   readiness reject frame/context creation.
 - Malformed evidence, duplicate legs, invalid integer sizing, or excessive
   validity reject proposals.
-- Runner panics, timeouts, persistence failure, cancellation, and corrupted
-  checkpoints are explicitly deferred and must fail without partial
-  publication in the next milestones.
+- Corrupted or mismatched checkpoints, stale revisions, cancellation, capacity
+  exhaustion, and injected storage failure fail without partial publication.
+- Runner panics and timeouts remain explicitly deferred.
 
 ## Trade-offs
 
@@ -78,8 +91,8 @@ Later bounded milestones will own:
   rollback over in-place performance.
 - Exact-close frames provide strict consistency; latest-completed frames permit
   proportional strategies but preserve maximum-age checks.
-- A narrow first milestone leaves the framework non-runnable until isolation
-  and persistence are implemented.
+- Full immutable snapshot copies make atomicity simple and testable at the
+  approved scale, but are not intended for high-volume durable production.
 
 ## Unresolved Questions
 
@@ -104,4 +117,9 @@ Later bounded milestones will own:
   bounded expiry, evidence, and stable deduplication identity.
 - No strategy interface exposes broker, risk, allocation, execution, account,
   position, order, provider-token, network, or filesystem capability.
+- Checkpoints serialize deterministically with SHA-256 integrity and verified
+  parent lineage.
+- Concurrent publication from one revision has exactly one winner.
+- Failure injection and cancellation expose no partial checkpoint, record,
+  observation, or proposal.
 - `go test ./...`, `go vet ./...`, formatting, and build checks pass.

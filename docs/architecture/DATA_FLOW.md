@@ -112,3 +112,25 @@ declare either exact-close synchronization or latest-completed input semantics.
 Missing, stale, or non-ready required data prevents construction of a valid
 evaluation context. Output publication, checkpointing, runner isolation, and
 proposal persistence remain later Phase 2 milestones.
+
+## Phase 2 Milestone 2 Atomic Publication
+
+```mermaid
+flowchart LR
+    P["Candidate publication"] --> V["Validate identities and canonical payload"]
+    V --> L["Lock repository snapshot"]
+    L --> C{"Expected revision equals current?"}
+    C -->|No| X["Typed conflict; publish nothing"]
+    C -->|Yes| I["Verify parent checksum and prior state hash"]
+    I --> S["Prepare next immutable snapshot"]
+    S --> A["Single atomic snapshot swap"]
+    A --> CP["Checkpoint N+1"]
+    A --> ER["Evaluation record"]
+    A --> OO["Optional observation or proposal"]
+```
+
+The evaluation ID is the publication idempotency identity. A retry is accepted
+only when the canonical publication bytes and checksum match exactly. Reusing
+the ID with different content is an integrity violation. A stale expected
+revision, corrupt lineage, cancellation, capacity exhaustion, or injected
+pre-commit failure leaves every repository view unchanged.

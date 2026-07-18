@@ -1,6 +1,6 @@
 # TradeEdge
 
-TradeEdge is a safety-first automated options-trading platform for the Indian market. The repository includes the Phase 0 runtime foundation, Phase 1 provider-neutral historical market data, Phase 1.1 operational hardening, and the first bounded Phase 2 strategy-contract milestone.
+TradeEdge is a safety-first automated options-trading platform for the Indian market. The repository includes the Phase 0 runtime foundation, Phase 1 provider-neutral historical market data, Phase 1.1 operational hardening, and the first two bounded Phase 2 strategy-framework milestones.
 
 The application is **paper-only**. It contains no Zerodha network integration, live broker route, real credentials, trading strategy, or order-orchestration path.
 
@@ -188,6 +188,12 @@ reports for 90 days. See
 - `internal/strategy` exposes a broker-neutral deterministic definition
   contract. A definition receives no broker, risk, allocation, account, order,
   or position capability.
+- `internal/strategy/storage` owns provider-neutral registry, checkpoint,
+  evaluation, observation, proposal, restoration, and atomic-publication
+  contracts.
+- `internal/adapters/strategy/memory` provides the bounded, concurrency-safe
+  reference repository. It uses optimistic state revisions and one immutable
+  snapshot swap for all-or-nothing publication.
 - `internal/execution` owns the broker interface.
 - `internal/adapters/broker/paper` is an in-memory, context-aware paper skeleton with duplicate prevention and no network access.
 - Configuration, HTTP, and logging are platform concerns and do not contain trading policy.
@@ -196,15 +202,23 @@ Future execution orchestration must follow the documented sequence: strategy eli
 
 ## Phase 2 status
 
-Only Phase 2 Milestone 1 is implemented. It supplies deterministic domain
-contracts; it does not register or run strategies. There is no strategy runner,
-checkpoint repository, proposal publication, reference trading strategy,
-automatic lifecycle transition, backtester, risk decision, allocation, or order
-execution in this milestone.
+Phase 2 Milestones 1 and 2 are implemented. They supply deterministic domain
+contracts plus provider-neutral repositories, checksummed checkpoint
+restoration, and atomic in-memory evaluation publication. There is no strategy
+runner, timeout or panic containment, replay integration, reference trading
+strategy, automatic lifecycle transition, backtester, risk decision,
+allocation, or order execution.
 
 Trade proposals are advisory. They contain stable provenance, integer reference
 prices, normalized leg ratios, bounded validity, evidence, and a
 `STRATEGY_BUDGET_BPS` sizing intent. They deliberately contain no broker token,
 account ID, executable quantity, broker order, or risk approval.
+
+Each strategy instance begins with revision-zero state. An evaluation based on
+revision `N` may publish only checkpoint `N+1`. The checkpoint, evaluation
+record, and optional observation or proposal become visible through one atomic
+snapshot swap. Exact retries are idempotent; stale revisions, changed payloads
+under an existing identity, checksum mismatch, cancellation, or injected
+storage failure publish nothing.
 
 See `docs/` for the product, architecture, trading, reliability, integration, and phase plans.

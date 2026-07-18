@@ -300,6 +300,58 @@ func TestEvaluationContextRequiresReadyMatchingFrame(t *testing.T) {
 	}
 }
 
+func TestEvaluationRecordEnforcesExclusiveOutputMetadata(t *testing.T) {
+	t.Parallel()
+	metadata := testProposalMetadata(
+		t, time.Date(2026, 7, 17, 4, 1, 0, 0, time.UTC),
+		mustEventID(t, "record-event"), testInstrumentID(t, "record-instrument"),
+	)
+	prior := StateHash{1}
+	next := StateHash{2}
+	base := EvaluationRecordSpec{
+		EvaluationID: metadata.EvaluationID, DefinitionID: metadata.DefinitionID,
+		VersionID: metadata.VersionID, InstanceID: metadata.InstanceID,
+		InstanceRevisionID: metadata.InstanceRevisionID,
+		ConfigurationHash:  mustConfigurationHash(t),
+		FrameID:            metadata.FrameID, LogicalTime: metadata.GeneratedAt,
+		PriorStateHash: prior, NextStateHash: next, CheckpointRevision: 1,
+	}
+	tests := []struct {
+		name   string
+		mutate func(*EvaluationRecordSpec)
+		valid  bool
+	}{
+		{"no action", func(value *EvaluationRecordSpec) {
+			value.ResultKind = ResultNoAction
+			value.NoActionReason = NoActionConditionsNotMet
+		}, true},
+		{"observation", func(value *EvaluationRecordSpec) {
+			value.ResultKind = ResultObservation
+			value.ObservationCode = "OBSERVED"
+		}, true},
+		{"proposal", func(value *EvaluationRecordSpec) {
+			value.ResultKind = ResultTradeProposal
+			value.ProposalID, _ = NewProposalID("proposal")
+		}, true},
+		{"mixed output", func(value *EvaluationRecordSpec) {
+			value.ResultKind = ResultObservation
+			value.ObservationCode = "OBSERVED"
+			value.ProposalID, _ = NewProposalID("proposal")
+		}, false},
+	}
+	for _, test := range tests {
+		test := test
+		t.Run(test.name, func(t *testing.T) {
+			value := base
+			test.mutate(&value)
+			_, err := NewEvaluationRecord(value)
+			if (err == nil) != test.valid {
+				t.Fatalf("NewEvaluationRecord() error = %v, valid=%t", err, test.valid)
+			}
+		})
+	}
+}
+
 type fixedEntropy uint64
 
 func (value fixedEntropy) Uint64() uint64 { return uint64(value) }
@@ -391,4 +443,22 @@ func testProposalMetadata(
 		GeneratedAt: now, SourceEventIDs: []marketmodel.EventID{eventID},
 		RequiredInstrumentIDs: instruments,
 	}
+}
+
+func mustEventID(t *testing.T, key string) marketmodel.EventID {
+	t.Helper()
+	value, err := marketmodel.NewEventID(key)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return value
+}
+
+func mustConfigurationHash(t *testing.T) ConfigurationHash {
+	t.Helper()
+	value, err := NewStrategyConfiguration("config/v1", []byte(`{"value":1}`))
+	if err != nil {
+		t.Fatal(err)
+	}
+	return value.Hash()
 }
