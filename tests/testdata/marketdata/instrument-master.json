@@ -22,14 +22,5 @@
       "valid_from": "2026-07-17T00:00:00Z",
       "valid_until": "2026-07-18T00:00:00Z"
     }
-  ],
-  "sessions": [
-    {
-      "exchange": "NSE",
-      "trading_date": "2026-07-17",
-      "open": "2026-07-17T03:45:00Z",
-      "close": "2026-07-17T10:00:00Z",
-      "version": "fixture-calendar-v1"
-    }
   ]
 }
