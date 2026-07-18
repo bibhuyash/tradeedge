@@ -37,6 +37,14 @@ Metrics, tracing backends, retention, and alert ownership are selected before de
 ## Acceptance Criteria
 
 - Phase 0 emits structured startup and shutdown logs.
-- Phase 1 exposes typed market-data quality and replay metric snapshots without high-cardinality instrument labels.
+- Phase 1.1 exposes a typed recorder and a private Prometheus registry at `GET /metrics`.
 - Health and readiness are independently observable.
 - Logging tests demonstrate structured output without secrets.
+
+## Phase 1.1 Metric Catalog
+
+The catalog is `tradeedge_marketdata_{observations_total,quality_total,normalization_duration_seconds,transport_lag_seconds,event_age_seconds,reorder_buffer_depth,ready,readiness_transitions_total,coverage_ratio,missing_intervals_total,dataset_commits_total,dataset_commit_duration_seconds,dataset_bytes,checksum_failures_total,replay_events_total,replay_duration_seconds,replay_consumer_duration_seconds,replay_backpressure_seconds_total,replay_pause_seconds_total}`.
+
+Labels are restricted to provider, exchange, segment, event kind, candle interval, quality/disposition/outcome, bounded readiness scope/state/reason, terminal state, and bounded watchlist ID. Instrument, event, dataset, replay, request, strategy, account, token, symbol, path, error, and free-text reason labels are prohibited.
+
+Processing, lag/age, and long-operation histograms use the approved fixed bucket sets. Instrument IDs remain available in paginated diagnostics, not metric labels.

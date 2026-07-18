@@ -26,6 +26,11 @@ Interfaces are small and owned by their consumers. Cross-module shared values ar
 ## Responsibilities
 
 - Market data normalizes provider input.
+- The versioned calendar owns explicit trading days, holidays, sessions, breaks, and expected candle windows.
+- Readiness owns immutable watchlists, versioned freshness policies, hierarchical diagnostics, and the future trading-permission gate.
+- Telemetry defines a provider-neutral recorder; only the Prometheus adapter and HTTP composition import the Prometheus client.
+- Operations HTTP exposes bounded, GET-only diagnostics without provider tokens or local paths.
+- Dataset publication owns immutable revisions, build-key idempotency, compare-and-swap generations, lineage, and rollback evidence.
 - The instrument master owns canonical instruments and time-bounded provider-token mappings.
 - Market-data ingestion validates, deduplicates, reorders, records quality, and writes immutable datasets.
 - Replay reads canonical datasets and invokes consumers synchronously in deterministic order.
@@ -63,3 +68,5 @@ Additional packages and contracts create ceremony but make unsafe coupling visib
 - Every requested port has one clear owner.
 - Strategy code has no broker capability.
 - Paper and future live adapters satisfy the same execution-owned contract.
+- Prometheus imports are confined to `internal/adapters/metrics/prometheus` and HTTP composition.
+- Calendar, readiness, correction, and operations packages contain no strategy or broker capability.
