@@ -156,7 +156,20 @@ func newTestBroker(t *testing.T, generator IDGenerator) *Broker {
 
 func validRequest(t *testing.T, clientID string) domain.OrderRequest {
 	t.Helper()
-	instrument, _ := domain.NewInstrument("NSE", "NFO-OPT", "NIFTY", "123")
+	underlying, _ := domain.NewUnderlyingID("NIFTY")
+	lot, _ := domain.NewQuantity(1)
+	tick, _ := domain.NewPrice(5, "INR")
+	currency, _ := domain.NewCurrency("INR")
+	instrument, _ := domain.NewInstrument(domain.InstrumentSpec{
+		Exchange:       domain.ExchangeNSE,
+		Segment:        domain.SegmentIndex,
+		UnderlyingID:   underlying,
+		Type:           domain.InstrumentIndex,
+		ExchangeSymbol: "NIFTY",
+		LotSize:        lot,
+		TickSize:       tick,
+		Currency:       currency,
+	})
 	quantity, _ := domain.NewQuantity(50)
 	price, _ := domain.NewPrice(12550, "INR")
 	requestID, _ := domain.NewClientRequestID(clientID)

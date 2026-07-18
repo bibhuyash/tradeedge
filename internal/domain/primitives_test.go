@@ -7,14 +7,30 @@ import (
 )
 
 func TestNewInstrument(t *testing.T) {
-	instrument, err := NewInstrument("nse", "nfo-opt", " nifty ", "123")
+	underlying, _ := NewUnderlyingID("nifty")
+	lot, _ := NewQuantity(50)
+	tick, _ := NewPrice(5, "INR")
+	currency, _ := NewCurrency("INR")
+	instrument, err := NewInstrument(InstrumentSpec{
+		Exchange:       ExchangeNSE,
+		Segment:        SegmentIndex,
+		UnderlyingID:   underlying,
+		Type:           InstrumentIndex,
+		ExchangeSymbol: " nifty ",
+		LotSize:        lot,
+		TickSize:       tick,
+		Currency:       currency,
+	})
 	if err != nil {
 		t.Fatalf("NewInstrument() error = %v", err)
 	}
 	if instrument.Exchange() != "NSE" || instrument.Symbol() != "NIFTY" {
 		t.Fatalf("instrument was not normalized: %#v", instrument)
 	}
-	if _, err := NewInstrument("", "NFO-OPT", "NIFTY", "123"); !errors.Is(err, ErrInvalidInstrument) {
+	if instrument.ID().IsZero() {
+		t.Fatal("instrument ID is zero")
+	}
+	if _, err := NewInstrument(InstrumentSpec{}); !errors.Is(err, ErrInvalidInstrument) {
 		t.Fatalf("NewInstrument() error = %v, want ErrInvalidInstrument", err)
 	}
 }

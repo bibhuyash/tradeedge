@@ -9,13 +9,12 @@ import (
 )
 
 var (
-	ErrInvalidInstrument = errors.New("invalid instrument")
-	ErrInvalidCurrency   = errors.New("invalid currency")
-	ErrCurrencyMismatch  = errors.New("currency mismatch")
-	ErrMoneyOverflow     = errors.New("money overflow")
-	ErrInvalidQuantity   = errors.New("quantity must be positive")
-	ErrInvalidPrice      = errors.New("price cannot be negative")
-	ErrInvalidID         = errors.New("identifier cannot be empty")
+	ErrInvalidCurrency  = errors.New("invalid currency")
+	ErrCurrencyMismatch = errors.New("currency mismatch")
+	ErrMoneyOverflow    = errors.New("money overflow")
+	ErrInvalidQuantity  = errors.New("quantity must be positive")
+	ErrInvalidPrice     = errors.New("price cannot be negative")
+	ErrInvalidID        = errors.New("identifier cannot be empty")
 )
 
 type Currency string
@@ -34,34 +33,6 @@ func NewCurrency(value string) (Currency, error) {
 }
 
 func (c Currency) String() string { return string(c) }
-
-type Instrument struct {
-	exchange string
-	segment  string
-	symbol   string
-	token    string
-}
-
-func NewInstrument(exchange, segment, symbol, token string) (Instrument, error) {
-	instrument := Instrument{
-		exchange: strings.ToUpper(strings.TrimSpace(exchange)),
-		segment:  strings.ToUpper(strings.TrimSpace(segment)),
-		symbol:   strings.ToUpper(strings.TrimSpace(symbol)),
-		token:    strings.TrimSpace(token),
-	}
-	if instrument.exchange == "" || instrument.segment == "" || instrument.symbol == "" || instrument.token == "" {
-		return Instrument{}, ErrInvalidInstrument
-	}
-	return instrument, nil
-}
-
-func (i Instrument) Exchange() string { return i.exchange }
-func (i Instrument) Segment() string  { return i.segment }
-func (i Instrument) Symbol() string   { return i.symbol }
-func (i Instrument) Token() string    { return i.token }
-func (i Instrument) IsZero() bool {
-	return i.exchange == "" || i.segment == "" || i.symbol == "" || i.token == ""
-}
 
 type Money struct {
 	minor    int64
