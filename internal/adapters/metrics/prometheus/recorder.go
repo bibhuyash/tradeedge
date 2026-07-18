@@ -12,6 +12,7 @@ import (
 
 	"github.com/bibhuyash/tradeedge/internal/marketdata/model"
 	"github.com/bibhuyash/tradeedge/internal/marketdata/telemetry"
+	strategytelemetry "github.com/bibhuyash/tradeedge/internal/strategy/telemetry"
 )
 
 var (
@@ -23,25 +24,30 @@ var (
 type Recorder struct {
 	registry *prometheus.Registry
 
-	observations  *prometheus.CounterVec
-	quality       *prometheus.CounterVec
-	normalization *prometheus.HistogramVec
-	transportLag  *prometheus.HistogramVec
-	eventAge      *prometheus.GaugeVec
-	reorderDepth  *prometheus.GaugeVec
-	ready         *prometheus.GaugeVec
-	transitions   *prometheus.CounterVec
-	coverage      *prometheus.GaugeVec
-	missing       *prometheus.CounterVec
-	commits       *prometheus.CounterVec
-	commitTime    prometheus.Histogram
-	datasetBytes  prometheus.Gauge
-	checksums     prometheus.Counter
-	replayEvents  *prometheus.CounterVec
-	replayTime    *prometheus.HistogramVec
-	consumerTime  prometheus.Histogram
-	backpressure  prometheus.Counter
-	pause         prometheus.Counter
+	observations        *prometheus.CounterVec
+	quality             *prometheus.CounterVec
+	normalization       *prometheus.HistogramVec
+	transportLag        *prometheus.HistogramVec
+	eventAge            *prometheus.GaugeVec
+	reorderDepth        *prometheus.GaugeVec
+	ready               *prometheus.GaugeVec
+	transitions         *prometheus.CounterVec
+	coverage            *prometheus.GaugeVec
+	missing             *prometheus.CounterVec
+	commits             *prometheus.CounterVec
+	commitTime          prometheus.Histogram
+	datasetBytes        prometheus.Gauge
+	checksums           prometheus.Counter
+	replayEvents        *prometheus.CounterVec
+	replayTime          *prometheus.HistogramVec
+	consumerTime        prometheus.Histogram
+	backpressure        prometheus.Counter
+	pause               prometheus.Counter
+	strategyEvaluations *prometheus.CounterVec
+	strategyDuration    *prometheus.HistogramVec
+	strategyPublish     *prometheus.HistogramVec
+	strategyStateBytes  prometheus.Gauge
+	strategyInFlight    prometheus.Gauge
 
 	mu            sync.Mutex
 	readinessSeen map[string]string
@@ -49,32 +55,39 @@ type Recorder struct {
 
 func New() *Recorder {
 	r := &Recorder{
-		registry:      prometheus.NewRegistry(),
-		observations:  prometheus.NewCounterVec(prometheus.CounterOpts{Name: "tradeedge_marketdata_observations_total", Help: "Market-data observations received."}, []string{"provider", "exchange", "segment", "event_kind", "candle_interval", "outcome"}),
-		quality:       prometheus.NewCounterVec(prometheus.CounterOpts{Name: "tradeedge_marketdata_quality_total", Help: "Market-data quality dispositions."}, []string{"provider", "exchange", "segment", "event_kind", "candle_interval", "quality_code", "disposition"}),
-		normalization: prometheus.NewHistogramVec(prometheus.HistogramOpts{Name: "tradeedge_marketdata_normalization_duration_seconds", Help: "Observation normalization duration.", Buckets: processingBuckets}, streamLabels()),
-		transportLag:  prometheus.NewHistogramVec(prometheus.HistogramOpts{Name: "tradeedge_marketdata_transport_lag_seconds", Help: "Exchange-to-ingestion lag.", Buckets: lagBuckets}, streamLabels()),
-		eventAge:      prometheus.NewGaugeVec(prometheus.GaugeOpts{Name: "tradeedge_marketdata_event_age_seconds", Help: "Current accepted event age."}, streamLabels()),
-		reorderDepth:  prometheus.NewGaugeVec(prometheus.GaugeOpts{Name: "tradeedge_marketdata_reorder_buffer_depth", Help: "Current reorder-buffer depth."}, streamLabels()),
-		ready:         prometheus.NewGaugeVec(prometheus.GaugeOpts{Name: "tradeedge_marketdata_ready", Help: "Market-data readiness by bounded scope."}, []string{"scope_type", "provider", "watchlist", "state", "reason"}),
-		transitions:   prometheus.NewCounterVec(prometheus.CounterOpts{Name: "tradeedge_marketdata_readiness_transitions_total", Help: "Market-data readiness state transitions."}, []string{"scope_type", "provider", "watchlist", "state", "reason"}),
-		coverage:      prometheus.NewGaugeVec(prometheus.GaugeOpts{Name: "tradeedge_marketdata_coverage_ratio", Help: "Required stream coverage."}, []string{"scope_type", "provider", "watchlist"}),
-		missing:       prometheus.NewCounterVec(prometheus.CounterOpts{Name: "tradeedge_marketdata_missing_intervals_total", Help: "Missing expected candle intervals."}, streamLabels()),
-		commits:       prometheus.NewCounterVec(prometheus.CounterOpts{Name: "tradeedge_marketdata_dataset_commits_total", Help: "Dataset commit attempts."}, []string{"outcome"}),
-		commitTime:    prometheus.NewHistogram(prometheus.HistogramOpts{Name: "tradeedge_marketdata_dataset_commit_duration_seconds", Help: "Dataset commit duration.", Buckets: operationBuckets}),
-		datasetBytes:  prometheus.NewGauge(prometheus.GaugeOpts{Name: "tradeedge_marketdata_dataset_bytes", Help: "Bytes in the most recently committed dataset."}),
-		checksums:     prometheus.NewCounter(prometheus.CounterOpts{Name: "tradeedge_marketdata_checksum_failures_total", Help: "Dataset checksum failures."}),
-		replayEvents:  prometheus.NewCounterVec(prometheus.CounterOpts{Name: "tradeedge_marketdata_replay_events_total", Help: "Events replayed."}, []string{"terminal_state"}),
-		replayTime:    prometheus.NewHistogramVec(prometheus.HistogramOpts{Name: "tradeedge_marketdata_replay_duration_seconds", Help: "Replay duration.", Buckets: operationBuckets}, []string{"terminal_state"}),
-		consumerTime:  prometheus.NewHistogram(prometheus.HistogramOpts{Name: "tradeedge_marketdata_replay_consumer_duration_seconds", Help: "Replay consumer duration.", Buckets: processingBuckets}),
-		backpressure:  prometheus.NewCounter(prometheus.CounterOpts{Name: "tradeedge_marketdata_replay_backpressure_seconds_total", Help: "Time spent synchronously invoking replay consumers."}),
-		pause:         prometheus.NewCounter(prometheus.CounterOpts{Name: "tradeedge_marketdata_replay_pause_seconds_total", Help: "Time replay remained paused."}),
-		readinessSeen: make(map[string]string),
+		registry:            prometheus.NewRegistry(),
+		observations:        prometheus.NewCounterVec(prometheus.CounterOpts{Name: "tradeedge_marketdata_observations_total", Help: "Market-data observations received."}, []string{"provider", "exchange", "segment", "event_kind", "candle_interval", "outcome"}),
+		quality:             prometheus.NewCounterVec(prometheus.CounterOpts{Name: "tradeedge_marketdata_quality_total", Help: "Market-data quality dispositions."}, []string{"provider", "exchange", "segment", "event_kind", "candle_interval", "quality_code", "disposition"}),
+		normalization:       prometheus.NewHistogramVec(prometheus.HistogramOpts{Name: "tradeedge_marketdata_normalization_duration_seconds", Help: "Observation normalization duration.", Buckets: processingBuckets}, streamLabels()),
+		transportLag:        prometheus.NewHistogramVec(prometheus.HistogramOpts{Name: "tradeedge_marketdata_transport_lag_seconds", Help: "Exchange-to-ingestion lag.", Buckets: lagBuckets}, streamLabels()),
+		eventAge:            prometheus.NewGaugeVec(prometheus.GaugeOpts{Name: "tradeedge_marketdata_event_age_seconds", Help: "Current accepted event age."}, streamLabels()),
+		reorderDepth:        prometheus.NewGaugeVec(prometheus.GaugeOpts{Name: "tradeedge_marketdata_reorder_buffer_depth", Help: "Current reorder-buffer depth."}, streamLabels()),
+		ready:               prometheus.NewGaugeVec(prometheus.GaugeOpts{Name: "tradeedge_marketdata_ready", Help: "Market-data readiness by bounded scope."}, []string{"scope_type", "provider", "watchlist", "state", "reason"}),
+		transitions:         prometheus.NewCounterVec(prometheus.CounterOpts{Name: "tradeedge_marketdata_readiness_transitions_total", Help: "Market-data readiness state transitions."}, []string{"scope_type", "provider", "watchlist", "state", "reason"}),
+		coverage:            prometheus.NewGaugeVec(prometheus.GaugeOpts{Name: "tradeedge_marketdata_coverage_ratio", Help: "Required stream coverage."}, []string{"scope_type", "provider", "watchlist"}),
+		missing:             prometheus.NewCounterVec(prometheus.CounterOpts{Name: "tradeedge_marketdata_missing_intervals_total", Help: "Missing expected candle intervals."}, streamLabels()),
+		commits:             prometheus.NewCounterVec(prometheus.CounterOpts{Name: "tradeedge_marketdata_dataset_commits_total", Help: "Dataset commit attempts."}, []string{"outcome"}),
+		commitTime:          prometheus.NewHistogram(prometheus.HistogramOpts{Name: "tradeedge_marketdata_dataset_commit_duration_seconds", Help: "Dataset commit duration.", Buckets: operationBuckets}),
+		datasetBytes:        prometheus.NewGauge(prometheus.GaugeOpts{Name: "tradeedge_marketdata_dataset_bytes", Help: "Bytes in the most recently committed dataset."}),
+		checksums:           prometheus.NewCounter(prometheus.CounterOpts{Name: "tradeedge_marketdata_checksum_failures_total", Help: "Dataset checksum failures."}),
+		replayEvents:        prometheus.NewCounterVec(prometheus.CounterOpts{Name: "tradeedge_marketdata_replay_events_total", Help: "Events replayed."}, []string{"terminal_state"}),
+		replayTime:          prometheus.NewHistogramVec(prometheus.HistogramOpts{Name: "tradeedge_marketdata_replay_duration_seconds", Help: "Replay duration.", Buckets: operationBuckets}, []string{"terminal_state"}),
+		consumerTime:        prometheus.NewHistogram(prometheus.HistogramOpts{Name: "tradeedge_marketdata_replay_consumer_duration_seconds", Help: "Replay consumer duration.", Buckets: processingBuckets}),
+		backpressure:        prometheus.NewCounter(prometheus.CounterOpts{Name: "tradeedge_marketdata_replay_backpressure_seconds_total", Help: "Time spent synchronously invoking replay consumers."}),
+		pause:               prometheus.NewCounter(prometheus.CounterOpts{Name: "tradeedge_marketdata_replay_pause_seconds_total", Help: "Time replay remained paused."}),
+		strategyEvaluations: prometheus.NewCounterVec(prometheus.CounterOpts{Name: "tradeedge_strategy_evaluations_total", Help: "Strategy runner outcomes."}, []string{"definition", "outcome"}),
+		strategyDuration:    prometheus.NewHistogramVec(prometheus.HistogramOpts{Name: "tradeedge_strategy_evaluation_duration_seconds", Help: "Strategy evaluation duration.", Buckets: processingBuckets}, []string{"definition", "outcome"}),
+		strategyPublish:     prometheus.NewHistogramVec(prometheus.HistogramOpts{Name: "tradeedge_strategy_publication_duration_seconds", Help: "Atomic publication duration.", Buckets: processingBuckets}, []string{"definition", "outcome"}),
+		strategyStateBytes:  prometheus.NewGauge(prometheus.GaugeOpts{Name: "tradeedge_strategy_state_bytes", Help: "Most recent bounded strategy state size."}),
+		strategyInFlight:    prometheus.NewGauge(prometheus.GaugeOpts{Name: "tradeedge_strategy_in_flight", Help: "Current strategy evaluations in flight."}),
+		readinessSeen:       make(map[string]string),
 	}
 	r.registry.MustRegister(collectors.NewGoCollector(), collectors.NewProcessCollector(collectors.ProcessCollectorOpts{}))
 	r.registry.MustRegister(r.observations, r.quality, r.normalization, r.transportLag, r.eventAge,
 		r.reorderDepth, r.ready, r.transitions, r.coverage, r.missing, r.commits, r.commitTime,
 		r.datasetBytes, r.checksums, r.replayEvents, r.replayTime, r.consumerTime, r.backpressure, r.pause)
+	r.registry.MustRegister(r.strategyEvaluations, r.strategyDuration, r.strategyPublish,
+		r.strategyStateBytes, r.strategyInFlight)
 	return r
 }
 
@@ -144,3 +157,17 @@ func (r *Recorder) Replay(state string, events uint64, elapsed, consumer, backpr
 }
 
 func BoolLabel(value bool) string { return strconv.FormatBool(value) }
+
+func (r *Recorder) Record(event strategytelemetry.Event) {
+	definition := event.Definition.String()
+	if definition == "" {
+		definition = "unknown"
+	}
+	r.strategyEvaluations.WithLabelValues(definition, event.Outcome).Inc()
+	r.strategyDuration.WithLabelValues(definition, event.Outcome).Observe(event.Duration.Seconds())
+	r.strategyPublish.WithLabelValues(definition, event.Outcome).Observe(event.Publish.Seconds())
+	if event.StateBytes > 0 {
+		r.strategyStateBytes.Set(float64(event.StateBytes))
+	}
+	r.strategyInFlight.Set(float64(event.InFlight))
+}

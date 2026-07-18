@@ -11,6 +11,8 @@ import (
 	"github.com/bibhuyash/tradeedge/internal/domain"
 	"github.com/bibhuyash/tradeedge/internal/marketdata/model"
 	"github.com/bibhuyash/tradeedge/internal/marketdata/telemetry"
+	strategymodel "github.com/bibhuyash/tradeedge/internal/strategy/model"
+	strategytelemetry "github.com/bibhuyash/tradeedge/internal/strategy/telemetry"
 )
 
 func TestRecorderExposesCatalogWithoutHighCardinalityLabels(t *testing.T) {
@@ -25,6 +27,11 @@ func TestRecorderExposesCatalogWithoutHighCardinalityLabels(t *testing.T) {
 	recorder.TransportLag(dimensions, time.Second)
 	recorder.DatasetCommit("committed", time.Second, 100)
 	recorder.Readiness("watchlist", "", "primary", "READY", "NONE", true, 1)
+	definitionID, _ := strategymodel.NewDefinitionID("metric-fixture")
+	recorder.Record(strategytelemetry.Event{
+		Definition: definitionID, Outcome: "COMMITTED_NO_ACTION",
+		Duration: time.Millisecond, Publish: time.Millisecond, StateBytes: 12, InFlight: 1,
+	})
 	response := httptest.NewRecorder()
 	recorder.Handler().ServeHTTP(response, httptest.NewRequest(http.MethodGet, "/metrics", nil))
 	if response.Code != http.StatusOK {
@@ -36,6 +43,11 @@ func TestRecorderExposesCatalogWithoutHighCardinalityLabels(t *testing.T) {
 		"tradeedge_marketdata_quality_total",
 		"tradeedge_marketdata_normalization_duration_seconds",
 		"tradeedge_marketdata_ready",
+		"tradeedge_strategy_evaluations_total",
+		"tradeedge_strategy_evaluation_duration_seconds",
+		"tradeedge_strategy_publication_duration_seconds",
+		"tradeedge_strategy_state_bytes",
+		"tradeedge_strategy_in_flight",
 	} {
 		if !strings.Contains(body, name) {
 			t.Fatalf("metrics output missing %s", name)
