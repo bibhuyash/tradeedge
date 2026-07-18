@@ -34,7 +34,12 @@ Interfaces are small and owned by their consumers. Cross-module shared values ar
 - The instrument master owns canonical instruments and time-bounded provider-token mappings.
 - Market-data ingestion validates, deduplicates, reorders, records quality, and writes immutable datasets.
 - Replay reads canonical datasets and invokes consumers synchronously in deterministic order.
-- Strategy emits signals only.
+- Strategy definitions consume immutable, readiness-backed candle frames and
+  return exactly one deterministic result: `NO_ACTION`, `OBSERVATION`, or an
+  advisory `TRADE_PROPOSAL`, together with the next bounded runtime state.
+- A future strategy runner will own trigger deduplication, timeouts, failure
+  isolation, and atomic publication; those runtime capabilities are not part of
+  the Phase 2 Milestone 1 contracts.
 - Lifecycle establishes eligibility.
 - Portfolio allocates constrained capital.
 - Risk approves or rejects proposed exposure.
@@ -47,6 +52,10 @@ Interfaces are small and owned by their consumers. Cross-module shared values ar
 - Dependencies flow toward domain policy, never from domain to adapters.
 - Provider tokens never serve as canonical instrument identifiers.
 - Only validated canonical quote and completed-candle events may cross into consumers.
+- A strategy receives no broker, account, position, order, allocation, or risk
+  capability. A proposal contains sizing intent but no executable quantity.
+- Strategy versions, configurations, instance revisions, frames, evaluations,
+  and proposals have stable content-derived identities.
 - Allocation and risk precede submission.
 - Audit records accompany material decisions.
 
@@ -70,3 +79,5 @@ Additional packages and contracts create ceremony but make unsafe coupling visib
 - Paper and future live adapters satisfy the same execution-owned contract.
 - Prometheus imports are confined to `internal/adapters/metrics/prometheus` and HTTP composition.
 - Calendar, readiness, correction, and operations packages contain no strategy or broker capability.
+- Strategy contracts import only provider-neutral domain, market-data model,
+  and readiness types.

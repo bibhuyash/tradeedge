@@ -1,6 +1,6 @@
 # TradeEdge
 
-TradeEdge is a safety-first automated options-trading platform for the Indian market. The repository includes the Phase 0 runtime foundation, Phase 1 provider-neutral historical market data, and Phase 1.1 operational hardening.
+TradeEdge is a safety-first automated options-trading platform for the Indian market. The repository includes the Phase 0 runtime foundation, Phase 1 provider-neutral historical market data, Phase 1.1 operational hardening, and the first bounded Phase 2 strategy-contract milestone.
 
 The application is **paper-only**. It contains no Zerodha network integration, live broker route, real credentials, trading strategy, or order-orchestration path.
 
@@ -182,11 +182,29 @@ reports for 90 days. See
 - `internal/marketdata/calendar` and `readiness` make expectation and freshness explicit.
 - `internal/marketdata/storage` plus the file adapter preserve revisions and append-only publication history.
 - `internal/marketdata/telemetry` owns metric semantics; the Prometheus library remains in its adapter.
-- Strategy code can receive only the canonical market-data event contract and has no broker capability.
+- `internal/strategy/model` owns stable strategy versions, canonical
+  configuration and state, subscriptions, immutable candle frames, evidence,
+  evaluation results, and advisory proposals.
+- `internal/strategy` exposes a broker-neutral deterministic definition
+  contract. A definition receives no broker, risk, allocation, account, order,
+  or position capability.
 - `internal/execution` owns the broker interface.
 - `internal/adapters/broker/paper` is an in-memory, context-aware paper skeleton with duplicate prevention and no network access.
 - Configuration, HTTP, and logging are platform concerns and do not contain trading policy.
 
 Future execution orchestration must follow the documented sequence: strategy eligibility, portfolio allocation, central risk approval, execution, broker interaction, and reconciliation. No component may bypass that pipeline.
+
+## Phase 2 status
+
+Only Phase 2 Milestone 1 is implemented. It supplies deterministic domain
+contracts; it does not register or run strategies. There is no strategy runner,
+checkpoint repository, proposal publication, reference trading strategy,
+automatic lifecycle transition, backtester, risk decision, allocation, or order
+execution in this milestone.
+
+Trade proposals are advisory. They contain stable provenance, integer reference
+prices, normalized leg ratios, bounded validity, evidence, and a
+`STRATEGY_BUDGET_BPS` sizing intent. They deliberately contain no broker token,
+account ID, executable quantity, broker order, or risk approval.
 
 See `docs/` for the product, architecture, trading, reliability, integration, and phase plans.
