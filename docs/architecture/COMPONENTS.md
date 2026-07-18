@@ -26,6 +26,9 @@ Interfaces are small and owned by their consumers. Cross-module shared values ar
 ## Responsibilities
 
 - Market data normalizes provider input.
+- The instrument master owns canonical instruments and time-bounded provider-token mappings.
+- Market-data ingestion validates, deduplicates, reorders, records quality, and writes immutable datasets.
+- Replay reads canonical datasets and invokes consumers synchronously in deterministic order.
 - Strategy emits signals only.
 - Lifecycle establishes eligibility.
 - Portfolio allocates constrained capital.
@@ -37,6 +40,8 @@ Interfaces are small and owned by their consumers. Cross-module shared values ar
 ## Invariants
 
 - Dependencies flow toward domain policy, never from domain to adapters.
+- Provider tokens never serve as canonical instrument identifiers.
+- Only validated canonical quote and completed-candle events may cross into consumers.
 - Allocation and risk precede submission.
 - Audit records accompany material decisions.
 

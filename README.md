@@ -1,8 +1,8 @@
 # TradeEdge
 
-TradeEdge is a safety-first automated options-trading platform for the Indian market. The repository is currently in Phase 0: architecture and foundation.
+TradeEdge is a safety-first automated options-trading platform for the Indian market. The repository includes the Phase 0 runtime foundation and Phase 1 provider-neutral historical market-data foundation.
 
-The application is **paper-only**. It contains no Zerodha integration, live broker route, real credentials, trading strategy, or order-orchestration path.
+The application is **paper-only**. It contains no Zerodha network integration, live broker route, real credentials, trading strategy, or order-orchestration path.
 
 ## Prerequisites
 
@@ -68,10 +68,34 @@ make format
 
 These run `go build ./...`, `go test ./...`, `go vet ./...`, and `gofmt` respectively.
 
+## Historical market-data tool
+
+Phase 1 provides an offline local-file tool. It never connects to Zerodha.
+
+```sh
+go run ./cmd/tradeedge-marketdata ingest \
+  -master tests/testdata/marketdata/instrument-master.json \
+  -input tests/testdata/marketdata/observations.ndjson \
+  -root .cache/datasets
+
+go run ./cmd/tradeedge-marketdata verify \
+  -root .cache/datasets \
+  -dataset <dataset-id>
+
+go run ./cmd/tradeedge-marketdata replay \
+  -root .cache/datasets \
+  -dataset <dataset-id> \
+  -speed max
+```
+
+Replay speed accepts `max`, `1x`, or a positive integer acceleration such as `10x`. Replay invokes consumers serially and uses synchronous backpressure.
+
 ## Architecture boundaries
 
 - `internal/domain` owns typed values and shared domain contracts.
-- Strategy code receives market events and emits signals; it has no broker capability.
+- `internal/instrumentmaster` separates canonical instrument identity from provider-token mappings.
+- `internal/marketdata` validates, orders, stores, measures, and replays canonical quote and completed-candle events.
+- Strategy code can receive only the canonical market-data event contract and has no broker capability.
 - `internal/execution` owns the broker interface.
 - `internal/adapters/broker/paper` is an in-memory, context-aware paper skeleton with duplicate prevention and no network access.
 - Configuration, HTTP, and logging are platform concerns and do not contain trading policy.

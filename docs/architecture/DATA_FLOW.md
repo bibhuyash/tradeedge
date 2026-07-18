@@ -6,7 +6,10 @@ This document defines the authoritative flow from external market data to reconc
 
 ```mermaid
 sequenceDiagram
-    participant M as Market Data
+    participant P as Provider Fixture
+    participant N as Normalize and Validate
+    participant D as Dataset
+    participant M as Replay / Live Contract
     participant S as Strategy
     participant E as Eligibility
     participant P as Portfolio
@@ -14,7 +17,10 @@ sequenceDiagram
     participant X as Execution
     participant B as Broker
     participant C as Reconciler
-    M->>S: Normalized event
+    P->>N: Provider observation
+    N->>D: Ordered canonical event
+    D->>M: Deterministic replay
+    M->>S: Validated canonical event
     S->>E: Signal
     E->>P: Eligible signal
     P->>R: Proposed allocation
@@ -37,6 +43,8 @@ Each stage validates its inputs, records its decision, and passes an explicit ty
 ## Invariants
 
 - A rejected or missing decision halts the flow.
+- Malformed, duplicate, or too-late market observations never enter the canonical consumer stream.
+- Equal exchange timestamps are ordered by provider sequence when available, then event ID.
 - Timeouts are ambiguous, not failures.
 - Reconciliation precedes retry when submission outcome is unknown.
 - Alerts never substitute for persisted truth.

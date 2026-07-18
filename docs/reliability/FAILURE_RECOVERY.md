@@ -23,10 +23,13 @@ External calls are bounded and cancellable. Broker facts supersede internal assu
 
 Recovery detects incomplete transitions, reconciles broker state, repairs derived views, preserves evidence, and requires explicit safety gates before resuming.
 
+Market-data recovery additionally verifies dataset schema and SHA-256 checksums before replay. Incomplete temporary datasets are never opened, and stale or missing required data remains fail-closed.
+
 ## Invariants
 
 - Startup does not place orders while reconciliation is incomplete.
 - Recovery never deletes conflicting evidence.
+- Published historical datasets are immutable; corrected history is a new revision.
 - Notifications are not authoritative.
 
 ## Failure Modes

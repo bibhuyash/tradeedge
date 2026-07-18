@@ -12,6 +12,8 @@ Telemetry systems may fail and must not become trading truth. Correlation identi
 
 - Emit JSON logs with level, time, component, operation, and correlation context.
 - Measure data freshness, decisions, rejections, order states, reconciliation, dependency latency, and readiness.
+- Count accepted, duplicate, late, malformed, missing, corrected, and stale market-data outcomes.
+- Measure exchange-to-ingestion lag, reorder-buffer depth, dataset checksums, replay throughput, consumer time, scheduled waits, and pause duration.
 - Preserve material automated decisions as append-only audit events.
 
 ## Invariants
@@ -35,5 +37,6 @@ Metrics, tracing backends, retention, and alert ownership are selected before de
 ## Acceptance Criteria
 
 - Phase 0 emits structured startup and shutdown logs.
+- Phase 1 exposes typed market-data quality and replay metric snapshots without high-cardinality instrument labels.
 - Health and readiness are independently observable.
 - Logging tests demonstrate structured output without secrets.

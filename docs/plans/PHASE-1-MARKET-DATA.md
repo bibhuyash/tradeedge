@@ -2,7 +2,7 @@
 
 ## Scope
 
-Add reliable Zerodha market-data ingestion, instrument normalization, freshness checks, reconnect behavior, replay fixtures, and health signals. This document does not authorize Phase 1 implementation during Phase 0.
+Build provider-neutral canonical instruments, historical quote/candle normalization, quality enforcement, checksummed datasets, and deterministic replay. Live Zerodha connectivity remains deferred.
 
 ## Assumptions
 
@@ -11,24 +11,27 @@ Provider details will be verified against current official Zerodha documentation
 ## Responsibilities
 
 - Load and version the instrument reference set.
-- Normalize streaming events into domain contracts.
+- Resolve time-bounded provider mappings without using provider tokens as domain identity.
+- Normalize historical observations into immutable quote and completed-candle contracts.
 - Detect stale, duplicate, out-of-order, and missing data.
-- Reconnect with bounded backoff and expose degraded readiness.
-- Produce deterministic recorded fixtures within licensing constraints.
+- Persist canonical datasets through in-memory and atomically published file repositories.
+- Replay through injected clocks with rational speed, pause/resume, cancellation, and synchronous backpressure.
 
 ## Invariants
 
 - Stale or uncertain data cannot produce tradable input.
 - Provider SDK types remain inside the adapter.
+- Invalid, duplicate, and too-late events cannot enter the downstream canonical stream.
+- Equal timestamps use provider sequence when available and then event ID as a stable tie-break.
 - No order placement or strategy implementation is introduced.
 
 ## Failure Modes
 
-Authentication expiry, disconnects, silent stream stalls, reference-data drift, bursts, and clock disagreement must be observable and fail closed.
+Unknown mappings, malformed observations, late events, buffer exhaustion, checksum failure, fixture corruption, stale data, and replay consumer failures are observable and fail closed.
 
 ## Trade-offs
 
-Persisting all raw ticks improves replay but increases cost and licensing risk; retention requires an explicit decision.
+Gzip NDJSON is portable and deterministic but is not a substitute for a future concurrent analytical store. PostgreSQL is deferred behind repository interfaces.
 
 ## Unresolved Questions
 
@@ -36,6 +39,7 @@ Instrument universe, candle construction, raw-data retention, licensing, and fre
 
 ## Acceptance Criteria
 
-- Recorded and live-equivalent paths produce the same normalized contracts.
+- In-memory and file-backed paths produce the same normalized contracts.
 - Gap and stale-data tests are deterministic.
-- Provider failure changes health/readiness without enabling trading.
+- Repeated replay produces stable serial ordering and responds promptly to cancellation.
+- No provider network connection, strategy, or order execution is introduced.
