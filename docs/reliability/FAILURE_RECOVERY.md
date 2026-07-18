@@ -34,6 +34,14 @@ Any mismatch fails closed. Evaluation publication uses optimistic revision
 control: only `N+1` may follow revision `N`, and checkpoint, evaluation record,
 observation, and advisory proposal share one atomic commit boundary.
 
+The Milestone 3 runner treats timeouts, cancellation, panics, invalid output,
+revision conflicts, and storage failures as non-committed attempts. Their
+trigger may be retried because no committed evaluation identity exists.
+Committed triggers return an idempotent duplicate outcome. A revision conflict
+is surfaced without re-running strategy code. Panic values and stacks are
+bounded, and a later trigger or safe retry can proceed after keyed state is
+retired.
+
 ## Invariants
 
 - Startup does not place orders while reconciliation is incomplete.
@@ -42,6 +50,8 @@ observation, and advisory proposal share one atomic commit boundary.
 - A strategy proposal or observation cannot be restored without its evaluation
   record and committed checkpoint.
 - Failed or cancelled strategy publication cannot advance authoritative state.
+- Shutdown rejects new evaluation reservations, cancels accepted work, and
+  waits within the application shutdown deadline.
 - Notifications are not authoritative.
 
 ## Failure Modes
@@ -66,3 +76,6 @@ Recovery time and recovery point objectives require production infrastructure de
 - Incomplete generation directories are ignored, rollback retains every prior generation, and corrupt inputs cannot become current.
 - Corrupt or mismatched strategy checkpoints are rejected, exact publication
   retries are idempotent, and injected commit failure exposes no partial state.
+- Deterministic replay resumed from a verified intermediate checkpoint produces
+  the same IDs, checkpoint bytes, checksums, proposal identities, and final
+  state as uninterrupted replay.

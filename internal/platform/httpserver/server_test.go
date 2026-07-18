@@ -75,6 +75,20 @@ func TestMetricsEndpointIsGETOnly(t *testing.T) {
 	}
 }
 
+func TestStrategyOperationsAreMountedUnderReadOnlyPrefix(t *testing.T) {
+	operations := http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		w.WriteHeader(http.StatusOK)
+	})
+	handler := NewHandlerWithOptions(&Readiness{}, Options{StrategyOperations: operations})
+	response := httptest.NewRecorder()
+	handler.ServeHTTP(response, httptest.NewRequest(
+		http.MethodGet, "/api/v1/strategy/definitions", nil,
+	))
+	if response.Code != http.StatusOK {
+		t.Fatalf("status = %d", response.Code)
+	}
+}
+
 func assertStatus(t *testing.T, handler http.Handler, method, path string, wantCode int, wantStatus string) {
 	t.Helper()
 	response := httptest.NewRecorder()

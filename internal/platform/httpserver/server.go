@@ -31,9 +31,10 @@ type MarketReadinessSource interface {
 }
 
 type Options struct {
-	MarketReadiness MarketReadinessSource
-	Operations      http.Handler
-	Metrics         http.Handler
+	MarketReadiness    MarketReadinessSource
+	Operations         http.Handler
+	StrategyOperations http.Handler
+	Metrics            http.Handler
 }
 
 func New(address string, logger *slog.Logger, readiness *Readiness) (*Server, error) {
@@ -99,6 +100,9 @@ func NewHandlerWithOptions(process *Readiness, options Options) http.Handler {
 	}
 	if options.Operations != nil {
 		mux.Handle("/api/v1/market-data/", options.Operations)
+	}
+	if options.StrategyOperations != nil {
+		mux.Handle("/api/v1/strategy/", options.StrategyOperations)
 	}
 	return mux
 }

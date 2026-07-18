@@ -110,8 +110,8 @@ flowchart LR
 Single-stream definitions use a one-series frame. Multi-instrument definitions
 declare either exact-close synchronization or latest-completed input semantics.
 Missing, stale, or non-ready required data prevents construction of a valid
-evaluation context. Output publication, checkpointing, runner isolation, and
-proposal persistence remain later Phase 2 milestones.
+evaluation context. Milestone 3 supplies the bounded runner and replay
+boundary; eligibility, allocation, risk, and execution remain later phases.
 
 ## Phase 2 Milestone 2 Atomic Publication
 
@@ -134,3 +134,28 @@ only when the canonical publication bytes and checksum match exactly. Reusing
 the ID with different content is an integrity violation. A stale expected
 revision, corrupt lineage, cancellation, capacity exhaustion, or injected
 pre-commit failure leaves every repository view unchanged.
+
+## Phase 2 Milestone 3 Evaluation Runtime
+
+```mermaid
+flowchart LR
+    C["Completed candle replay or future live delivery"] --> F["Bounded immutable frame"]
+    F --> G["Lifecycle and Phase 1.1 readiness gate"]
+    G -->|Blocked| B["Typed blocked receipt; no strategy call"]
+    G -->|Ready| D["Deterministic trigger deduplication"]
+    D -->|Committed or in progress| X["Typed duplicate receipt"]
+    D --> S["Per-instance serial reservation"]
+    S --> Q["Bounded cross-instance semaphore"]
+    Q --> E["Cooperative timed evaluation"]
+    E -->|Panic, timeout, invalid| N["Typed failure; publish nothing"]
+    E --> V["Validate complete candidate state and result"]
+    V --> A["Milestone 2 atomic publication"]
+    A --> CP["Checkpoint N+1"]
+    A --> ER["Evaluation record"]
+    A --> OP["Optional observation or advisory proposal"]
+```
+
+The caller is the queue: semaphore acquisition and replay delivery are
+synchronous, so backpressure is explicit and no event is silently dropped.
+The keyed reservation is removed on every terminal path. Shutdown first closes
+admission, cancels accepted work, and waits for the bounded reservation set.

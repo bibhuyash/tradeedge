@@ -1,0 +1,82 @@
+name: Phase 2 strategy-runner stress
+
+on:
+  workflow_dispatch:
+  pull_request:
+    paths:
+      - "internal/strategy/**"
+      - "internal/adapters/strategy/**"
+      - "internal/adapters/metrics/prometheus/**"
+      - ".github/workflows/strategy-runner-stress.yml"
+
+permissions:
+  contents: read
+
+concurrency:
+  group: strategy-runner-stress-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  stress:
+    name: Race and deterministic replay stress
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10 # v6
+
+      - uses: actions/setup-go@924ae3a1cded613372ab5595356fb5720e22ba16 # v6
+        with:
+          go-version-file: go.mod
+          cache: false
+
+      - name: Run race-heavy runner and replay repetitions
+        id: stress
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p artifacts
+          go test -race ./internal/strategy/... ./internal/adapters/strategy/... \
+            -count=10 -timeout=10m 2>&1 | tee artifacts/strategy-runner-race.log
+
+      - name: Write machine-readable evidence
+        if: always()
+        shell: bash
+        env:
+          OUTCOME: ${{ steps.stress.outcome }}
+          RUN_ID: ${{ github.run_id }}
+          RUN_ATTEMPT: ${{ github.run_attempt }}
+          COMMIT_SHA: ${{ github.sha }}
+        run: |
+          python3 - <<'PY'
+          import json
+          import os
+          from pathlib import Path
+
+          summary = {
+              "schema_version": 1,
+              "run_id": os.environ["RUN_ID"],
+              "run_attempt": os.environ["RUN_ATTEMPT"],
+              "commit_sha": os.environ["COMMIT_SHA"],
+              "race_enabled": True,
+              "repetitions": 10,
+              "runner_and_replay_outcome": os.environ["OUTCOME"],
+              "passed": os.environ["OUTCOME"] == "success",
+          }
+          Path("artifacts").mkdir(exist_ok=True)
+          Path("artifacts/phase-2-milestone-3-strategy-stress.json").write_text(
+              json.dumps(summary, indent=2, sort_keys=True) + "\n",
+              encoding="utf-8",
+          )
+          if not summary["passed"]:
+              raise SystemExit(1)
+          PY
+
+      - name: Upload stress evidence
+        if: always()
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7
+        with:
+          name: tradeedge-phase-2-milestone-3-${{ github.run_id }}-${{ github.run_attempt }}
+          path: artifacts/
+          if-no-files-found: error
+          retention-days: 30
+

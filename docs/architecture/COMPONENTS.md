@@ -37,8 +37,14 @@ Interfaces are small and owned by their consumers. Cross-module shared values ar
 - Strategy definitions consume immutable, readiness-backed candle frames and
   return exactly one deterministic result: `NO_ACTION`, `OBSERVATION`, or an
   advisory `TRADE_PROPOSAL`, together with the next bounded runtime state.
-- A future strategy runner will own trigger deduplication, timeouts, and failure
-  isolation, then invoke the Milestone 2 atomic publication boundary.
+- The strategy runner owns readiness and lifecycle gating, deterministic
+  trigger deduplication, per-instance serialization, bounded cross-instance
+  concurrency, cooperative timeouts, panic containment, and the sole call to
+  the Milestone 2 atomic publication boundary.
+- Strategy replay owns bounded completed-candle buffers and synchronous frame
+  dispatch. It has no file-adapter dependency.
+- Strategy telemetry is provider-neutral; Prometheus wiring remains in the
+  existing metrics adapter.
 - Strategy storage owns definition/version registration, lifecycle-revision
   persistence, checksummed runtime checkpoints, evaluation records,
   observations, advisory proposals, and their atomic publication contract.
@@ -88,3 +94,5 @@ Additional packages and contracts create ceremony but make unsafe coupling visib
 - Strategy contracts import only provider-neutral domain, market-data model,
   and readiness types.
 - Strategy storage contracts do not import the in-memory adapter.
+- Runner, replay, and the engineering fixture import no broker, execution,
+  account, risk, allocation, order, position, or provider SDK package.

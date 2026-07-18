@@ -1,8 +1,11 @@
 # TradeEdge
 
-TradeEdge is a safety-first automated options-trading platform for the Indian market. The repository includes the Phase 0 runtime foundation, Phase 1 provider-neutral historical market data, Phase 1.1 operational hardening, and the first two bounded Phase 2 strategy-framework milestones.
+TradeEdge is a safety-first automated options-trading platform for the Indian market. The repository includes the Phase 0 runtime foundation, Phase 1 provider-neutral historical market data, Phase 1.1 operational hardening, and the first three bounded Phase 2 strategy-framework milestones.
 
-The application is **paper-only**. It contains no Zerodha network integration, live broker route, real credentials, trading strategy, or order-orchestration path.
+The application is **paper-only**. It contains no Zerodha network integration,
+live broker route, real credentials, production trading strategy, or
+order-orchestration path. The moving-average crossover is a non-production
+engineering fixture with no profitability claim.
 
 ## Prerequisites
 
@@ -24,6 +27,8 @@ Configuration is loaded from environment variables. Copy `.env.example` only as 
 | `TRADEEDGE_TRADING_MODE` | `paper` | Must be `paper`; every other value is rejected |
 | `TRADEEDGE_MARKETDATA_CALENDAR` | empty | Optional verified calendar fixture for the read-only calendar API |
 | `TRADEEDGE_MARKETDATA_DATASET_ROOT` | empty | Optional local immutable dataset repository for read-only dataset APIs |
+| `TRADEEDGE_STRATEGY_MAX_CONCURRENCY` | `4` | Bounded concurrent evaluations across different instances; valid range 1–64 |
+| `TRADEEDGE_STRATEGY_TIMEOUT` | `100ms` | Cooperative per-evaluation deadline; positive and at most one minute |
 
 Do not add broker tokens, API secrets, or account credentials to repository files.
 
@@ -58,8 +63,16 @@ Stop with `Ctrl+C`. The process withdraws readiness and performs a bounded grace
 - `GET /api/v1/market-data/calendar?exchange=NSE&date=YYYY-MM-DD` returns explicit session truth.
 - `GET /api/v1/market-data/datasets/{id}` and `/lineage` return verified metadata.
 - `GET /api/v1/market-data/datasets/current?series=name` returns the highest valid publication generation.
+- `GET /api/v1/strategy/definitions` and `/versions?definition=id` return bounded registry metadata.
+- `GET /api/v1/strategy/instances` returns bounded instance metadata.
+- `GET /api/v1/strategy/checkpoints?instance=id` returns checksums, revisions, schemas, and state sizes, never raw state.
+- `GET /api/v1/strategy/evaluations?instance=id`, `/observations`, and `/proposals` return bounded decision summaries.
+- `GET /api/v1/strategy/runner` returns runner health and recent typed failure summaries.
 
-All operational endpoints are GET-only. With no watchlist configured, `/readyz` remains operationally ready with market state `DISABLED` and `trading_permitted=false`.
+Strategy list endpoints default to 50 records and reject limits above 100. All
+operational endpoints are GET-only. With no watchlist configured, `/readyz`
+remains operationally ready with market state `DISABLED` and
+`trading_permitted=false`.
 
 Example:
 
@@ -82,7 +95,7 @@ These run `go build ./...`, `go test ./...`, `go vet ./...`, and `gofmt` respect
 
 ## GitHub Actions
 
-The repository has three safety-scoped workflows:
+The repository has four safety-scoped workflows:
 
 - **CI** runs formatting verification, race-enabled tests, `go vet`, and a
   complete build for pull requests and pushes to `main`.
@@ -92,6 +105,9 @@ The repository has three safety-scoped workflows:
   verification, race-enabled tests, every classification/load profile, and a
   non-shortenable 30-minute real-time soak. It uploads machine-readable evidence
   and fails if evidence generation or upload fails.
+- **Phase 2 strategy-runner stress** runs race-enabled strategy runner,
+  repository, fixture, and replay tests ten times. It uploads a machine-readable
+  summary without repeating the 30-minute market-data soak.
 
 Delivery produces a short-lived GitHub Actions artifact. It does not create a
 GitHub Release, deploy an environment, access credentials, connect to Zerodha,
@@ -194,6 +210,16 @@ reports for 90 days. See
 - `internal/adapters/strategy/memory` provides the bounded, concurrency-safe
   reference repository. It uses optimistic state revisions and one immutable
   snapshot swap for all-or-nothing publication.
+- `internal/strategy/runner` owns readiness gating, deterministic trigger and
+  evaluation identity, per-instance serialization, bounded cross-instance
+  concurrency, cooperative deadlines, panic containment, and atomic
+  publication.
+- `internal/strategy/replay` turns completed replay candles into the same
+  immutable frame contract and invokes consumers synchronously.
+- `internal/strategy/telemetry` owns provider-neutral runner measurements;
+  Prometheus remains adapter-only.
+- `internal/strategy/fixtures/movingaverage` is explicitly classified
+  `NON_PRODUCTION_ENGINEERING_FIXTURE`.
 - `internal/execution` owns the broker interface.
 - `internal/adapters/broker/paper` is an in-memory, context-aware paper skeleton with duplicate prevention and no network access.
 - Configuration, HTTP, and logging are platform concerns and do not contain trading policy.
@@ -202,12 +228,20 @@ Future execution orchestration must follow the documented sequence: strategy eli
 
 ## Phase 2 status
 
-Phase 2 Milestones 1 and 2 are implemented. They supply deterministic domain
-contracts plus provider-neutral repositories, checksummed checkpoint
-restoration, and atomic in-memory evaluation publication. There is no strategy
-runner, timeout or panic containment, replay integration, reference trading
-strategy, automatic lifecycle transition, backtester, risk decision,
-allocation, or order execution.
+Phase 2 Milestones 1–3 are implemented. They supply deterministic domain
+contracts, provider-neutral repositories, checksummed checkpoint restoration,
+atomic in-memory publication, and a bounded synchronous runner. The runner
+checks lifecycle and Phase 1.1 readiness before invoking strategy code, permits
+only one evaluation per instance, limits cross-instance work to four by
+default, derives stable identities, contains strategy panics, and applies a
+100 ms cooperative deadline.
+
+There is no automatic lifecycle transition, production strategy, backtester,
+risk decision, allocation, executable quantity, order, position, or broker
+execution. The runner never retries strategy code after a revision conflict.
+Timeout enforcement is cooperative: strategy implementations must observe
+`context.Context`; TradeEdge does not create an unbounded goroutine in an
+attempt to kill non-cooperative Go code.
 
 Trade proposals are advisory. They contain stable provenance, integer reference
 prices, normalized leg ratios, bounded validity, evidence, and a
