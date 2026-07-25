@@ -51,8 +51,14 @@ Interfaces are small and owned by their consumers. Cross-module shared values ar
 - The in-memory strategy adapter prepares immutable repository snapshots and
   swaps one snapshot only after optimistic revision and integrity validation.
 - Lifecycle establishes eligibility.
-- Portfolio allocates constrained capital.
-- Risk approves or rejects proposed exposure.
+- Phase 3 portfolio contracts represent immutable capital, strategy
+  allocation, current/incremental/projected exposure, and non-reserving
+  allocation candidates.
+- Phase 3 risk contracts represent versioned fail-closed policy, pure rule
+  inputs/results, typed evidence and violations, aggregate evaluations, and
+  non-executable portfolio-risk decisions.
+- Milestone 1 repositories register immutable contract values only. Atomic
+  reservation and portfolio revision publication are deferred.
 - Execution owns order state and broker access.
 - Reconciliation repairs internal understanding from broker facts.
 - Notifications report but never determine trading truth.
@@ -70,6 +76,9 @@ Interfaces are small and owned by their consumers. Cross-module shared values ar
   together or not at all. Exact canonical retries are idempotent.
 - Allocation and risk precede submission.
 - Audit records accompany material decisions.
+- An allocation candidate is not a reservation. An approved portfolio-risk
+  decision is not an execution intent or order and contains no broker or
+  account capability.
 
 ## Failure Modes
 

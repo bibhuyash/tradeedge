@@ -42,6 +42,14 @@ is surfaced without re-running strategy code. Panic values and stacks are
 bounded, and a later trigger or safe retry can proceed after keyed state is
 retired.
 
+Phase 3 Milestone 1 adds no recovery workflow. Its immutable portfolio
+snapshots and decisions retain revision, configuration, source-state, evidence,
+and content checksums so a future recovery process can verify them. Unknown or
+unavailable exposure is represented explicitly and never restored as known
+zero. Identity reuse with changed canonical content is an integrity collision.
+The in-memory adapters are not durable and are not an authoritative restart
+mechanism.
+
 ## Invariants
 
 - Startup does not place orders while reconciliation is incomplete.

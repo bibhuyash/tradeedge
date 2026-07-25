@@ -67,3 +67,12 @@ and runner health under `/api/v1/strategy/`. Raw runtime state, configuration
 payloads, arbitrary diagnostics, provider tokens, credentials, mutation,
 activation, risk, and execution controls are not exposed. List limits default
 to 50 and cannot exceed 100.
+
+## Phase 3 Milestone 1
+
+Milestone 1 adds no metrics, logs, traces, operational HTTP endpoints, or alert
+rules. Risk evidence and portfolio-risk decisions are domain/audit contracts,
+not Prometheus labels. A later milestone may expose bounded status and counters
+but must not label metrics with portfolio, strategy, proposal, decision,
+evaluation, allocation, instrument, configuration, account, error, or
+free-text values.

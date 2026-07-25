@@ -159,3 +159,23 @@ The caller is the queue: semaphore acquisition and replay delivery are
 synchronous, so backpressure is explicit and no event is silently dropped.
 The keyed reservation is removed on every terminal path. Shutdown first closes
 admission, cancels accepted work, and waits for the bounded reservation set.
+
+## Phase 3 Milestone 1 Decision Contracts
+
+```mermaid
+flowchart LR
+    T["Committed advisory TradeProposal"] --> A["Immutable AllocationCandidate"]
+    S["Immutable PortfolioSnapshot revision N"] --> A
+    A --> I["Immutable RiskRuleInput"]
+    I --> R["Ordered typed RuleResult contracts"]
+    R --> E["RiskEvaluation"]
+    E --> D["PortfolioRiskDecision"]
+    D -. "future milestone only" .-> P["Atomic reservation and revision N+1"]
+    D -. "future phase only" .-> X["Execution intent"]
+```
+
+Milestone 1 constructs and validates values; it does not run rules, consume
+proposals, reserve capital, mutate portfolio state, publish checkpoints, or
+create execution artifacts. Identical proposal, snapshot, configuration,
+policy order, evidence, and injected timestamps produce identical canonical
+bytes and identities.

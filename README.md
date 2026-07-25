@@ -1,6 +1,6 @@
 # TradeEdge
 
-TradeEdge is a safety-first automated options-trading platform for the Indian market. The repository includes the Phase 0 runtime foundation, Phase 1 provider-neutral historical market data, Phase 1.1 operational hardening, and the first three bounded Phase 2 strategy-framework milestones.
+TradeEdge is a safety-first automated options-trading platform for the Indian market. The repository includes the Phase 0 runtime foundation, Phase 1 provider-neutral historical market data, Phase 1.1 operational hardening, the formally released Phase 2 strategy framework, and Phase 3 Milestone 1 portfolio/risk decision contracts.
 
 The application is **paper-only**. It contains no Zerodha network integration,
 live broker route, real credentials, production trading strategy, or
@@ -220,6 +220,18 @@ reports for 90 days. See
   Prometheus remains adapter-only.
 - `internal/strategy/fixtures/movingaverage` is explicitly classified
   `NON_PRODUCTION_ENGINEERING_FIXTURE`.
+- `internal/portfolio/model` owns immutable capital, exposure, strategy
+  allocation, allocation-candidate, kill-switch, circuit-breaker, snapshot,
+  revision, and deterministic identity contracts.
+- `internal/risk/model` owns versioned policy, pure rule input/result, typed
+  evidence, violation, aggregate evaluation, and non-executable
+  `PortfolioRiskDecision` contracts.
+- `internal/portfolio/config` and `internal/risk/config` accept bounded
+  canonical integer-only JSON. Duplicate keys, floats, unknown fixed fields,
+  invalid limits, and unknown or duplicate rule identities fail closed.
+- Portfolio and risk storage contracts are provider-neutral. Their bounded
+  in-memory adapters support immutable contract testing only; they do not
+  atomically mutate portfolio state or reserve capital.
 - `internal/execution` owns the broker interface.
 - `internal/adapters/broker/paper` is an in-memory, context-aware paper skeleton with duplicate prevention and no network access.
 - Configuration, HTTP, and logging are platform concerns and do not contain trading policy.
@@ -272,5 +284,21 @@ cross-instance limit violations, duplicate publication, result loss, failed
 containment, replay divergence, resource growth beyond explicit tolerances, or
 artifact failure. See
 `docs/runbooks/PHASE_2_STRATEGY_RELEASE_GATE.md` for the evidence contract.
+
+## Phase 3 Milestone 1 status
+
+Milestone 1 defines deterministic portfolio snapshots, capital accounting,
+current/incremental/projected exposure, strategy allocation state,
+allocation candidates, risk policies, pure rule contracts, typed evidence and
+violations, aggregate evaluations, and `APPROVED`, `MODIFIED`, `REJECTED`, and
+`DEFERRED` portfolio-risk decisions.
+
+These are validation and persistence contracts only. An allocation candidate
+is not a reservation, and even an approved decision is not an execution
+intent, order, or broker-executable quantity. No Phase 3 runner, rule
+orchestration, reference risk rule, atomic portfolio publication, replay
+integration, HTTP endpoint, Prometheus wiring, broker integration, credential,
+or live-trading capability exists. See
+`docs/plans/PHASE-3-PORTFOLIO-RISK.md`.
 
 See `docs/` for the product, architecture, trading, reliability, integration, and phase plans.

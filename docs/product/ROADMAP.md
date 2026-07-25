@@ -8,7 +8,7 @@ This roadmap sequences bounded milestones from foundation through independently 
 flowchart LR
     P0["Phase 0: Foundation"] --> P1["Phase 1: Market Data"]
     P1 --> P2["Phase 2: Strategy & Evidence"]
-    P2 --> P3["Phase 3: Paper Execution"]
+    P2 --> P3["Phase 3: Portfolio, Risk & Paper Execution"]
     P3 --> P4["Phase 4: Reliability Validation"]
     P4 --> G{"Explicit live approval?"}
     G -->|No| PT["Continue paper trading"]
@@ -23,7 +23,10 @@ Each phase has objective entry and exit criteria. Passing a technical milestone 
 
 - Phase 0 establishes types, ports, configuration, observability foundations, and paper-only runtime.
 - Phase 1 establishes reliable normalized market data.
-- Later phases add strategy evidence, complete paper execution, and failure drills.
+- Phase 2 adds deterministic strategy evidence.
+- Phase 3 begins with portfolio/risk decision contracts before separately
+  adding bounded rule execution, atomic reservations, and paper execution.
+- Later phases add reliability evidence and failure drills.
 
 ## Invariants
 
