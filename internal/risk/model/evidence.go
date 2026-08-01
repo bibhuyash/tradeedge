@@ -241,7 +241,35 @@ type RuleResultSpec struct {
 	Severity          RuleSeverity
 	Effect            RuleEffect
 	Evidence          []RiskEvidence
+	Adjustment        *RuleAdjustment
 	EvaluatedAt       time.Time
+}
+
+type RuleAdjustment struct {
+	MaximumCapital domain.Money
+	LegBounds      []portfoliomodel.AllocationLegBound
+	Constraints    []portfoliomodel.AllocationConstraint
+	ValidUntil     time.Time
+}
+
+func (value RuleAdjustment) Validate() error {
+	if value.MaximumCapital.IsZeroValue() || value.MaximumCapital.MinorUnits() < 0 ||
+		len(value.LegBounds) == 0 || len(value.LegBounds) > portfoliomodel.MaximumAllocationLegs ||
+		len(value.Constraints) == 0 || len(value.Constraints) > portfoliomodel.MaximumAllocationConstraints ||
+		value.ValidUntil.IsZero() {
+		return ErrInvalidRiskEvidence
+	}
+	for _, leg := range value.LegBounds {
+		if leg.Validate() != nil {
+			return ErrInvalidRiskEvidence
+		}
+	}
+	for _, constraint := range value.Constraints {
+		if constraint.Validate() != nil {
+			return ErrInvalidRiskEvidence
+		}
+	}
+	return nil
 }
 
 type RuleResult struct{ spec RuleResultSpec }
@@ -256,24 +284,24 @@ func NewRuleResult(spec RuleResultSpec) (RuleResult, error) {
 	}
 	switch spec.Status {
 	case RulePass:
-		if spec.Effect != EffectNone {
+		if spec.Effect != EffectNone || spec.Adjustment != nil {
 			return RuleResult{}, ErrInvalidRiskEvidence
 		}
 	case RuleViolation:
 		if spec.Effect != EffectReject && spec.Effect != EffectTripCircuitBreaker &&
-			spec.Effect != EffectActivateKillSwitch {
+			spec.Effect != EffectActivateKillSwitch || spec.Adjustment != nil {
 			return RuleResult{}, ErrInvalidRiskEvidence
 		}
 	case RuleModificationRequired:
-		if spec.Effect != EffectModify {
+		if spec.Effect != EffectModify || spec.Adjustment == nil || spec.Adjustment.Validate() != nil {
 			return RuleResult{}, ErrInvalidRiskEvidence
 		}
 	case RuleDefer:
-		if spec.Effect != EffectDefer {
+		if spec.Effect != EffectDefer || spec.Adjustment != nil {
 			return RuleResult{}, ErrInvalidRiskEvidence
 		}
 	case RuleError:
-		if spec.Effect != EffectDefer {
+		if spec.Effect != EffectDefer || spec.Adjustment != nil {
 			return RuleResult{}, ErrInvalidRiskEvidence
 		}
 	default:
@@ -292,6 +320,29 @@ func NewRuleResult(spec RuleResultSpec) (RuleResult, error) {
 	}
 	sort.Slice(evidence, func(i, j int) bool { return evidence[i].Code() < evidence[j].Code() })
 	spec.Evidence = evidence
+	if spec.Adjustment != nil {
+		adjustment := *spec.Adjustment
+		adjustment.LegBounds = append([]portfoliomodel.AllocationLegBound(nil), adjustment.LegBounds...)
+		adjustment.Constraints = append([]portfoliomodel.AllocationConstraint(nil), adjustment.Constraints...)
+		sort.Slice(adjustment.LegBounds, func(i, j int) bool {
+			return adjustment.LegBounds[i].InstrumentID.String() < adjustment.LegBounds[j].InstrumentID.String()
+		})
+		sort.Slice(adjustment.Constraints, func(i, j int) bool {
+			return adjustment.Constraints[i].Code < adjustment.Constraints[j].Code
+		})
+		for index := 1; index < len(adjustment.LegBounds); index++ {
+			if adjustment.LegBounds[index-1].InstrumentID == adjustment.LegBounds[index].InstrumentID {
+				return RuleResult{}, ErrInvalidRiskEvidence
+			}
+		}
+		for index := 1; index < len(adjustment.Constraints); index++ {
+			if adjustment.Constraints[index-1].Code == adjustment.Constraints[index].Code {
+				return RuleResult{}, ErrInvalidRiskEvidence
+			}
+		}
+		adjustment.ValidUntil = adjustment.ValidUntil.UTC()
+		spec.Adjustment = &adjustment
+	}
 	spec.EvaluatedAt = spec.EvaluatedAt.UTC()
 	return RuleResult{spec: spec}, nil
 }
@@ -299,6 +350,12 @@ func NewRuleResult(spec RuleResultSpec) (RuleResult, error) {
 func (value RuleResult) Spec() RuleResultSpec {
 	result := value.spec
 	result.Evidence = append([]RiskEvidence(nil), result.Evidence...)
+	if result.Adjustment != nil {
+		adjustment := *result.Adjustment
+		adjustment.LegBounds = append([]portfoliomodel.AllocationLegBound(nil), adjustment.LegBounds...)
+		adjustment.Constraints = append([]portfoliomodel.AllocationConstraint(nil), adjustment.Constraints...)
+		result.Adjustment = &adjustment
+	}
 	return result
 }
 func (value RuleResult) RuleID() RiskRuleID       { return value.spec.RuleID }

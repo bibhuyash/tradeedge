@@ -1,14 +1,13 @@
 # Phase 3: Portfolio and Risk Decisions
 
-## Milestone 1 Scope
+## Milestone 1 Contracts
 
 Milestone 1 defines deterministic contracts and validation for:
 
 `TradeProposal -> AllocationCandidate -> RiskEvaluation -> PortfolioRiskDecision`
 
-It contains no runner, rule orchestration, automatic rule execution, capital
-reservation, authoritative portfolio mutation, execution intent, order,
-broker call, operational API, metric wiring, or replay workflow.
+Milestone 2 now consumes these contracts. It still contains no execution
+intent, order, broker call, operational API, metric wiring, or live trading.
 
 ## Dependency Direction
 
@@ -153,15 +152,32 @@ transactional boundary.
 - later allocation/risk runtime target below 10 ms;
 - runtime timeout and durable persistence are deferred.
 
+## Milestone 2 Runtime
+
+`TradeProposal + PortfolioSnapshot(N) + configuration + logical time` enters a
+synchronous decision runner. Allocation is deterministic and integer-only.
+Rules execute sequentially in canonical policy order; technical errors remain
+distinct from violations and invalid results fail closed. A keyed portfolio
+gate prevents overlapping mutation and a fixed semaphore bounds different
+portfolios (default four). Evaluation has a cooperative 100 ms default timeout
+and recovers panics only around allocator/rule code.
+
+The provider-neutral runtime transaction commits candidate, evaluation,
+decision, optional capital reservation, and checkpoint/snapshot `N+1` together
+after optimistic revision and lineage validation. An exact committed trigger is
+idempotent; an in-progress duplicate is suppressed; stale input returns a typed
+conflict without automatic reevaluation. APPROVED/MODIFIED reserve bounded
+capital in the new authoritative snapshot. REJECTED/DEFERRED advance the audit
+revision without reserving capital. Neither decision outcome is executable.
+
+Replay calls the same runner serially. Verified checkpoint restoration produces
+the same subsequent decision bytes and final state as uninterrupted replay.
+
 ## Deferred Milestones
 
-Milestone 2 will design the bounded decision runner, proposal consumption,
-optimistic revision handling, and atomic publication of decision, reservation,
-and revision `N+1`.
-
-Milestone 3 will add reviewed reference rule implementations, replay
-integration, telemetry, read-only operational APIs, stress evidence, and
-paper-pipeline composition.
+Milestone 3 will add reviewed production risk controls, telemetry, read-only
+operational APIs, durable-adapter release evidence, and paper-pipeline
+composition.
 
 Neither milestone authorizes live trading or direct broker execution.
 
@@ -180,3 +196,16 @@ Neither milestone authorizes live trading or direct broker execution.
   repository contract tests.
 - [x] No runner, orchestration, mutation, reservation, replay, telemetry, HTTP,
   production rule, broker, OMS, order, position, or execution capability.
+
+## Milestone 2 Completion Checklist
+
+- [x] Deterministic allocation and ordered pure-rule evaluation.
+- [x] Four-outcome aggregation and non-executable decisions.
+- [x] Per-portfolio serialization and bounded cross-portfolio concurrency.
+- [x] Committed/in-progress duplicate handling and exact retry idempotency.
+- [x] Typed stale-revision conflicts without implicit reevaluation.
+- [x] Atomic decision, optional reservation, and checkpoint publication.
+- [x] Timeout, cancellation, panic, invalid output, and storage failure publish nothing.
+- [x] Deterministic replay and checkpoint continuation equivalence.
+- [x] Bounded in-memory provider-neutral reference repository with defensive copies.
+- [x] No production rules, telemetry/API wiring, broker, OMS, order, position, or execution capability.

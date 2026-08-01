@@ -17,6 +17,9 @@ func TestLoadWithLookupDefaults(t *testing.T) {
 		cfg.StrategyTimeout != 100*time.Millisecond {
 		t.Fatalf("unexpected defaults: %#v", cfg)
 	}
+	if cfg.RiskMaxConcurrency != 4 || cfg.RiskTimeout != 100*time.Millisecond {
+		t.Fatalf("unexpected risk defaults: %#v", cfg)
+	}
 }
 
 func TestLoadWithLookupOverrides(t *testing.T) {
@@ -30,6 +33,8 @@ func TestLoadWithLookupOverrides(t *testing.T) {
 		"TRADEEDGE_MARKETDATA_DATASET_ROOT":  "data/marketdata",
 		"TRADEEDGE_STRATEGY_MAX_CONCURRENCY": "8",
 		"TRADEEDGE_STRATEGY_TIMEOUT":         "75ms",
+		"TRADEEDGE_RISK_MAX_CONCURRENCY":     "6",
+		"TRADEEDGE_RISK_TIMEOUT":             "80ms",
 	}))
 	if err != nil {
 		t.Fatalf("LoadWithLookup() error = %v", err)
@@ -41,6 +46,9 @@ func TestLoadWithLookupOverrides(t *testing.T) {
 	}
 	if cfg.StrategyMaxConcurrency != 8 || cfg.StrategyTimeout != 75*time.Millisecond {
 		t.Fatalf("unexpected strategy overrides: %#v", cfg)
+	}
+	if cfg.RiskMaxConcurrency != 6 || cfg.RiskTimeout != 80*time.Millisecond {
+		t.Fatalf("unexpected risk overrides: %#v", cfg)
 	}
 }
 
@@ -56,6 +64,10 @@ func TestLoadWithLookupRejectsInvalidValues(t *testing.T) {
 		"large concurrency":      {"TRADEEDGE_STRATEGY_MAX_CONCURRENCY": "65"},
 		"bad strategy timeout":   {"TRADEEDGE_STRATEGY_TIMEOUT": "never"},
 		"large strategy timeout": {"TRADEEDGE_STRATEGY_TIMEOUT": "61s"},
+		"bad risk concurrency":   {"TRADEEDGE_RISK_MAX_CONCURRENCY": "0"},
+		"large risk concurrency": {"TRADEEDGE_RISK_MAX_CONCURRENCY": "65"},
+		"bad risk timeout":       {"TRADEEDGE_RISK_TIMEOUT": "never"},
+		"large risk timeout":     {"TRADEEDGE_RISK_TIMEOUT": "61s"},
 	}
 	for name, values := range tests {
 		t.Run(name, func(t *testing.T) {

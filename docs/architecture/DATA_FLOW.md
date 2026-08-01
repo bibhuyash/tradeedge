@@ -160,7 +160,7 @@ synchronous, so backpressure is explicit and no event is silently dropped.
 The keyed reservation is removed on every terminal path. Shutdown first closes
 admission, cancels accepted work, and waits for the bounded reservation set.
 
-## Phase 3 Milestone 1 Decision Contracts
+## Phase 3 Milestone 2 Decision Runtime
 
 ```mermaid
 flowchart LR
@@ -170,9 +170,17 @@ flowchart LR
     I --> R["Ordered typed RuleResult contracts"]
     R --> E["RiskEvaluation"]
     E --> D["PortfolioRiskDecision"]
-    D -. "future milestone only" .-> P["Atomic reservation and revision N+1"]
+    D --> P["Atomic decision, optional reservation and revision N+1"]
     D -. "future phase only" .-> X["Execution intent"]
 ```
+
+The runner reads exactly revision `N`, constructs one deterministic candidate,
+and invokes rules sequentially in canonical policy order. One keyed admission
+slot prevents overlapping authoritative work for a portfolio; a fixed semaphore
+bounds different portfolios. The atomic publisher validates complete parent and
+child lineage and performs one compare-and-swap commit. Exact committed retries
+return the existing receipt. A stale revision is returned to the caller and is
+never silently evaluated against newer state.
 
 Milestone 1 constructs and validates values; it does not run rules, consume
 proposals, reserve capital, mutate portfolio state, publish checkpoints, or

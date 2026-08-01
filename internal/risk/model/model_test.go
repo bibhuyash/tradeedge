@@ -348,12 +348,22 @@ func riskFixture(t *testing.T, status RuleResultStatus) fixture {
 	if err != nil {
 		t.Fatal(err)
 	}
-	result, err := NewRuleResult(RuleResultSpec{
+	resultSpec := RuleResultSpec{
 		RuleID: rule.Descriptor.ID, RuleVersion: rule.Descriptor.Version,
 		ConfigurationHash: rule.ConfigurationHash, Status: status,
 		ReasonCode: reasonForStatus(status), Severity: SeverityBlocking,
 		Effect: effectForStatus(status), Evidence: []RiskEvidence{evidence}, EvaluatedAt: now,
-	})
+	}
+	if status == RuleModificationRequired {
+		resultSpec.Adjustment = &RuleAdjustment{
+			MaximumCapital: riskMoney(t, 50), LegBounds: candidate.Spec().LegBounds,
+			Constraints: []portfoliomodel.AllocationConstraint{{
+				Code: portfoliomodel.ReasonInstrumentLimitExceeded, Before: riskMoney(t, 100),
+				After: riskMoney(t, 50), Explanation: "rule modification",
+			}}, ValidUntil: proposal.Draft().ExpiresAt,
+		}
+	}
+	result, err := NewRuleResult(resultSpec)
 	if err != nil {
 		t.Fatal(err)
 	}

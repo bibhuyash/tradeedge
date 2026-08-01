@@ -52,6 +52,7 @@ type PortfolioConfigurationID digest
 type AllocationPolicyID digest
 type StrategyAllocationID digest
 type AllocationCandidateID digest
+type CapitalReservationID digest
 type KillSwitchID digest
 type CircuitBreakerID digest
 type ConfigurationHash digest
@@ -87,6 +88,12 @@ func NewAllocationCandidateID(parts ...string) (AllocationCandidateID, error) {
 	}
 	return AllocationCandidateID(derive("allocation-candidate-id/v1", parts...)), nil
 }
+func NewCapitalReservationID(parts ...string) (CapitalReservationID, error) {
+	if !validParts(parts) {
+		return CapitalReservationID{}, ErrInvalidIdentity
+	}
+	return CapitalReservationID(derive("capital-reservation-id/v1", parts...)), nil
+}
 func NewKillSwitchID(parts ...string) (KillSwitchID, error) {
 	if !validParts(parts) {
 		return KillSwitchID{}, ErrInvalidIdentity
@@ -118,6 +125,7 @@ func (value PortfolioConfigurationID) String() string { return digestString(dige
 func (value AllocationPolicyID) String() string       { return digestString(digest(value)) }
 func (value StrategyAllocationID) String() string     { return digestString(digest(value)) }
 func (value AllocationCandidateID) String() string    { return digestString(digest(value)) }
+func (value CapitalReservationID) String() string     { return digestString(digest(value)) }
 func (value KillSwitchID) String() string             { return digestString(digest(value)) }
 func (value CircuitBreakerID) String() string         { return digestString(digest(value)) }
 func (value ConfigurationHash) String() string        { return digestString(digest(value)) }
@@ -129,6 +137,7 @@ func (value PortfolioConfigurationID) IsZero() bool { return value == PortfolioC
 func (value AllocationPolicyID) IsZero() bool       { return value == AllocationPolicyID{} }
 func (value StrategyAllocationID) IsZero() bool     { return value == StrategyAllocationID{} }
 func (value AllocationCandidateID) IsZero() bool    { return value == AllocationCandidateID{} }
+func (value CapitalReservationID) IsZero() bool     { return value == CapitalReservationID{} }
 func (value KillSwitchID) IsZero() bool             { return value == KillSwitchID{} }
 func (value CircuitBreakerID) IsZero() bool         { return value == CircuitBreakerID{} }
 func (value ConfigurationHash) IsZero() bool        { return value == ConfigurationHash{} }

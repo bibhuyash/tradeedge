@@ -162,6 +162,9 @@ func DeriveRiskEvaluationID(spec RiskEvaluationSpec) (RiskEvaluationID, error) {
 		keys = append(keys, string(item.RuleID), fmt.Sprint(item.RuleVersion),
 			string(item.Status), item.ReasonCode, string(item.Effect),
 			item.ConfigurationHash.String())
+		if item.Adjustment != nil {
+			keys = append(keys, canonicalAdjustment(*item.Adjustment))
+		}
 		for _, evidence := range item.Evidence {
 			checksum, _ := NewEvidenceChecksum(evidence.CanonicalJSON())
 			keys = append(keys, evidence.Code(), checksum.String())
@@ -317,9 +320,9 @@ func canonicalViolation(spec RiskViolationSpec) ([]byte, error) {
 
 func canonicalEvaluation(spec RiskEvaluationSpec) ([]byte, error) {
 	type resultWire struct {
-		RuleID, Status, Reason, Severity, Effect, ConfigurationHash string
-		RuleVersion                                                 uint64
-		EvidenceChecksums                                           []string
+		RuleID, Status, Reason, Severity, Effect, ConfigurationHash, Adjustment string
+		RuleVersion                                                             uint64
+		EvidenceChecksums                                                       []string
 	}
 	results := make([]resultWire, len(spec.RuleResults))
 	for index, value := range spec.RuleResults {
@@ -333,6 +336,9 @@ func canonicalEvaluation(spec RiskEvaluationSpec) ([]byte, error) {
 			Status: string(item.Status), Reason: item.ReasonCode, Severity: string(item.Severity),
 			Effect: string(item.Effect), ConfigurationHash: item.ConfigurationHash.String(),
 			EvidenceChecksums: evidenceChecksums}
+		if item.Adjustment != nil {
+			results[index].Adjustment = canonicalAdjustment(*item.Adjustment)
+		}
 	}
 	violations := make([]string, len(spec.Violations))
 	for index, value := range spec.Violations {
@@ -366,4 +372,20 @@ func canonicalEvaluation(spec RiskEvaluationSpec) ([]byte, error) {
 		StartedAt:   spec.StartedAt.Format(time.RFC3339Nano),
 		CompletedAt: spec.CompletedAt.Format(time.RFC3339Nano),
 	})
+}
+
+func canonicalAdjustment(value RuleAdjustment) string {
+	parts := []string{
+		fmt.Sprintf("%s:%d", value.MaximumCapital.Currency(), value.MaximumCapital.MinorUnits()),
+		value.ValidUntil.UTC().Format(time.RFC3339Nano),
+	}
+	for _, leg := range value.LegBounds {
+		parts = append(parts, fmt.Sprintf("%s:%s:%d:%s:%d:%d", leg.InstrumentID, leg.Side,
+			leg.Ratio, leg.Resolution, leg.MaximumUnits.Int64(), leg.LotSize.Int64()))
+	}
+	for _, constraint := range value.Constraints {
+		parts = append(parts, fmt.Sprintf("%s:%d:%d:%s", constraint.Code,
+			constraint.Before.MinorUnits(), constraint.After.MinorUnits(), constraint.Explanation))
+	}
+	return strings.Join(parts, "|")
 }
