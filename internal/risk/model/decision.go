@@ -96,6 +96,64 @@ func newApprovedBounds(input ApprovedAllocationBounds, candidate portfoliomodel.
 	return input, nil
 }
 
+func approvedBoundsWithinCandidate(bounds ApprovedAllocationBounds,
+	candidate portfoliomodel.AllocationCandidate) (equal bool, strictlySmaller bool) {
+	candidateSpec := candidate.Spec()
+	if len(bounds.LegBounds) != len(candidateSpec.LegBounds) {
+		return false, false
+	}
+	equal = bounds.MaximumCapital.MinorUnits() == candidateSpec.CandidateCapital.MinorUnits()
+	strictlySmaller = bounds.MaximumCapital.MinorUnits() < candidateSpec.CandidateCapital.MinorUnits()
+	for index := range bounds.LegBounds {
+		approved := bounds.LegBounds[index]
+		candidateLeg := candidateSpec.LegBounds[index]
+		if approved.InstrumentID != candidateLeg.InstrumentID || approved.Side != candidateLeg.Side ||
+			approved.Ratio != candidateLeg.Ratio || approved.Resolution != candidateLeg.Resolution ||
+			approved.LotSize != candidateLeg.LotSize ||
+			approved.MaximumUnits.Int64() > candidateLeg.MaximumUnits.Int64() {
+			return false, false
+		}
+		if approved.MaximumUnits != candidateLeg.MaximumUnits {
+			equal = false
+			strictlySmaller = true
+		}
+	}
+	return equal, strictlySmaller
+}
+
+func evaluationSupportsOutcome(evaluation RiskEvaluation, outcome DecisionOutcome) bool {
+	results := evaluation.RuleResults()
+	technical := evaluation.Spec().TechnicalErrors
+	hasModification := false
+	hasViolation := false
+	hasDefer := len(technical) > 0
+	for _, result := range results {
+		switch result.Status() {
+		case RulePass:
+		case RuleModificationRequired:
+			hasModification = true
+		case RuleViolation:
+			hasViolation = true
+		case RuleDefer, RuleError:
+			hasDefer = true
+		default:
+			return false
+		}
+	}
+	switch outcome {
+	case DecisionApproved:
+		return !hasModification && !hasViolation && !hasDefer
+	case DecisionModified:
+		return hasModification && !hasViolation && !hasDefer
+	case DecisionRejected:
+		return hasViolation && !hasDefer
+	case DecisionDeferred:
+		return hasDefer
+	default:
+		return false
+	}
+}
+
 type PortfolioRiskDecisionSpec struct {
 	SchemaVersion              string
 	Proposal                   strategymodel.TradeProposal
@@ -140,10 +198,21 @@ func NewPortfolioRiskDecision(spec PortfolioRiskDecisionSpec) (PortfolioRiskDeci
 		len(spec.SecondaryReasons) > MaximumDecisionReasons ||
 		len(spec.Violations) > MaximumViolationsPerEvaluation ||
 		spec.AllocationCandidate.ProposalID() != spec.Proposal.ID() ||
+		spec.AllocationCandidate.Spec().PortfolioID != spec.PortfolioID ||
 		spec.AllocationCandidate.PortfolioSnapshotID() != spec.PortfolioSnapshotID ||
 		spec.AllocationCandidate.PortfolioRevision() != spec.ExpectedPortfolioRevision ||
 		spec.RiskEvaluation.ProposalID() != spec.Proposal.ID() ||
 		spec.RiskEvaluation.AllocationCandidateID() != spec.AllocationCandidate.ID() ||
+		spec.RiskEvaluation.Spec().PortfolioSnapshotID != spec.PortfolioSnapshotID ||
+		spec.RiskEvaluation.Spec().PortfolioRevision != spec.ExpectedPortfolioRevision ||
+		spec.RiskEvaluation.Spec().RiskPolicyID != spec.RiskPolicyID ||
+		spec.RiskEvaluation.Spec().RiskPolicyVersion != spec.RiskPolicyVersion ||
+		spec.RiskEvaluation.Spec().ConfigurationHash != spec.RiskConfigurationHash ||
+		spec.OriginalSizing != spec.Proposal.Draft().Sizing ||
+		spec.GeneratedAt.Before(spec.AllocationCandidate.Spec().ValidFrom) ||
+		spec.ExpiresAt.After(spec.Proposal.Draft().ExpiresAt) ||
+		spec.ExpiresAt.After(spec.AllocationCandidate.Spec().ExpiresAt) ||
+		!evaluationSupportsOutcome(spec.RiskEvaluation, spec.Outcome) ||
 		spec.RiskEvaluation.EvidenceChecksum() != spec.SourceEvidenceChecksum {
 		return PortfolioRiskDecision{}, ErrInvalidPortfolioRiskDecision
 	}
@@ -168,8 +237,9 @@ func NewPortfolioRiskDecision(spec PortfolioRiskDecisionSpec) (PortfolioRiskDeci
 			return PortfolioRiskDecision{}, ErrInvalidPortfolioRiskDecision
 		}
 		value, boundsErr := newApprovedBounds(*spec.ApprovedAllocation, spec.AllocationCandidate)
-		if boundsErr != nil || value.MaximumCapital.MinorUnits() !=
-			spec.AllocationCandidate.CandidateCapital().MinorUnits() || len(value.Constraints) != 0 {
+		equal, _ := approvedBoundsWithinCandidate(value, spec.AllocationCandidate)
+		if boundsErr != nil || !equal || len(value.Constraints) != 0 ||
+			value.ValidUntil != spec.ExpiresAt {
 			return PortfolioRiskDecision{}, ErrInvalidPortfolioRiskDecision
 		}
 		approved = &value
@@ -178,8 +248,9 @@ func NewPortfolioRiskDecision(spec PortfolioRiskDecisionSpec) (PortfolioRiskDeci
 			return PortfolioRiskDecision{}, ErrInvalidPortfolioRiskDecision
 		}
 		value, boundsErr := newApprovedBounds(*spec.ApprovedAllocation, spec.AllocationCandidate)
-		if boundsErr != nil || value.MaximumCapital.MinorUnits() >=
-			spec.AllocationCandidate.CandidateCapital().MinorUnits() || len(value.Constraints) == 0 {
+		_, strictlySmaller := approvedBoundsWithinCandidate(value, spec.AllocationCandidate)
+		if boundsErr != nil || !strictlySmaller || len(value.Constraints) == 0 ||
+			value.ValidUntil.After(spec.ExpiresAt) {
 			return PortfolioRiskDecision{}, ErrInvalidPortfolioRiskDecision
 		}
 		approved = &value
@@ -267,13 +338,41 @@ func canonicalDecision(spec PortfolioRiskDecisionSpec) ([]byte, error) {
 	}
 	var approved any
 	if spec.ApprovedAllocation != nil {
+		type legWire struct {
+			InstrumentID, Side, Resolution string
+			Ratio                          uint32
+			MaximumUnits, LotSize          int64
+		}
+		type constraintWire struct {
+			Code, Explanation string
+			Before, After     decisionMoneyWire
+		}
+		legs := make([]legWire, len(spec.ApprovedAllocation.LegBounds))
+		for index, leg := range spec.ApprovedAllocation.LegBounds {
+			legs[index] = legWire{
+				InstrumentID: leg.InstrumentID.String(), Side: string(leg.Side),
+				Resolution: string(leg.Resolution), Ratio: uint32(leg.Ratio),
+				MaximumUnits: leg.MaximumUnits.Int64(), LotSize: leg.LotSize.Int64(),
+			}
+		}
+		constraints := make([]constraintWire, len(spec.ApprovedAllocation.Constraints))
+		for index, constraint := range spec.ApprovedAllocation.Constraints {
+			constraints[index] = constraintWire{
+				Code: string(constraint.Code), Explanation: constraint.Explanation,
+				Before: decisionMoneyValue(constraint.Before), After: decisionMoneyValue(constraint.After),
+			}
+		}
 		approved = struct {
 			CandidateID    string
 			MaximumCapital decisionMoneyWire
+			LegBounds      []legWire
+			Constraints    []constraintWire
 			ValidUntil     string
 		}{
 			CandidateID:    spec.ApprovedAllocation.CandidateID.String(),
 			MaximumCapital: decisionMoneyValue(spec.ApprovedAllocation.MaximumCapital),
+			LegBounds:      legs,
+			Constraints:    constraints,
 			ValidUntil:     spec.ApprovedAllocation.ValidUntil.Format(time.RFC3339Nano),
 		}
 	}

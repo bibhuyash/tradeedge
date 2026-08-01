@@ -293,6 +293,12 @@ allocation candidates, risk policies, pure rule contracts, typed evidence and
 violations, aggregate evaluations, and `APPROVED`, `MODIFIED`, `REJECTED`, and
 `DEFERRED` portfolio-risk decisions.
 
+Decision validation binds proposal, snapshot revision, allocation candidate,
+policy version, configuration hash, and evaluation outcome. All approved
+capital, leg bounds, constraints, and validity are canonical identity-bearing
+content; APPROVED authority equals its candidate and MODIFIED authority is a
+strict subset.
+
 These are validation and persistence contracts only. An allocation candidate
 is not a reservation, and even an approved decision is not an execution
 intent, order, or broker-executable quantity. No Phase 3 runner, rule

@@ -112,7 +112,8 @@ selects behavior. Policies are fail-closed.
 `DEFERRED`.
 
 - APPROVED contains allocation bounds equal to the candidate.
-- MODIFIED contains smaller bounds and explicit constraints.
+- MODIFIED contains a strict subset of candidate capital or leg bounds and
+  explicit constraints; it can never increase either bound.
 - REJECTED and DEFERRED contain no approved allocation.
 - Every outcome references one proposal, portfolio snapshot/revision,
   allocation candidate, risk evaluation, policy/configuration hashes,
@@ -122,6 +123,12 @@ selects behavior. Policies are fail-closed.
 An approved decision is an internal authorization artifact only. It contains
 no account, broker token, broker request, exchange order/product type, client
 request ID, or order payload and cannot be submitted to a broker.
+
+All approved capital, leg bounds, constraints, and validity participate in the
+canonical decision bytes, checksum, and identity. Outcome validation is tied
+to the aggregate rule statuses: all-pass for APPROVED, at least one safe
+modification for MODIFIED, a definitive violation for REJECTED, and a defer or
+technical failure for DEFERRED.
 
 ## Configuration and Persistence
 
@@ -157,3 +164,19 @@ integration, telemetry, read-only operational APIs, stress evidence, and
 paper-pipeline composition.
 
 Neither milestone authorizes live trading or direct broker execution.
+
+## Milestone 1 Completion Checklist
+
+- [x] Immutable revisioned portfolio snapshots and capital accounting.
+- [x] Integer-only checked money, ratios, quantities, P&L, and exposure.
+- [x] Explicit current, incremental, projected, unknown, and unbounded risk.
+- [x] Platform-owned strategy allocations and non-reserving candidates.
+- [x] Pure provider-neutral rule, evidence, violation, and evaluation contracts.
+- [x] Deterministic non-executable decisions with four exclusive outcomes.
+- [x] Kill-switch and circuit-breaker state contracts.
+- [x] Bounded canonical portfolio and risk configuration.
+- [x] Provider-neutral repositories with idempotency and collision rejection.
+- [x] Deterministic identity, canonical-output, overflow, boundary, and
+  repository contract tests.
+- [x] No runner, orchestration, mutation, reservation, replay, telemetry, HTTP,
+  production rule, broker, OMS, order, position, or execution capability.

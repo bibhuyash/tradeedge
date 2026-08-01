@@ -19,3 +19,8 @@ execution intents and cannot be submitted to a broker.
 Every decision remains attributable to one proposal and one immutable
 portfolio revision. Proposal consumption, authoritative mutation, reservation,
 and execution are deferred.
+
+The decision constructor verifies that proposal, candidate, snapshot revision,
+risk policy version, configuration hash, and aggregate evaluation all describe
+the same decision boundary. An outcome inconsistent with its rule results
+fails validation rather than becoming an authorization artifact.
