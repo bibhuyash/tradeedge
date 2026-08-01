@@ -24,6 +24,8 @@ type Config struct {
 	MarketDataDatasetRoot  string
 	StrategyMaxConcurrency int
 	StrategyTimeout        time.Duration
+	RiskMaxConcurrency     int
+	RiskTimeout            time.Duration
 }
 
 type LookupEnv func(string) (string, bool)
@@ -43,6 +45,8 @@ func LoadWithLookup(lookup LookupEnv) (Config, error) {
 		MarketDataDatasetRoot:  envOrDefault(lookup, "TRADEEDGE_MARKETDATA_DATASET_ROOT", ""),
 		StrategyMaxConcurrency: 4,
 		StrategyTimeout:        100 * time.Millisecond,
+		RiskMaxConcurrency:     4,
+		RiskTimeout:            100 * time.Millisecond,
 	}
 
 	if raw, ok := lookup("TRADEEDGE_SHUTDOWN_TIMEOUT"); ok {
@@ -65,6 +69,20 @@ func LoadWithLookup(lookup LookupEnv) (Config, error) {
 			return Config{}, fmt.Errorf("parse TRADEEDGE_STRATEGY_TIMEOUT: %w", err)
 		}
 		cfg.StrategyTimeout = value
+	}
+	if raw, ok := lookup("TRADEEDGE_RISK_MAX_CONCURRENCY"); ok {
+		value, err := strconv.Atoi(strings.TrimSpace(raw))
+		if err != nil {
+			return Config{}, fmt.Errorf("parse TRADEEDGE_RISK_MAX_CONCURRENCY: %w", err)
+		}
+		cfg.RiskMaxConcurrency = value
+	}
+	if raw, ok := lookup("TRADEEDGE_RISK_TIMEOUT"); ok {
+		value, err := time.ParseDuration(strings.TrimSpace(raw))
+		if err != nil {
+			return Config{}, fmt.Errorf("parse TRADEEDGE_RISK_TIMEOUT: %w", err)
+		}
+		cfg.RiskTimeout = value
 	}
 
 	if err := cfg.Validate(); err != nil {
@@ -96,6 +114,12 @@ func (c Config) Validate() error {
 	}
 	if c.StrategyTimeout <= 0 || c.StrategyTimeout > time.Minute {
 		return errors.New("TRADEEDGE_STRATEGY_TIMEOUT must be positive and at most one minute")
+	}
+	if c.RiskMaxConcurrency <= 0 || c.RiskMaxConcurrency > 64 {
+		return errors.New("TRADEEDGE_RISK_MAX_CONCURRENCY must be between 1 and 64")
+	}
+	if c.RiskTimeout <= 0 || c.RiskTimeout > time.Minute {
+		return errors.New("TRADEEDGE_RISK_TIMEOUT must be positive and at most one minute")
 	}
 	return nil
 }

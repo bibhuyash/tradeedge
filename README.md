@@ -1,6 +1,6 @@
 # TradeEdge
 
-TradeEdge is a safety-first automated options-trading platform for the Indian market. The repository includes the Phase 0 runtime foundation, Phase 1 provider-neutral historical market data, Phase 1.1 operational hardening, the formally released Phase 2 strategy framework, and Phase 3 Milestone 1 portfolio/risk decision contracts.
+TradeEdge is a safety-first automated options-trading platform for the Indian market. The repository includes the Phase 0 runtime foundation, Phase 1 provider-neutral historical market data, Phase 1.1 operational hardening, the formally released Phase 2 strategy framework, and the Phase 3 Milestone 2 portfolio/risk decision runtime.
 
 The application is **paper-only**. It contains no Zerodha network integration,
 live broker route, real credentials, production trading strategy, or
@@ -29,6 +29,8 @@ Configuration is loaded from environment variables. Copy `.env.example` only as 
 | `TRADEEDGE_MARKETDATA_DATASET_ROOT` | empty | Optional local immutable dataset repository for read-only dataset APIs |
 | `TRADEEDGE_STRATEGY_MAX_CONCURRENCY` | `4` | Bounded concurrent evaluations across different instances; valid range 1–64 |
 | `TRADEEDGE_STRATEGY_TIMEOUT` | `100ms` | Cooperative per-evaluation deadline; positive and at most one minute |
+| `TRADEEDGE_RISK_MAX_CONCURRENCY` | `4` | Bounded concurrent portfolio evaluations; valid range 1–64 |
+| `TRADEEDGE_RISK_TIMEOUT` | `100ms` | Cooperative per-decision deadline; positive and at most one minute |
 
 Do not add broker tokens, API secrets, or account credentials to repository files.
 
@@ -229,9 +231,10 @@ reports for 90 days. See
 - `internal/portfolio/config` and `internal/risk/config` accept bounded
   canonical integer-only JSON. Duplicate keys, floats, unknown fixed fields,
   invalid limits, and unknown or duplicate rule identities fail closed.
-- Portfolio and risk storage contracts are provider-neutral. Their bounded
-  in-memory adapters support immutable contract testing only; they do not
-  atomically mutate portfolio state or reserve capital.
+- Portfolio and risk storage contracts are provider-neutral. The bounded M2
+  reference adapter atomically commits decision artifacts, an optional capital
+  reservation, and portfolio checkpoint/revision under optimistic revision
+  control.
 - `internal/execution` owns the broker interface.
 - `internal/adapters/broker/paper` is an in-memory, context-aware paper skeleton with duplicate prevention and no network access.
 - Configuration, HTTP, and logging are platform concerns and do not contain trading policy.
@@ -285,7 +288,7 @@ containment, replay divergence, resource growth beyond explicit tolerances, or
 artifact failure. See
 `docs/runbooks/PHASE_2_STRATEGY_RELEASE_GATE.md` for the evidence contract.
 
-## Phase 3 Milestone 1 status
+## Phase 3 Milestone 2 status
 
 Milestone 1 defines deterministic portfolio snapshots, capital accounting,
 current/incremental/projected exposure, strategy allocation state,
@@ -299,12 +302,12 @@ capital, leg bounds, constraints, and validity are canonical identity-bearing
 content; APPROVED authority equals its candidate and MODIFIED authority is a
 strict subset.
 
-These are validation and persistence contracts only. An allocation candidate
-is not a reservation, and even an approved decision is not an execution
-intent, order, or broker-executable quantity. No Phase 3 runner, rule
-orchestration, reference risk rule, atomic portfolio publication, replay
-integration, HTTP endpoint, Prometheus wiring, broker integration, credential,
-or live-trading capability exists. See
-`docs/plans/PHASE-3-PORTFOLIO-RISK.md`.
+Milestone 2 adds a synchronous bounded runner, deterministic allocation and
+ordered rule orchestration, atomic decision/checkpoint publication, optimistic
+revision enforcement, duplicate suppression, recovery checkpoints, and serial
+replay. An allocation candidate remains non-authoritative before commit and an
+approved decision remains non-executable. No production rule catalog,
+operational API, Prometheus wiring, broker integration, credential, order, or
+live-trading capability exists. See `docs/plans/PHASE-3-PORTFOLIO-RISK.md`.
 
 See `docs/` for the product, architecture, trading, reliability, integration, and phase plans.

@@ -36,6 +36,8 @@ func TestRunStopsGracefullyWhenContextIsCancelled(t *testing.T) {
 		TradingMode:            config.ModePaper,
 		StrategyMaxConcurrency: 4,
 		StrategyTimeout:        100 * time.Millisecond,
+		RiskMaxConcurrency:     4,
+		RiskTimeout:            100 * time.Millisecond,
 	}
 	ctx, cancel := context.WithCancel(context.Background())
 	result := make(chan error, 1)
@@ -76,6 +78,8 @@ func TestRunRejectsLiveModeBeforeStartup(t *testing.T) {
 		TradingMode:            "live",
 		StrategyMaxConcurrency: 4,
 		StrategyTimeout:        100 * time.Millisecond,
+		RiskMaxConcurrency:     4,
+		RiskTimeout:            100 * time.Millisecond,
 	}
 	err = Run(context.Background(), cfg, logger)
 	if err == nil || !strings.Contains(err.Error(), "live trading is unavailable") {
@@ -89,6 +93,7 @@ func TestRunShutsDownInjectedStrategyRunner(t *testing.T) {
 		Environment: "test", HTTPAddress: "127.0.0.1:0", LogLevel: "error",
 		ShutdownTimeout: time.Second, TradingMode: config.ModePaper,
 		StrategyMaxConcurrency: 4, StrategyTimeout: 100 * time.Millisecond,
+		RiskMaxConcurrency: 4, RiskTimeout: 100 * time.Millisecond,
 	}
 	ctx, cancel := context.WithCancel(context.Background())
 	called := make(chan struct{})
@@ -124,6 +129,7 @@ func TestDefaultRuntimeStartsWithoutStrategyInstances(t *testing.T) {
 		Environment: "test", HTTPAddress: address, LogLevel: "error",
 		ShutdownTimeout: time.Second, TradingMode: config.ModePaper,
 		StrategyMaxConcurrency: 4, StrategyTimeout: 100 * time.Millisecond,
+		RiskMaxConcurrency: 4, RiskTimeout: 100 * time.Millisecond,
 	}
 	ctx, cancel := context.WithCancel(context.Background())
 	result := make(chan error, 1)

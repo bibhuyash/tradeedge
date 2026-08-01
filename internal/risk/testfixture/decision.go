@@ -84,11 +84,21 @@ func decision(modified bool) (riskmodel.PortfolioRiskDecision, error) {
 		resultReason = "MODIFICATION_REQUIRED"
 		resultEffect = riskmodel.EffectModify
 	}
-	result, err := riskmodel.NewRuleResult(riskmodel.RuleResultSpec{
+	resultSpec := riskmodel.RuleResultSpec{
 		RuleID: ruleID, RuleVersion: 1, ConfigurationHash: ruleHash,
 		Status: resultStatus, ReasonCode: resultReason,
 		Severity: riskmodel.SeverityInfo, Effect: resultEffect, EvaluatedAt: now,
-	})
+	}
+	if modified {
+		resultSpec.Adjustment = &riskmodel.RuleAdjustment{
+			MaximumCapital: money(50), LegBounds: candidate.Spec().LegBounds,
+			Constraints: []portfoliomodel.AllocationConstraint{{
+				Code: portfoliomodel.ReasonInstrumentLimitExceeded, Before: money(100),
+				After: money(50), Explanation: "fixture limit",
+			}}, ValidUntil: proposal.Draft().ExpiresAt,
+		}
+	}
+	result, err := riskmodel.NewRuleResult(resultSpec)
 	if err != nil {
 		return riskmodel.PortfolioRiskDecision{}, err
 	}

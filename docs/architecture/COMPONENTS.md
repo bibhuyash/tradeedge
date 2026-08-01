@@ -57,8 +57,11 @@ Interfaces are small and owned by their consumers. Cross-module shared values ar
 - Phase 3 risk contracts represent versioned fail-closed policy, pure rule
   inputs/results, typed evidence and violations, aggregate evaluations, and
   non-executable portfolio-risk decisions.
-- Milestone 1 repositories register immutable contract values only. Atomic
-  reservation and portfolio revision publication are deferred.
+- The Milestone 2 runner serializes each portfolio, applies bounded
+  cross-portfolio concurrency, evaluates rules in policy order, and publishes
+  the decision, optional reservation, and revision `N+1` checkpoint atomically.
+- The reference runtime repository is provider-neutral and in-memory; durable
+  PostgreSQL persistence remains deferred.
 - Execution owns order state and broker access.
 - Reconciliation repairs internal understanding from broker facts.
 - Notifications report but never determine trading truth.

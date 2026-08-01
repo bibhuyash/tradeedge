@@ -42,11 +42,14 @@ is surfaced without re-running strategy code. Panic values and stacks are
 bounded, and a later trigger or safe retry can proceed after keyed state is
 retired.
 
-Phase 3 Milestone 1 adds no recovery workflow. Its immutable portfolio
-snapshots and decisions retain revision, configuration, source-state, evidence,
-and content checksums so a future recovery process can verify them. Unknown or
-unavailable exposure is represented explicitly and never restored as known
-zero. Identity reuse with changed canonical content is an integrity collision.
+Phase 3 Milestone 2 restores only verified portfolio checkpoints. Every
+non-genesis checkpoint binds its parent snapshot/checksum, proposal, trigger,
+decision, optional reservation, and resulting snapshot checksum. Continuation
+from a restored checkpoint is byte-equivalent to uninterrupted serial replay.
+Timeout, cancellation, panic, invalid allocation/rule output, storage failure,
+and revision conflict publish no artifacts or portfolio revision. Unknown or
+unavailable exposure is explicit and never restored as known zero. Identity
+reuse with changed canonical content is an integrity collision.
 The in-memory adapters are not durable and are not an authoritative restart
 mechanism.
 

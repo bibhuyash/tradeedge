@@ -49,6 +49,7 @@ type RiskPolicyID riskDigest
 type RiskEvaluationID riskDigest
 type RiskViolationID riskDigest
 type PortfolioRiskDecisionID riskDigest
+type DecisionTriggerID riskDigest
 type EvidenceChecksum riskDigest
 type DecisionChecksum riskDigest
 type RiskConfigurationHash riskDigest
@@ -77,6 +78,12 @@ func NewPortfolioRiskDecisionID(parts ...string) (PortfolioRiskDecisionID, error
 	}
 	return PortfolioRiskDecisionID(derive("portfolio-risk-decision-id/v1", parts...)), nil
 }
+func NewDecisionTriggerID(parts ...string) (DecisionTriggerID, error) {
+	if !validParts(parts) {
+		return DecisionTriggerID{}, ErrInvalidRiskIdentity
+	}
+	return DecisionTriggerID(derive("portfolio-risk-trigger-id/v1", parts...)), nil
+}
 func NewEvidenceChecksum(canonical []byte) (EvidenceChecksum, error) {
 	if len(canonical) == 0 {
 		return EvidenceChecksum{}, ErrInvalidRiskIdentity
@@ -101,6 +108,7 @@ func (value RiskPolicyID) String() string            { return digestString(riskD
 func (value RiskEvaluationID) String() string        { return digestString(riskDigest(value)) }
 func (value RiskViolationID) String() string         { return digestString(riskDigest(value)) }
 func (value PortfolioRiskDecisionID) String() string { return digestString(riskDigest(value)) }
+func (value DecisionTriggerID) String() string       { return digestString(riskDigest(value)) }
 func (value EvidenceChecksum) String() string        { return digestString(riskDigest(value)) }
 func (value DecisionChecksum) String() string        { return digestString(riskDigest(value)) }
 func (value RiskConfigurationHash) String() string   { return digestString(riskDigest(value)) }
@@ -108,6 +116,7 @@ func (value RiskPolicyID) IsZero() bool              { return value == RiskPolic
 func (value RiskEvaluationID) IsZero() bool          { return value == RiskEvaluationID{} }
 func (value RiskViolationID) IsZero() bool           { return value == RiskViolationID{} }
 func (value PortfolioRiskDecisionID) IsZero() bool   { return value == PortfolioRiskDecisionID{} }
+func (value DecisionTriggerID) IsZero() bool         { return value == DecisionTriggerID{} }
 func (value EvidenceChecksum) IsZero() bool          { return value == EvidenceChecksum{} }
 func (value DecisionChecksum) IsZero() bool          { return value == DecisionChecksum{} }
 func (value RiskConfigurationHash) IsZero() bool     { return value == RiskConfigurationHash{} }
