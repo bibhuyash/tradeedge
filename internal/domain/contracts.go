@@ -7,35 +7,6 @@ import (
 
 var ErrInvalidOrderRequest = errors.New("invalid order request")
 
-type Signal struct {
-	StrategyID StrategyID
-	Instrument Instrument
-	Side       Side
-	ObservedAt time.Time
-}
-
-type AllocationRequest struct {
-	Signal    Signal
-	AccountID AccountID
-}
-
-type Allocation struct {
-	Request  AllocationRequest
-	Quantity Quantity
-}
-
-type RiskDecisionStatus string
-
-const (
-	RiskApproved RiskDecisionStatus = "APPROVED"
-	RiskRejected RiskDecisionStatus = "REJECTED"
-)
-
-type RiskDecision struct {
-	Status RiskDecisionStatus
-	Reason string
-}
-
 type Side string
 
 const (

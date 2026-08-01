@@ -38,3 +38,12 @@ Numeric loss, exposure, liquidity, concentration, and decision-expiry limits req
 - Decisions return explicit approve/reject outcomes and reasons.
 - Inputs and policy versions are auditable.
 - Kill-switch and inconsistent-state rejection cannot be bypassed.
+
+## Phase 3 Milestone 1 Contract
+
+Milestone 1 defines immutable `AllocationCandidate`, `RiskEvaluation`, and
+`PortfolioRiskDecision` values with APPROVED, MODIFIED, REJECTED, and DEFERRED
+outcomes. It defines pure rule inputs/results and typed bounded evidence but
+does not execute rules, reserve capital, mutate a portfolio, or create an
+execution intent. Unknown exposure remains explicitly unknown and therefore
+cannot silently satisfy a future risk rule.
