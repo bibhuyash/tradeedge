@@ -84,7 +84,8 @@ func TestEvaluationViolationAndDecisionDeterminism(t *testing.T) {
 	if _, ok := approved.ApprovedAllocation(); !ok {
 		t.Fatal("approved decision has no bounded allocation")
 	}
-	modified := decisionFixture(t, approvedFixture, DecisionModified)
+	modifiedFixture := riskFixture(t, RuleModificationRequired)
+	modified := decisionFixture(t, modifiedFixture, DecisionModified)
 	if modified.Outcome() != DecisionModified {
 		t.Fatalf("modified outcome = %s", modified.Outcome())
 	}
@@ -115,10 +116,61 @@ func TestDecisionInvariantFailures(t *testing.T) {
 	if _, err := NewPortfolioRiskDecision(base); !errors.Is(err, ErrInvalidPortfolioRiskDecision) {
 		t.Fatalf("invalid expiry error = %v", err)
 	}
-	base = decisionSpec(t, fixture, DecisionModified)
+	base = decisionSpec(t, riskFixture(t, RuleModificationRequired), DecisionModified)
 	base.ApprovedAllocation.MaximumCapital = fixture.candidate.CandidateCapital()
 	if _, err := NewPortfolioRiskDecision(base); !errors.Is(err, ErrInvalidPortfolioRiskDecision) {
 		t.Fatalf("unmodified MODIFIED error = %v", err)
+	}
+	base = decisionSpec(t, fixture, DecisionApproved)
+	reduced, _ := domain.NewQuantity(50)
+	base.ApprovedAllocation.LegBounds[0].MaximumUnits = reduced
+	if _, err := NewPortfolioRiskDecision(base); !errors.Is(err, ErrInvalidPortfolioRiskDecision) {
+		t.Fatalf("approved with reduced leg bound error = %v", err)
+	}
+	base = decisionSpec(t, riskFixture(t, RuleModificationRequired), DecisionApproved)
+	if _, err := NewPortfolioRiskDecision(base); !errors.Is(err, ErrInvalidPortfolioRiskDecision) {
+		t.Fatalf("approved with modifying evaluation error = %v", err)
+	}
+}
+
+func TestModifiedDecisionMayReduceOnlyLegAuthority(t *testing.T) {
+	fixture := riskFixture(t, RuleModificationRequired)
+	spec := decisionSpec(t, fixture, DecisionModified)
+	spec.ApprovedAllocation.MaximumCapital = fixture.candidate.CandidateCapital()
+	reduced, _ := domain.NewQuantity(50)
+	spec.ApprovedAllocation.LegBounds[0].MaximumUnits = reduced
+	decision, err := NewPortfolioRiskDecision(spec)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if decision.Outcome() != DecisionModified {
+		t.Fatalf("outcome = %s", decision.Outcome())
+	}
+}
+
+func TestDecisionCanonicalOutputIncludesAllApprovedAuthority(t *testing.T) {
+	fixture := riskFixture(t, RuleModificationRequired)
+	first := decisionSpec(t, fixture, DecisionModified)
+	firstDecision, err := NewPortfolioRiskDecision(first)
+	if err != nil {
+		t.Fatal(err)
+	}
+	second := decisionSpec(t, fixture, DecisionModified)
+	second.ApprovedAllocation.MaximumCapital = riskMoney(t, 40)
+	second.ApprovedAllocation.Constraints[0].After = riskMoney(t, 40)
+	secondDecision, err := NewPortfolioRiskDecision(second)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if firstDecision.ID() == secondDecision.ID() ||
+		bytes.Equal(firstDecision.CanonicalJSON(), secondDecision.CanonicalJSON()) {
+		t.Fatal("changed approved authority retained canonical output or identity")
+	}
+	raw := firstDecision.CanonicalJSON()
+	for _, field := range [][]byte{[]byte(`"LegBounds"`), []byte(`"Constraints"`), []byte(`"MaximumUnits"`)} {
+		if !bytes.Contains(raw, field) {
+			t.Fatalf("canonical decision omitted authority field %s: %s", field, raw)
+		}
 	}
 }
 
@@ -253,7 +305,8 @@ func riskFixture(t *testing.T, status RuleResultStatus) fixture {
 	known, _ := portfoliomodel.NewKnownMoney(riskMoney(t, 100))
 	unknown, _ := portfoliomodel.NewUnavailableMoney(portfoliomodel.AvailabilityUnknown)
 	ratio, _ := portfoliomodel.NewContractRatio(1)
-	quantity, _ := domain.NewQuantity(50)
+	quantity, _ := domain.NewQuantity(100)
+	lotSize, _ := domain.NewQuantity(50)
 	candidate, err := portfoliomodel.NewAllocationCandidate(portfoliomodel.AllocationCandidateSpec{
 		SchemaVersion: "allocation-candidate/v1", Proposal: proposal,
 		PortfolioID: portfolioID, PortfolioSnapshotID: snapshot.ID(), PortfolioRevision: 1,
@@ -263,7 +316,7 @@ func riskFixture(t *testing.T, status RuleResultStatus) fixture {
 		LegBounds: []portfoliomodel.AllocationLegBound{{
 			InstrumentID: proposal.Draft().Legs[0].InstrumentID, Side: domain.SideBuy,
 			Ratio: ratio, Resolution: portfoliomodel.QuantityResolved,
-			MaximumUnits: quantity, LotSize: quantity,
+			MaximumUnits: quantity, LotSize: lotSize,
 		}},
 		ReserveImpact: riskMoney(t, 0),
 		Rounding: portfoliomodel.RoundingEvidence{
@@ -323,12 +376,16 @@ func riskFixture(t *testing.T, status RuleResultStatus) fixture {
 		t.Fatal(err)
 	}
 	evaluationSpec.ID = evaluationID
-	if status == RuleViolation {
-		reason, _ := NewViolationReason("DAILY_LOSS_EXCEEDED")
+	if status == RuleViolation || status == RuleModificationRequired {
+		reason, _ := NewViolationReason(reasonForStatus(status))
+		effect := EffectReject
+		if status == RuleModificationRequired {
+			effect = EffectModify
+		}
 		violation, violationErr := NewRiskViolation(RiskViolationSpec{
 			SchemaVersion: "risk-violation/v1", EvaluationID: evaluationID,
 			RuleID: rule.Descriptor.ID, RuleVersion: rule.Descriptor.Version,
-			ReasonCode: reason, Severity: SeverityBlocking, Effect: EffectReject,
+			ReasonCode: reason, Severity: SeverityBlocking, Effect: effect,
 			Evidence: []RiskEvidence{evidence}, GeneratedAt: now,
 			ConfigurationHash: rule.ConfigurationHash,
 		})

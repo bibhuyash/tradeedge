@@ -76,10 +76,18 @@ func decision(modified bool) (riskmodel.PortfolioRiskDecision, error) {
 	}
 	ruleID, _ := riskmodel.NewRiskRuleID("FIXTURE_RULE")
 	ruleHash, _ := riskmodel.NewRiskConfigurationHash([]byte(`{"limit":1}`))
+	resultStatus := riskmodel.RulePass
+	resultReason := "WITHIN_LIMIT"
+	resultEffect := riskmodel.EffectNone
+	if modified {
+		resultStatus = riskmodel.RuleModificationRequired
+		resultReason = "MODIFICATION_REQUIRED"
+		resultEffect = riskmodel.EffectModify
+	}
 	result, err := riskmodel.NewRuleResult(riskmodel.RuleResultSpec{
 		RuleID: ruleID, RuleVersion: 1, ConfigurationHash: ruleHash,
-		Status: riskmodel.RulePass, ReasonCode: "WITHIN_LIMIT",
-		Severity: riskmodel.SeverityInfo, Effect: riskmodel.EffectNone, EvaluatedAt: now,
+		Status: resultStatus, ReasonCode: resultReason,
+		Severity: riskmodel.SeverityInfo, Effect: resultEffect, EvaluatedAt: now,
 	})
 	if err != nil {
 		return riskmodel.PortfolioRiskDecision{}, err
