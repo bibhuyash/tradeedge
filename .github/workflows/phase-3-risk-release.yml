@@ -38,7 +38,7 @@ jobs:
           ! grep -RInEi --include='*.go' 'api[_-]?key|access[_-]?token|client[_-]?secret' internal/risk internal/portfolio cmd/tradeedge-risk-gate
       - name: Generate authoritative evidence
         env:
-          COMMIT_SHA: ${{ github.sha }}
+          COMMIT_SHA: ${{ github.event.pull_request.head.sha || github.sha }}
           RUN_ID: ${{ github.run_id }}
           RUN_ATTEMPT: ${{ github.run_attempt }}
         run: |
