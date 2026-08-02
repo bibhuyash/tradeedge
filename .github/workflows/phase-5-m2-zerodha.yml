@@ -1,0 +1,43 @@
+name: Phase 5 M2 Guarded Zerodha Execution
+
+on:
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: phase-5-m2-zerodha-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  execution-evidence:
+    runs-on: ubuntu-latest
+    timeout-minutes: 35
+    steps:
+      - uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10 # v6
+      - uses: actions/setup-go@924ae3a1cded613372ab5595356fb5720e22ba16 # v6
+        with:
+          go-version-file: go.mod
+          cache: false
+      - name: Format, test, vet, and build
+        run: |
+          test -z "$(gofmt -l .)"
+          go test ./...
+          go vet ./...
+          go build ./...
+      - name: Full Ubuntu race suite
+        run: go test -race ./... -count=1 -timeout=15m
+      - name: Repeated guarded-execution race tests
+        run: go test -race ./internal/adapters/broker/zerodha ./internal/execution/coordinator ./internal/execution/reconciliation ./internal/adapters/execution/memory ./internal/adapters/metrics/prometheus -count=10 -timeout=15m
+      - name: Safety and dependency scans
+        shell: bash
+        run: |
+          ! grep -RInE --include='*.go' 'internal/adapters/broker/zerodha|kiteconnect|github.com/zerodha' internal/domain internal/execution internal/risk internal/strategy internal/portfolio
+          ! grep -RInE --include='*.go' --exclude='*_test.go' 'logger\.|(^|[^s])log\.|slog\.(Debug|Info|Warn|Error)' internal/adapters/broker/zerodha
+          ! grep -RInE --include='*.go' --exclude='*_test.go' '\bfloat(32|64)\b' internal/adapters/broker/zerodha internal/instrumentmaster internal/domain
+          ! grep -RInE --exclude-dir=.git --exclude-dir=.cache --exclude='*_test.go' --exclude='*.md' --exclude='*.yml' --exclude='*.yaml' -- '-----BEGIN (RSA |EC |OPENSSH )?PRIVATE KEY-----|api_secret[[:space:]]*=[[:space:]]*[^[:space:]]+|access_token[[:space:]]*=[[:space:]]*[^[:space:]]+' .
+          ! grep -RInE --exclude='*.md' 'TRADEEDGE_TRADING_MODE=(live|enabled)|LIVE_ENABLED' cmd internal .env.example
+          ! grep -RInE --include='*.go' 'adapters/broker/zerodha|NewExecutionAdapter|PermitMutationGate|\.Place\(|\.Cancel\(' cmd internal/app
+          git diff --check

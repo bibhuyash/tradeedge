@@ -2,7 +2,9 @@
 
 ## Scope
 
-Zerodha is the initial market-data and future broker provider, isolated behind provider-neutral interfaces. Phase 5 M1 provides a read-only connectivity foundation; it is not composed into the default application runtime and contains no order capability.
+Zerodha is the initial market-data and broker provider, isolated behind
+provider-neutral interfaces. Phase 5 M2 adds a sealed order-adapter boundary,
+but it remains uncomposed and mutation-disabled in the default runtime.
 
 ## Assumptions
 
@@ -10,10 +12,13 @@ REST and streaming APIs can disconnect, throttle, duplicate, reorder, delay, or 
 
 ## Responsibilities
 
-The M1 adapter supports explicit authentication/session state, profile and
+The connectivity adapter supports explicit authentication/session state, profile and
 instrument reads, bounded timeouts/concurrency/safe-read retries, capability
 discovery, mapping validation, readiness, redaction, and deterministic fakes.
-Order state, lookup, updates, and reconciliation remain M2 work.
+The M2 execution adapter translates the existing provider-neutral `BrokerPort`
+to a fixed Zerodha order profile. It maintains exact TradeEdge client-ID
+correlation, broker-order evidence, a bounded update journal, REST order/trade
+snapshots, and a serializable recovery checkpoint.
 
 For market data, it must also report provider availability, preserve exact provider sequencing when available, maintain bounded socket-to-normalizer buffering, and fail readiness on overflow or stale delivery. Provider tokens remain mapping-table inputs and are prohibited from canonical IDs, operational responses, logs, and metric labels.
 
@@ -23,6 +28,10 @@ For market data, it must also report provider availability, preserve exact provi
 - Strategies never receive the adapter.
 - A submission timeout is reconciled before retry.
 - Broker orders and positions are authoritative for actual external state.
+- The default mutation gate denies submission and cancellation.
+- Broker IDs supplement but never replace TradeEdge order identity.
+- Possibly accepted submissions stay unknown until exact evidence is found.
+- Fill quantity is monotonic, idempotent, and bounded by approved quantity.
 
 ## Failure Modes
 
@@ -36,12 +45,14 @@ A provider-neutral boundary may not expose every Zerodha feature, but it protect
 
 Retail access tokens expire at the documented daily session boundary and
 require re-login after expiry or invalidation. M1 does not use refresh tokens.
-Production secret storage, instrument licensing/retention, read-only runtime
-composition, and operational login ownership remain deployment decisions.
+Production secret storage, instrument licensing/retention, runtime composition,
+durable checkpoint storage, and operational login ownership remain M3 or
+deployment decisions.
 
 ## Acceptance Criteria
 
 - Default runtime operation makes no Zerodha call and requires no credential.
-- M1 adapter behavior is context-aware, bounded, redacted, and read-only.
+- M2 adapter behavior is context-aware, bounded, redacted, and deny-by-default.
 - Provider-specific limitations are contained within the adapter.
-- No M1 API can submit, modify, or cancel an order.
+- No normal runtime path can reach Zerodha submission or cancellation.
+- Phase 4 owns all OMS state/report/fill publication without bypasses.

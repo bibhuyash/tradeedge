@@ -16,19 +16,29 @@ const (
 	OperationMapping        Operation = "mapping"
 	OperationReadiness      Operation = "readiness"
 	OperationShutdown       Operation = "shutdown"
+	OperationSubmission     Operation = "submission"
+	OperationCancellation   Operation = "cancellation"
+	OperationOrderUpdate    Operation = "order_update"
+	OperationSnapshot       Operation = "snapshot"
+	OperationLookup         Operation = "lookup"
 )
 
 const (
-	OutcomeSuccess     Outcome = "success"
-	OutcomeFailure     Outcome = "failure"
-	OutcomeExpired     Outcome = "expired"
-	OutcomeTimeout     Outcome = "timeout"
-	OutcomeRateLimited Outcome = "rate_limited"
-	OutcomeMalformed   Outcome = "malformed"
-	OutcomeMissing     Outcome = "missing"
-	OutcomeStale       Outcome = "stale"
-	OutcomeAmbiguous   Outcome = "ambiguous"
-	OutcomeStopped     Outcome = "stopped"
+	OutcomeSuccess      Outcome = "success"
+	OutcomeFailure      Outcome = "failure"
+	OutcomeExpired      Outcome = "expired"
+	OutcomeTimeout      Outcome = "timeout"
+	OutcomeRateLimited  Outcome = "rate_limited"
+	OutcomeMalformed    Outcome = "malformed"
+	OutcomeMissing      Outcome = "missing"
+	OutcomeStale        Outcome = "stale"
+	OutcomeAmbiguous    Outcome = "ambiguous"
+	OutcomeStopped      Outcome = "stopped"
+	OutcomeRejected     Outcome = "rejected"
+	OutcomeUnknown      Outcome = "unknown"
+	OutcomeDisabled     Outcome = "disabled"
+	OutcomeConflict     Outcome = "conflict"
+	OutcomeDisconnected Outcome = "disconnected"
 )
 
 type Event struct {
@@ -60,13 +70,15 @@ func Safe(next Recorder) Recorder {
 
 func Valid(event Event) bool {
 	switch event.Operation {
-	case OperationAuthentication, OperationProfile, OperationInstruments, OperationMapping, OperationReadiness, OperationShutdown:
+	case OperationAuthentication, OperationProfile, OperationInstruments, OperationMapping, OperationReadiness, OperationShutdown,
+		OperationSubmission, OperationCancellation, OperationOrderUpdate, OperationSnapshot, OperationLookup:
 	default:
 		return false
 	}
 	switch event.Outcome {
 	case OutcomeSuccess, OutcomeFailure, OutcomeExpired, OutcomeTimeout, OutcomeRateLimited,
-		OutcomeMalformed, OutcomeMissing, OutcomeStale, OutcomeAmbiguous, OutcomeStopped:
+		OutcomeMalformed, OutcomeMissing, OutcomeStale, OutcomeAmbiguous, OutcomeStopped,
+		OutcomeRejected, OutcomeUnknown, OutcomeDisabled, OutcomeConflict, OutcomeDisconnected:
 		return true
 	default:
 		return false
