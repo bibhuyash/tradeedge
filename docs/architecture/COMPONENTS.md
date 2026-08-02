@@ -101,6 +101,11 @@ Additional packages and contracts create ceremony but make unsafe coupling visib
 - Every requested port has one clear owner.
 - Strategy code has no broker capability.
 - Paper and future live adapters satisfy the same execution-owned contract.
+- Phase 4 M1 execution contracts model bounded intent, dependency-safe plans,
+  orders, reports, fills, and explicit unknown state without invoking a broker.
+- The provider-neutral OMS storage contract atomically publishes order state,
+  report, optional fill, and checksummed checkpoint; its M1 reference adapter
+  is bounded and in-memory.
 - Prometheus imports are confined to `internal/adapters/metrics/prometheus` and HTTP composition.
 - Calendar, readiness, correction, and operations packages contain no strategy or broker capability.
 - Strategy contracts import only provider-neutral domain, market-data model,

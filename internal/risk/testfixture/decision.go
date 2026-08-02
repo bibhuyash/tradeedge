@@ -13,16 +13,21 @@ import (
 )
 
 func ApprovedDecision() (riskmodel.PortfolioRiskDecision, error) {
-	return decision(false)
+	return decision(false, false)
 }
 
 func ModifiedDecision() (riskmodel.PortfolioRiskDecision, error) {
-	return decision(true)
+	return decision(true, false)
 }
 
-func decision(modified bool) (riskmodel.PortfolioRiskDecision, error) {
+// ApprovedMultiLegDecision returns a deterministic protective BUY plus exposure-increasing SELL fixture.
+func ApprovedMultiLegDecision() (riskmodel.PortfolioRiskDecision, error) {
+	return decision(false, true)
+}
+
+func decision(modified, multiLeg bool) (riskmodel.PortfolioRiskDecision, error) {
 	now := time.Date(2026, 7, 18, 4, 0, 0, 0, time.UTC)
-	proposal, err := proposal(now)
+	proposal, err := proposal(now, multiLeg)
 	if err != nil {
 		return riskmodel.PortfolioRiskDecision{}, err
 	}
@@ -51,19 +56,23 @@ func decision(modified bool) (riskmodel.PortfolioRiskDecision, error) {
 	unknown, _ := portfoliomodel.NewUnavailableMoney(portfoliomodel.AvailabilityUnknown)
 	allocationID, _ := portfoliomodel.NewStrategyAllocationID("fixture")
 	policyID, _ := portfoliomodel.NewAllocationPolicyID("fixture")
-	ratio, _ := portfoliomodel.NewContractRatio(1)
 	quantity, _ := domain.NewQuantity(50)
+	legBounds := make([]portfoliomodel.AllocationLegBound, len(proposal.Draft().Legs))
+	for index, proposalLeg := range proposal.Draft().Legs {
+		legRatio, _ := portfoliomodel.NewContractRatio(proposalLeg.Ratio)
+		legBounds[index] = portfoliomodel.AllocationLegBound{
+			InstrumentID: proposalLeg.InstrumentID, Side: proposalLeg.Side,
+			Ratio: legRatio, Resolution: portfoliomodel.QuantityResolved,
+			MaximumUnits: quantity, LotSize: quantity,
+		}
+	}
 	candidate, err := portfoliomodel.NewAllocationCandidate(portfoliomodel.AllocationCandidateSpec{
 		SchemaVersion: "allocation-candidate/v1", Proposal: proposal,
 		PortfolioID: portfolioID, PortfolioSnapshotID: snapshot.ID(), PortfolioRevision: 1,
 		StrategyAllocationID: allocationID, PolicyID: policyID, PolicyVersion: 1,
 		RequestedSizing: proposal.Draft().Sizing, CandidateCapital: money(100),
 		CandidatePremium: known, CandidateRiskBudget: unknown,
-		LegBounds: []portfoliomodel.AllocationLegBound{{
-			InstrumentID: proposal.Draft().Legs[0].InstrumentID, Side: domain.SideBuy,
-			Ratio: ratio, Resolution: portfoliomodel.QuantityResolved,
-			MaximumUnits: quantity, LotSize: quantity,
-		}},
+		LegBounds:     legBounds,
 		ReserveImpact: money(0), Rounding: portfoliomodel.RoundingEvidence{
 			RequestedMinor: 100, ApprovedMinor: 100, Method: "FLOOR_TO_BOUNDED_UNITS",
 		},
@@ -150,8 +159,9 @@ func decision(modified bool) (riskmodel.PortfolioRiskDecision, error) {
 	})
 }
 
-func proposal(now time.Time) (strategymodel.TradeProposal, error) {
+func proposal(now time.Time, multiLeg bool) (strategymodel.TradeProposal, error) {
 	instrument, _ := domain.InstrumentIDFromCanonicalKey("fixture")
+	sellInstrument, _ := domain.InstrumentIDFromCanonicalKey("fixture-sell")
 	price, _ := domain.NewPrice(100, "INR")
 	definitionID, _ := strategymodel.NewDefinitionID("fixture")
 	manifest := strategymodel.VersionManifest{
@@ -166,12 +176,19 @@ func proposal(now time.Time) (strategymodel.TradeProposal, error) {
 	evaluationID, _ := strategymodel.NewEvaluationID("fixture")
 	frameID, _ := strategymodel.NewFrameID("fixture")
 	eventID, _ := marketmodel.NewEventID("fixture")
+	legs := []strategymodel.ProposalLeg{{
+		InstrumentID: instrument, Side: domain.SideBuy, Ratio: 1,
+		ReferencePrice: price, MaxDeviationBPS: 100,
+	}}
+	if multiLeg {
+		legs = append(legs, strategymodel.ProposalLeg{
+			InstrumentID: sellInstrument, Side: domain.SideSell, Ratio: 1,
+			ReferencePrice: price, MaxDeviationBPS: 100,
+		})
+	}
 	draft, err := strategymodel.NewProposalDraft(strategymodel.ProposalDraft{
 		SchemaVersion: "proposal/v1",
-		Legs: []strategymodel.ProposalLeg{{
-			InstrumentID: instrument, Side: domain.SideBuy, Ratio: 1,
-			ReferencePrice: price, MaxDeviationBPS: 100,
-		}},
+		Legs:          legs,
 		Sizing: strategymodel.SizingIntent{
 			Kind: strategymodel.SizingStrategyBudgetBPS, ValueBPS: 1000,
 		},
@@ -190,7 +207,12 @@ func proposal(now time.Time) (strategymodel.TradeProposal, error) {
 		DefinitionID: definitionID, VersionID: versionID, InstanceID: "fixture",
 		InstanceRevisionID: instanceRevision, EvaluationID: evaluationID, FrameID: frameID,
 		GeneratedAt: now, SourceEventIDs: []marketmodel.EventID{eventID},
-		RequiredInstrumentIDs: []domain.InstrumentID{instrument},
+		RequiredInstrumentIDs: func() []domain.InstrumentID {
+			if multiLeg {
+				return []domain.InstrumentID{instrument, sellInstrument}
+			}
+			return []domain.InstrumentID{instrument}
+		}(),
 	}, draft)
 }
 
