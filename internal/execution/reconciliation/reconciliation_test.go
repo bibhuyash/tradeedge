@@ -69,6 +69,10 @@ func TestReconciliationRepairsAuthoritativeFill(t *testing.T) {
 	if order.Spec().State != executionmodel.OrderFilled {
 		t.Fatal("broker fill did not repair OMS")
 	}
+	health := reconciler.Health()
+	if !health.Available || health.Blocked || health.Repairs != 1 || health.LastSuccess.IsZero() {
+		t.Fatalf("reconciliation health: %+v", health)
+	}
 }
 
 func TestReconciliationSurfacesTermsMissingUnknownAndIncomplete(t *testing.T) {

@@ -13,6 +13,7 @@ import (
 	executionbroker "github.com/bibhuyash/tradeedge/internal/execution/broker"
 	"github.com/bibhuyash/tradeedge/internal/execution/coordinator"
 	executionmodel "github.com/bibhuyash/tradeedge/internal/execution/model"
+	executiontelemetry "github.com/bibhuyash/tradeedge/internal/execution/telemetry"
 	executionfixture "github.com/bibhuyash/tradeedge/internal/execution/testfixture"
 )
 
@@ -327,5 +328,33 @@ func TestCoordinatorPanicContainmentAndShutdown(t *testing.T) {
 	_, err = runner.ExecutePlan(context.Background(), fixture.Plan.ID(), fixture.Plan.Spec().CreatedAt)
 	if !errors.Is(err, coordinator.ErrShutdown) {
 		t.Fatalf("shutdown: %v", err)
+	}
+}
+
+func TestCoordinatorTelemetryIsObservational(t *testing.T) {
+	fixture, _ := executionfixture.New(false)
+	store := executionmemory.NewStore()
+	_, _ = store.RegisterPlan(context.Background(), fixture.Intent, fixture.Plan, fixture.Orders)
+	journal := executiontelemetry.NewMemoryRecorder(100)
+	manual := &clock{now: fixture.Plan.Spec().CreatedAt}
+	broker, _ := paper.NewScriptedInstrumented(manual, []paper.Scenario{{Behavior: paper.BehaviorImmediateFill}}, journal)
+	runner, _ := coordinator.NewInstrumented(store, broker, coordinator.DefaultConfig(), journal)
+	receipt, err := runner.ExecutePlan(context.Background(), fixture.Plan.ID(), manual.Now())
+	if err != nil || receipt.Outcome != coordinator.OutcomeCompleted {
+		t.Fatalf("instrumented execution: %v %v", receipt, err)
+	}
+	snapshot := journal.Snapshot(100)
+	for _, key := range []string{"plan|completed|", "submission|accepted|", "order_event|filled|FILL", "paper_scenario|completed|IMMEDIATE_FILL", "publication|completed|FILL"} {
+		if snapshot.Counts[key] == 0 {
+			t.Fatalf("telemetry missing %s: %+v", key, snapshot.Counts)
+		}
+	}
+	order, _ := store.Order(context.Background(), fixture.Orders[0].ID())
+	if order.Spec().State != executionmodel.OrderFilled {
+		t.Fatal("telemetry changed execution semantics")
+	}
+	health := runner.Health()
+	if !health.Available || health.MaximumPlans != coordinator.DefaultConfig().MaxConcurrentPlans || health.InFlightPlans != 0 {
+		t.Fatalf("health = %+v", health)
 	}
 }

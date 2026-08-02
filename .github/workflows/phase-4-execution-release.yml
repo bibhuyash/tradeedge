@@ -1,0 +1,165 @@
+name: Phase 4 Execution Release
+
+on:
+  pull_request:
+    paths:
+      - "cmd/tradeedge-execution-gate/**"
+      - "internal/execution/**"
+      - "internal/adapters/execution/**"
+      - "internal/adapters/broker/paper/**"
+      - "internal/adapters/metrics/prometheus/**"
+      - ".github/workflows/phase-4-execution-release.yml"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: phase-4-execution-release-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  release-evidence:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10 # v6
+      - uses: actions/setup-go@924ae3a1cded613372ab5595356fb5720e22ba16 # v6
+        with:
+          go-version-file: go.mod
+          cache: false
+      - name: Environment
+        id: environment
+        continue-on-error: true
+        run: |
+          mkdir -p artifacts/logs
+          { go version; gcc --version; uname -a; } 2>&1 | tee artifacts/logs/environment.log
+      - name: Format, test, vet, lint, and build
+        id: ordinary
+        continue-on-error: true
+        run: |
+          set -o pipefail
+          { test -z "$(gofmt -l .)"; go test ./... -timeout=10m; go vet ./...; make lint; go build ./...; } 2>&1 | tee artifacts/logs/ordinary.log
+      - name: Full Ubuntu race suite
+        id: race
+        continue-on-error: true
+        run: |
+          set -o pipefail
+          go test -race ./... -count=1 -timeout=15m 2>&1 | tee artifacts/logs/full-race.log
+      - name: Execution safety, API, telemetry, and capability boundaries
+        id: boundaries
+        continue-on-error: true
+        run: |
+          set -o pipefail
+          {
+            go test ./internal/execution/... ./internal/adapters/execution/... ./internal/adapters/broker/paper ./internal/adapters/metrics/prometheus -count=1
+            go test ./internal/execution/opshttp -run '^TestOperationalAPIIsGETOnlyBoundedAndInspectable$' -count=1
+            ! grep -RInE --include='*.go' --exclude='*_test.go' 'zerodha|kiteconnect|kite\.Connect|PlaceOrder|live[_-]?order' internal/execution internal/adapters/execution internal/adapters/broker/paper cmd/tradeedge-execution-gate
+            ! grep -RInE --include='*.go' --exclude='*_test.go' '\bfloat(32|64)\b' internal/execution internal/adapters/execution internal/adapters/broker/paper
+            ! grep -RInEi --include='*.go' 'api[_-]?key|access[_-]?token|client[_-]?secret' internal/execution internal/adapters/execution internal/adapters/broker/paper cmd/tradeedge-execution-gate
+            ! grep -RInE 'github\.com/zerodha|kiteconnect' go.mod go.sum internal/execution internal/adapters/broker/paper
+          } 2>&1 | tee artifacts/logs/boundaries.log
+      - name: Ten focused race and stress repetitions
+        id: repeated
+        continue-on-error: true
+        run: |
+          set -uo pipefail
+          passed=0
+          for repetition in $(seq 1 10); do
+            if go test -race ./internal/execution/... ./internal/adapters/execution/... ./internal/adapters/broker/paper ./internal/adapters/metrics/prometheus -count=1 -timeout=3m 2>&1 | tee "artifacts/logs/repetition-${repetition}.log"; then
+              passed=$((passed + 1))
+            fi
+          done
+          echo "passed=${passed}" >> "${GITHUB_OUTPUT}"
+          test "${passed}" -eq 10
+      - name: Deterministic Phase 4 closure harness
+        id: harness
+        continue-on-error: true
+        run: go run ./cmd/tradeedge-execution-gate > artifacts/harness.json 2> artifacts/logs/harness.stderr.log
+      - name: Build and validate authoritative evidence
+        id: summary
+        if: always()
+        continue-on-error: true
+        env:
+          ENVIRONMENT: ${{ steps.environment.outcome }}
+          ORDINARY: ${{ steps.ordinary.outcome }}
+          RACE: ${{ steps.race.outcome }}
+          BOUNDARIES: ${{ steps.boundaries.outcome }}
+          REPEATED: ${{ steps.repeated.outcome }}
+          REPEATED_PASSED: ${{ steps.repeated.outputs.passed }}
+          HARNESS: ${{ steps.harness.outcome }}
+          COMMIT_SHA: ${{ github.event.pull_request.head.sha || github.sha }}
+          RUN_ID: ${{ github.run_id }}
+          RUN_ATTEMPT: ${{ github.run_attempt }}
+        run: |
+          python3 - <<'PY'
+          import hashlib, json, os
+          from pathlib import Path
+          failures = []
+          try:
+              harness = json.loads(Path("artifacts/harness.json").read_text())
+              if not isinstance(harness, dict): raise TypeError("harness root is not an object")
+          except Exception as exc:
+              harness = {}
+              failures.append(f"invalid harness JSON: {exc}")
+          outcomes = {name: os.environ[name] for name in ["ENVIRONMENT", "ORDINARY", "RACE", "BOUNDARIES", "REPEATED", "HARNESS"]}
+          for name, outcome in outcomes.items():
+              if outcome != "success": failures.append(f"{name.lower()} outcome was {outcome}")
+          required = {
+              "schema_version": int, "passed": bool, "failure_reasons": list,
+              "authority_enforcement_passed": bool, "buy_before_sell_passed": bool,
+              "unknown_recovery_passed": bool, "replay_determinism_passed": bool,
+              "checkpoint_continuation_passed": bool, "telemetry_vocabulary_bounded": bool,
+              "configured_maximum_concurrent_plans": int, "maximum_same_order_concurrency": int,
+              "starting_goroutines": int, "ending_goroutines": int,
+              "ending_goroutine_tolerance": int, "maximum_shutdown_duration_nanoseconds": int,
+              "shutdown_duration_limit_nanoseconds": int,
+              "forbidden_real_broker_capabilities_absent": bool,
+          }
+          for key, kind in required.items():
+              if key not in harness or type(harness[key]) is not kind: failures.append(f"missing/invalid {key}")
+          if isinstance(harness.get("failure_reasons"), list) and harness["failure_reasons"]: failures.extend(harness["failure_reasons"])
+          if not harness.get("passed", False): failures.append("closure harness failed")
+          try: repeated_passed = int(os.environ.get("REPEATED_PASSED", "0") or "0")
+          except ValueError: repeated_passed = 0
+          if repeated_passed != 10: failures.append("focused race repetitions did not pass 10/10")
+          gate_names = [
+              "authority_cannot_be_exceeded", "protective_buy_before_sell", "state_machine_correctness",
+              "partial_fill_monotonicity_overfill_prevention", "exact_retry_idempotency", "unknown_outcome_recovery",
+              "duplicate_out_of_order_late_event_containment", "reconciliation_correctness", "atomic_oms_publication",
+              "replay_determinism", "checkpoint_continuation_equivalence", "per_order_serialization",
+              "bounded_cross_plan_concurrency", "panic_timeout_cancellation_containment", "shutdown_goroutine_cleanup",
+              "telemetry_cardinality", "operational_api_bounded_read_only", "full_ubuntu_race_suite",
+              "repeated_focused_race_stress", "forbidden_real_broker_live_execution", "artifact_json_validation",
+          ]
+          summary = {**harness, "commit_sha": os.environ["COMMIT_SHA"], "workflow_run_id": os.environ["RUN_ID"],
+              "run_attempt": int(os.environ["RUN_ATTEMPT"]), "check_outcomes": outcomes,
+              "focused_race_repetitions_passed": repeated_passed,
+              "failure_reasons": failures}
+          for gate in gate_names: summary[gate] = "passed" if not failures else "failed"
+          summary["final_enforcement_result"] = "passed" if not failures else "failed"
+          raw = (json.dumps(summary, indent=2, sort_keys=True) + "\n").encode()
+          path = Path("artifacts/phase-4-milestone-3-execution-release.json")
+          path.write_bytes(raw)
+          Path(str(path) + ".sha256").write_text(f"{hashlib.sha256(raw).hexdigest()}  {path.name}\n")
+          if failures: raise SystemExit("; ".join(failures))
+          PY
+      - name: Upload logs and authoritative evidence
+        id: upload
+        if: always()
+        continue-on-error: true
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7
+        with:
+          name: tradeedge-phase-4-milestone-3-${{ github.run_id }}-${{ github.run_attempt }}
+          path: |
+            artifacts/logs/
+            artifacts/harness.json
+            artifacts/phase-4-milestone-3-execution-release.json*
+          if-no-files-found: error
+          retention-days: 90
+      - name: Enforce Phase 4 closure
+        if: always()
+        env:
+          SUMMARY: ${{ steps.summary.outcome }}
+          UPLOAD: ${{ steps.upload.outcome }}
+        run: test "${SUMMARY}" = success -a "${UPLOAD}" = success

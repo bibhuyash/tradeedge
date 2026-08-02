@@ -12,6 +12,7 @@ import (
 	"time"
 
 	"github.com/bibhuyash/tradeedge/internal/domain"
+	executiontelemetry "github.com/bibhuyash/tradeedge/internal/execution/telemetry"
 	"github.com/bibhuyash/tradeedge/internal/marketdata/model"
 	"github.com/bibhuyash/tradeedge/internal/marketdata/telemetry"
 	strategymodel "github.com/bibhuyash/tradeedge/internal/strategy/model"
@@ -122,5 +123,51 @@ func TestRecorderSupportsConcurrentUpdates(t *testing.T) {
 	wait.Wait()
 	if _, err := recorder.Registry().Gather(); err != nil {
 		t.Fatal(err)
+	}
+}
+
+func TestExecutionMetricsUseOnlyBoundedLabels(t *testing.T) {
+	recorder := New()
+	recorder.Execution().Record(executiontelemetry.Event{Operation: executiontelemetry.OperationPlan, Outcome: executiontelemetry.OutcomeCompleted, PlanID: "high-cardinality-plan", Duration: time.Millisecond, InFlight: 1})
+	recorder.Execution().Record(executiontelemetry.Event{Operation: executiontelemetry.OperationOrderEvent, Outcome: executiontelemetry.OutcomeUnknown, Detail: "UNKNOWN", OrderID: "high-cardinality-order", HasUnknownOrders: true, UnknownOrders: 1})
+	recorder.Execution().Record(executiontelemetry.Event{Operation: executiontelemetry.OperationMismatch, Outcome: executiontelemetry.OutcomeBlocked, Detail: "TERMS_MISMATCH"})
+	recorder.Execution().Record(executiontelemetry.Event{Operation: executiontelemetry.OperationPaperScenario, Outcome: executiontelemetry.OutcomeCompleted, Detail: "IMMEDIATE_FILL"})
+	recorder.Execution().Record(executiontelemetry.Event{Operation: "attacker-controlled", Outcome: "raw-error", Detail: "instrument-id"})
+	response := httptest.NewRecorder()
+	recorder.Handler().ServeHTTP(response, httptest.NewRequest(http.MethodGet, "/metrics", nil))
+	body := response.Body.String()
+	for _, expected := range []string{"tradeedge_execution_plans_total", "tradeedge_execution_order_events_total", "tradeedge_execution_reconciliation_issues_total", "tradeedge_paper_broker_scenarios_total", "tradeedge_execution_unknown_orders"} {
+		if !strings.Contains(body, expected) {
+			t.Fatalf("missing %q", expected)
+		}
+	}
+	for _, forbidden := range []string{"plan_id=", "order_id=", "client_order_id=", "instrument_id=", "broker_order_id=", "high-cardinality", "raw-error"} {
+		if strings.Contains(body, forbidden) {
+			t.Fatalf("forbidden execution metric value %q", forbidden)
+		}
+	}
+}
+
+func TestExecutionMetricCatalogHasFiniteSeriesBound(t *testing.T) {
+	recorder := New()
+	operations := []executiontelemetry.Operation{executiontelemetry.OperationPlan, executiontelemetry.OperationSubmission, executiontelemetry.OperationOrderEvent, executiontelemetry.OperationPublication, executiontelemetry.OperationCancellation, executiontelemetry.OperationReconciliation, executiontelemetry.OperationMismatch, executiontelemetry.OperationRepair, executiontelemetry.OperationPaperScenario, executiontelemetry.OperationShutdown, executiontelemetry.OperationHealth}
+	outcomes := []executiontelemetry.Outcome{executiontelemetry.OutcomeCreated, executiontelemetry.OutcomeCompleted, executiontelemetry.OutcomeFailed, executiontelemetry.OutcomePending, executiontelemetry.OutcomeAccepted, executiontelemetry.OutcomeAcknowledged, executiontelemetry.OutcomePartialFill, executiontelemetry.OutcomeFilled, executiontelemetry.OutcomeCancelled, executiontelemetry.OutcomeRejected, executiontelemetry.OutcomeUnknown, executiontelemetry.OutcomeDuplicate, executiontelemetry.OutcomeInvalid, executiontelemetry.OutcomeUnavailable, executiontelemetry.OutcomeBlocked, executiontelemetry.OutcomeRepaired, executiontelemetry.OutcomeClean, executiontelemetry.OutcomeShutdown}
+	for _, operation := range operations {
+		for _, outcome := range outcomes {
+			recorder.Execution().Record(executiontelemetry.Event{Operation: operation, Outcome: outcome, Detail: "attacker-controlled-cardinality", Duration: time.Millisecond})
+		}
+	}
+	families, err := recorder.Registry().Gather()
+	if err != nil {
+		t.Fatal(err)
+	}
+	series := 0
+	for _, family := range families {
+		if strings.HasPrefix(family.GetName(), "tradeedge_execution_") || family.GetName() == "tradeedge_paper_broker_scenarios_total" {
+			series += len(family.Metric)
+		}
+	}
+	if series > 384 {
+		t.Fatalf("execution metric series = %d, want <= 384", series)
 	}
 }

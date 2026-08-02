@@ -69,6 +69,10 @@ Interfaces are small and owned by their consumers. Cross-module shared values ar
 - Reconciliation compares bounded broker snapshots to OMS state, publishes
   broker-supported repairs only through the atomic OMS boundary, and surfaces
   unresolved uncertainty as a blocking result.
+- Execution telemetry records only finite lifecycle dimensions; Prometheus
+  ignores TradeEdge, broker, instrument, account, payload, and error identities.
+- Execution operations expose bounded GET-only lifecycle, health, UNKNOWN,
+  reconciliation, paper-broker, and audit views without broker or OMS mutation.
 - Notifications report but never determine trading truth.
 
 ## Invariants
@@ -115,6 +119,9 @@ Additional packages and contracts create ceremony but make unsafe coupling visib
   protective dependencies at runtime, and never blindly resubmits `UNKNOWN`.
 - Paper execution and reconciliation use stable client-order identity; broker
   identifiers remain correlation data rather than TradeEdge primary keys.
+- Phase 4 release evidence binds the reviewed commit to full race, repeated
+  stress, deterministic replay/checkpoint, API/cardinality, resource, and
+  forbidden-capability gates.
 - Prometheus imports are confined to `internal/adapters/metrics/prometheus` and HTTP composition.
 - Calendar, readiness, correction, and operations packages contain no strategy or broker capability.
 - Strategy contracts import only provider-neutral domain, market-data model,

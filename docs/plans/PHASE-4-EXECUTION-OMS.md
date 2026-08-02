@@ -10,7 +10,8 @@ target pipeline is:
 Milestone 1 establishes deterministic contracts and atomic OMS persistence.
 Milestone 2 makes those contracts operational through a bounded coordinator,
 provider-neutral broker port, deterministic paper broker, and fail-closed
-reconciliation. It exposes no HTTP operations and enables no live trading.
+reconciliation. Milestone 3 adds bounded observation and release evidence. No
+Phase 4 milestone enables live trading.
 
 ## Invariants
 
@@ -65,7 +66,22 @@ reconciliation. It exposes no HTTP operations and enables no live trading.
 - [x] No Zerodha/Kite, credentials, live orders, positions/P&L, telemetry, or
   HTTP release capability.
 
-## Deferred Milestone
+## Milestone 3 Checklist
 
-- [ ] M3: telemetry, GET-only operational APIs, replay/stress evidence, and
-  Phase 4 release gate.
+- [x] Provider-neutral execution telemetry and bounded in-memory status journal.
+- [x] Prometheus execution/OMS metrics with finite labels and cardinality tests.
+- [x] Bounded GET-only plan, order, report, fill, UNKNOWN, reconciliation,
+  coordinator, OMS, paper-broker, health, and audit views.
+- [x] Deterministic health states without mutation or control endpoints.
+- [x] Deterministic Phase 4 closure harness and machine-readable evidence.
+- [x] Full Ubuntu race suite and ten focused race/stress repetitions.
+- [x] Secret, dependency, floating-point, broker SDK, and live-execution scans.
+- [x] Evidence JSON validation, SHA-256, commit binding, and 90-day retention.
+- [x] Phase 4 ADRs, runbook, architecture, recovery, observability, and roadmap closure.
+- [x] No Zerodha/Kite, credentials, real orders, positions/P&L, durable migration,
+  strategy changes, or Phase 5 implementation.
+
+## Closure
+
+Phase 4 is complete only for provider-neutral deterministic paper execution.
+Its evidence does not authorize real broker connectivity or live orders.

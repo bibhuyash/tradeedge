@@ -10,6 +10,7 @@ import (
 	"github.com/prometheus/client_golang/prometheus/collectors"
 	"github.com/prometheus/client_golang/prometheus/promhttp"
 
+	executiontelemetry "github.com/bibhuyash/tradeedge/internal/execution/telemetry"
 	"github.com/bibhuyash/tradeedge/internal/marketdata/model"
 	"github.com/bibhuyash/tradeedge/internal/marketdata/telemetry"
 	risktelemetry "github.com/bibhuyash/tradeedge/internal/risk/telemetry"
@@ -49,6 +50,16 @@ type Recorder struct {
 	strategyPublish     *prometheus.HistogramVec
 	strategyStateBytes  prometheus.Gauge
 	strategyInFlight    prometheus.Gauge
+	executionPlans      *prometheus.CounterVec
+	executionSubmits    *prometheus.CounterVec
+	executionEvents     *prometheus.CounterVec
+	executionReconciles *prometheus.CounterVec
+	executionIssues     *prometheus.CounterVec
+	executionRepairs    *prometheus.CounterVec
+	executionScenarios  *prometheus.CounterVec
+	executionDuration   *prometheus.HistogramVec
+	executionInFlight   *prometheus.GaugeVec
+	executionUnknown    prometheus.Gauge
 	riskDecisions       *prometheus.CounterVec
 	riskRules           *prometheus.CounterVec
 	riskDuration        *prometheus.HistogramVec
@@ -86,6 +97,16 @@ func New() *Recorder {
 		strategyPublish:     prometheus.NewHistogramVec(prometheus.HistogramOpts{Name: "tradeedge_strategy_publication_duration_seconds", Help: "Atomic publication duration.", Buckets: processingBuckets}, []string{"definition", "outcome"}),
 		strategyStateBytes:  prometheus.NewGauge(prometheus.GaugeOpts{Name: "tradeedge_strategy_state_bytes", Help: "Most recent bounded strategy state size."}),
 		strategyInFlight:    prometheus.NewGauge(prometheus.GaugeOpts{Name: "tradeedge_strategy_in_flight", Help: "Current strategy evaluations in flight."}),
+		executionPlans:      prometheus.NewCounterVec(prometheus.CounterOpts{Name: "tradeedge_execution_plans_total", Help: "Execution plan outcomes."}, []string{"outcome"}),
+		executionSubmits:    prometheus.NewCounterVec(prometheus.CounterOpts{Name: "tradeedge_execution_submissions_total", Help: "Execution submission outcomes."}, []string{"outcome"}),
+		executionEvents:     prometheus.NewCounterVec(prometheus.CounterOpts{Name: "tradeedge_execution_order_events_total", Help: "OMS order-event outcomes."}, []string{"outcome", "detail"}),
+		executionReconciles: prometheus.NewCounterVec(prometheus.CounterOpts{Name: "tradeedge_execution_reconciliation_total", Help: "Execution reconciliation outcomes."}, []string{"outcome"}),
+		executionIssues:     prometheus.NewCounterVec(prometheus.CounterOpts{Name: "tradeedge_execution_reconciliation_issues_total", Help: "Bounded reconciliation issue kinds."}, []string{"kind", "outcome"}),
+		executionRepairs:    prometheus.NewCounterVec(prometheus.CounterOpts{Name: "tradeedge_execution_reconciliation_repairs_total", Help: "Bounded reconciliation repairs."}, []string{"kind"}),
+		executionScenarios:  prometheus.NewCounterVec(prometheus.CounterOpts{Name: "tradeedge_paper_broker_scenarios_total", Help: "Deterministic paper-broker scenario outcomes."}, []string{"scenario", "outcome"}),
+		executionDuration:   prometheus.NewHistogramVec(prometheus.HistogramOpts{Name: "tradeedge_execution_duration_seconds", Help: "Execution operation duration.", Buckets: processingBuckets}, []string{"operation", "outcome"}),
+		executionInFlight:   prometheus.NewGaugeVec(prometheus.GaugeOpts{Name: "tradeedge_execution_in_flight", Help: "Bounded execution work in flight."}, []string{"scope"}),
+		executionUnknown:    prometheus.NewGauge(prometheus.GaugeOpts{Name: "tradeedge_execution_unknown_orders", Help: "Current OMS orders in UNKNOWN state."}),
 		riskDecisions:       prometheus.NewCounterVec(prometheus.CounterOpts{Name: "tradeedge_risk_decisions_total", Help: "Portfolio-risk runner outcomes."}, []string{"outcome"}),
 		riskRules:           prometheus.NewCounterVec(prometheus.CounterOpts{Name: "tradeedge_risk_rule_results_total", Help: "Bounded production risk-rule results."}, []string{"rule_id", "status", "effect", "severity"}),
 		riskDuration:        prometheus.NewHistogramVec(prometheus.HistogramOpts{Name: "tradeedge_risk_evaluation_duration_seconds", Help: "Portfolio-risk evaluation duration.", Buckets: processingBuckets}, []string{"outcome"}),
@@ -99,6 +120,9 @@ func New() *Recorder {
 		r.datasetBytes, r.checksums, r.replayEvents, r.replayTime, r.consumerTime, r.backpressure, r.pause)
 	r.registry.MustRegister(r.strategyEvaluations, r.strategyDuration, r.strategyPublish,
 		r.strategyStateBytes, r.strategyInFlight)
+	r.registry.MustRegister(r.executionPlans, r.executionSubmits, r.executionEvents,
+		r.executionReconciles, r.executionIssues, r.executionRepairs, r.executionScenarios,
+		r.executionDuration, r.executionInFlight, r.executionUnknown)
 	r.registry.MustRegister(r.riskDecisions, r.riskRules, r.riskDuration, r.riskPublish, r.riskInFlight)
 	return r
 }
@@ -206,4 +230,48 @@ func (adapter RiskRecorder) Record(event risktelemetry.Event) {
 		r.riskPublish.Observe(event.Publish.Seconds())
 	}
 	r.riskInFlight.Set(float64(event.InFlight))
+}
+
+type ExecutionRecorder struct{ recorder *Recorder }
+
+func (r *Recorder) Execution() executiontelemetry.Recorder { return ExecutionRecorder{recorder: r} }
+
+func (adapter ExecutionRecorder) Record(event executiontelemetry.Event) {
+	r := adapter.recorder
+	operation, outcome := string(event.Operation), string(event.Outcome)
+	if !executiontelemetry.ValidOperation(event.Operation) {
+		operation = "invalid"
+	}
+	if !executiontelemetry.ValidOutcome(event.Outcome) {
+		outcome = "invalid"
+	}
+	detail := executiontelemetry.BoundedDetail(event.Detail)
+	switch event.Operation {
+	case executiontelemetry.OperationPlan:
+		r.executionPlans.WithLabelValues(outcome).Inc()
+	case executiontelemetry.OperationSubmission:
+		r.executionSubmits.WithLabelValues(outcome).Inc()
+	case executiontelemetry.OperationOrderEvent, executiontelemetry.OperationPublication, executiontelemetry.OperationCancellation:
+		r.executionEvents.WithLabelValues(outcome, detail).Inc()
+	case executiontelemetry.OperationReconciliation:
+		r.executionReconciles.WithLabelValues(outcome).Inc()
+	case executiontelemetry.OperationMismatch:
+		r.executionIssues.WithLabelValues(detail, outcome).Inc()
+	case executiontelemetry.OperationRepair:
+		r.executionRepairs.WithLabelValues(detail).Inc()
+	case executiontelemetry.OperationPaperScenario:
+		r.executionScenarios.WithLabelValues(detail, outcome).Inc()
+	}
+	if event.Duration > 0 {
+		r.executionDuration.WithLabelValues(operation, outcome).Observe(event.Duration.Seconds())
+	}
+	if event.Operation == executiontelemetry.OperationPlan {
+		r.executionInFlight.WithLabelValues("plans").Set(float64(event.InFlight))
+	}
+	if event.Operation == executiontelemetry.OperationOrderEvent {
+		r.executionInFlight.WithLabelValues("orders").Set(float64(event.InFlight))
+	}
+	if event.HasUnknownOrders {
+		r.executionUnknown.Set(float64(event.UnknownOrders))
+	}
 }

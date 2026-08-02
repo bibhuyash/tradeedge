@@ -25,11 +25,12 @@ func Run(ctx context.Context, cfg config.Config, logger *slog.Logger) error {
 }
 
 type Options struct {
-	MarketReadiness    httpserver.MarketReadinessSource
-	Metrics            *prometheusmetrics.Recorder
-	Quality            opshttp.QualitySource
-	StrategyOperations http.Handler
-	StrategyRunner     interface{ Shutdown(context.Context) error }
+	MarketReadiness     httpserver.MarketReadinessSource
+	Metrics             *prometheusmetrics.Recorder
+	Quality             opshttp.QualitySource
+	StrategyOperations  http.Handler
+	ExecutionOperations http.Handler
+	StrategyRunner      interface{ Shutdown(context.Context) error }
 }
 
 func RunWithMarketReadiness(
@@ -97,10 +98,11 @@ func RunWithOptions(
 		}
 	}
 	server, err := httpserver.NewWithOptions(cfg.HTTPAddress, logger, readiness, httpserver.Options{
-		MarketReadiness:    options.MarketReadiness,
-		Metrics:            metrics.Handler(),
-		Operations:         opshttp.New(operations),
-		StrategyOperations: strategyOperations,
+		MarketReadiness:     options.MarketReadiness,
+		Metrics:             metrics.Handler(),
+		Operations:          opshttp.New(operations),
+		StrategyOperations:  strategyOperations,
+		ExecutionOperations: options.ExecutionOperations,
 	})
 	if err != nil {
 		return fmt.Errorf("create HTTP server: %w", err)
