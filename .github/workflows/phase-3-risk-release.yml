@@ -1,6 +1,7 @@
 name: Phase 3 Portfolio Risk Release
 
 on:
+  pull_request:
   workflow_dispatch:
 
 permissions:
