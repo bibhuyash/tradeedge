@@ -62,8 +62,13 @@ Interfaces are small and owned by their consumers. Cross-module shared values ar
   the decision, optional reservation, and revision `N+1` checkpoint atomically.
 - The reference runtime repository is provider-neutral and in-memory; durable
   PostgreSQL persistence remains deferred.
-- Execution owns order state and broker access.
-- Reconciliation repairs internal understanding from broker facts.
+- Execution owns authority-bounded order state, deterministic dependency
+  scheduling, bounded coordination, and the consumer-owned broker port.
+- The paper broker supplies scripted deterministic outcomes behind that port;
+  it contains no SDK, credentials, network connectivity, or live-order path.
+- Reconciliation compares bounded broker snapshots to OMS state, publishes
+  broker-supported repairs only through the atomic OMS boundary, and surfaces
+  unresolved uncertainty as a blocking result.
 - Notifications report but never determine trading truth.
 
 ## Invariants
@@ -106,6 +111,10 @@ Additional packages and contracts create ceremony but make unsafe coupling visib
 - The provider-neutral OMS storage contract atomically publishes order state,
   report, optional fill, and checksummed checkpoint; its M1 reference adapter
   is bounded and in-memory.
+- The M2 coordinator serializes each order, bounds cross-plan work, enforces
+  protective dependencies at runtime, and never blindly resubmits `UNKNOWN`.
+- Paper execution and reconciliation use stable client-order identity; broker
+  identifiers remain correlation data rather than TradeEdge primary keys.
 - Prometheus imports are confined to `internal/adapters/metrics/prometheus` and HTTP composition.
 - Calendar, readiness, correction, and operations packages contain no strategy or broker capability.
 - Strategy contracts import only provider-neutral domain, market-data model,

@@ -158,6 +158,9 @@ type OMSRepository interface {
 	Intent(context.Context, executionmodel.ExecutionIntentID) (executionmodel.ExecutionIntent, error)
 	Plan(context.Context, executionmodel.OrderPlanID) (executionmodel.OrderPlan, error)
 	Order(context.Context, executionmodel.OrderID) (executionmodel.Order, error)
+	OrderByClientOrderID(context.Context, executionmodel.ClientOrderID) (executionmodel.Order, error)
+	OrdersForPlan(context.Context, executionmodel.OrderPlanID) ([]executionmodel.Order, error)
+	NonTerminalOrders(context.Context, int) ([]executionmodel.Order, error)
 	Reports(context.Context, executionmodel.OrderID) ([]executionmodel.ExecutionReport, error)
 	Fills(context.Context, executionmodel.OrderID) ([]executionmodel.Fill, error)
 }

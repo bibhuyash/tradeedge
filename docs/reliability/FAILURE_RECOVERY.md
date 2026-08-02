@@ -53,6 +53,15 @@ reuse with changed canonical content is an integrity collision.
 The in-memory adapters are not durable and are not an authoritative restart
 mechanism.
 
+Phase 4 Milestone 2 preserves ambiguous submission as `UNKNOWN`, then resolves
+it only through stable-client-identity broker lookup or reconciliation. It does
+not infer failure from timeout, cancellation, panic, unavailability, or an
+incomplete snapshot. Reconciliation publishes broker-supported repairs through
+the atomic OMS boundary and blocks on missing, unknown, inconsistent, or
+regressed evidence. Verified OMS, paper-broker, and event-cursor checkpoints
+continue deterministically in tests; durable startup orchestration remains
+deferred.
+
 Phase 3 Milestone 3 production-style rules treat missing controls, unknown or
 unavailable exposure, inconsistent currency, and checked-arithmetic overflow as
 fail-closed deferrals. Active or recovery-pending kill switches and open or
@@ -72,6 +81,8 @@ empty failure-reason list agree.
 - Shutdown rejects new evaluation reservations, cancels accepted work, and
   waits within the application shutdown deadline.
 - Notifications are not authoritative.
+- Restart recovery cannot submit an `UNKNOWN` order until broker evidence
+  resolves its identity and terms.
 
 ## Failure Modes
 
