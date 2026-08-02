@@ -428,3 +428,22 @@ func TestRepositoryReturnsDefensiveCanonicalCopies(t *testing.T) {
 		t.Fatal("decision canonical bytes are mutable")
 	}
 }
+
+func TestControlActivationCommitsInsideAtomicPublication(t *testing.T) {
+	fixture := newRunnerFixture(t, riskmodel.RuleViolation, func(rule *testRule) {
+		rule.effect = riskmodel.EffectActivateKillSwitch
+	})
+	receipt, err := fixture.runner.EvaluateProposal(context.Background(), fixture.request)
+	if err != nil || receipt.Outcome != OutcomeRejected {
+		t.Fatalf("receipt=%+v err=%v", receipt, err)
+	}
+	checkpoint, err := fixture.runtime.CurrentPortfolioCheckpoint(context.Background(), fixture.request.PortfolioID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	controls := checkpoint.Snapshot.Spec().KillSwitches
+	if len(controls) != 1 || controls[0].Spec().State != portfoliomodel.KillSwitchActive ||
+		controls[0].Spec().StateRevision != 2 || controls[0].Spec().ActivationEvidence.IsZero() {
+		t.Fatalf("kill-switch state was not atomically activated: %+v", controls)
+	}
+}

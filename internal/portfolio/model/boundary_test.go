@@ -35,6 +35,9 @@ func TestPhase3ForbiddenImportsAndAuthoritativeTypes(t *testing.T) {
 					"/execution", "/broker", "zerodha", "/reconciliation", "net/http",
 					"prometheus",
 				} {
+					if forbidden == "net/http" && strings.Contains(filepath.ToSlash(filename), "/risk/opshttp/") {
+						continue
+					}
 					if strings.Contains(strings.ToLower(value), forbidden) {
 						t.Errorf("%s imports forbidden capability %q", filename, value)
 					}

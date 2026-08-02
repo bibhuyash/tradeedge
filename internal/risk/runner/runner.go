@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	portfolioallocation "github.com/bibhuyash/tradeedge/internal/portfolio/allocation"
@@ -12,6 +13,7 @@ import (
 	riskmodel "github.com/bibhuyash/tradeedge/internal/risk/model"
 	"github.com/bibhuyash/tradeedge/internal/risk/rules"
 	riskstorage "github.com/bibhuyash/tradeedge/internal/risk/storage"
+	risktelemetry "github.com/bibhuyash/tradeedge/internal/risk/telemetry"
 )
 
 type Runner struct {
@@ -25,6 +27,7 @@ type Runner struct {
 	mu        sync.Mutex
 	running   map[portfoliomodel.PortfolioID]riskmodel.DecisionTriggerID
 	closed    bool
+	inFlight  atomic.Int64
 	wait      sync.WaitGroup
 	stopOnce  sync.Once
 	stopped   chan struct{}
@@ -37,15 +40,34 @@ func New(deps Dependencies, allocator Allocator, registry *rules.Registry, confi
 		return nil, ErrInvalidOutput
 	}
 	ctx, cancel := context.WithCancel(context.Background())
+	if deps.Telemetry == nil {
+		deps.Telemetry = risktelemetry.NopRecorder{}
+	}
 	return &Runner{deps: deps, allocator: allocator, rules: registry, config: config,
 		semaphore: make(chan struct{}, config.MaxConcurrency), ctx: ctx, cancel: cancel,
 		running: make(map[portfoliomodel.PortfolioID]riskmodel.DecisionTriggerID),
 		stopped: make(chan struct{})}, nil
 }
 
-func (runner *Runner) EvaluateProposal(ctx context.Context, request Request) (Receipt, error) {
-	receipt := Receipt{ProposalID: request.ProposalID, PortfolioID: request.PortfolioID,
+// Health exposes bounded process-local runner state for read-only operations.
+func (runner *Runner) Health() (closed bool, inFlight int, keyedPortfolios int, maximum int, timeout time.Duration) {
+	runner.mu.Lock()
+	defer runner.mu.Unlock()
+	return runner.closed, int(runner.inFlight.Load()), len(runner.running),
+		runner.config.MaxConcurrency, runner.config.Timeout
+}
+
+func (runner *Runner) EvaluateProposal(ctx context.Context, request Request) (receipt Receipt, err error) {
+	started := time.Now()
+	inFlightStarted := runner.inFlight.Add(1)
+	defer func() {
+		remaining := runner.inFlight.Add(-1)
+		runner.deps.Telemetry.Record(risktelemetry.Event{Outcome: string(receipt.Outcome),
+			Duration: time.Since(started), InFlight: int(remaining)})
+	}()
+	receipt = Receipt{ProposalID: request.ProposalID, PortfolioID: request.PortfolioID,
 		ExpectedRevision: request.ExpectedRevision}
+	runner.deps.Telemetry.Record(risktelemetry.Event{InFlight: int(inFlightStarted)})
 	if err := ctx.Err(); err != nil {
 		receipt.Outcome = OutcomeCancelled
 		return receipt, err
@@ -197,6 +219,10 @@ func (runner *Runner) EvaluateProposal(ctx context.Context, request Request) (Re
 			return receipt, ErrInvalidOutput
 		}
 		results = append(results, validated)
+		resultSpec := validated.Spec()
+		runner.deps.Telemetry.Record(risktelemetry.Event{RuleID: validated.RuleID(),
+			Status: validated.Status(), Effect: resultSpec.Effect, Severity: resultSpec.Severity,
+			InFlight: int(runner.inFlight.Load())})
 		if validated.Status() == riskmodel.RuleError {
 			technical = append(technical, riskmodel.TechnicalRuleError{RuleID: validated.RuleID(),
 				RuleVersion: validated.Spec().RuleVersion, Code: riskmodel.TechnicalRuleFailure,
@@ -229,7 +255,10 @@ func (runner *Runner) EvaluateProposal(ctx context.Context, request Request) (Re
 	if err := evaluationCtx.Err(); err != nil {
 		return timeoutReceipt(receipt, err)
 	}
+	publishStarted := time.Now()
 	published, err := runner.deps.Runtime.PublishPortfolioDecision(evaluationCtx, publication)
+	runner.deps.Telemetry.Record(risktelemetry.Event{Publish: time.Since(publishStarted),
+		InFlight: int(runner.inFlight.Load())})
 	if err != nil {
 		if contextErr := evaluationCtx.Err(); contextErr != nil {
 			return timeoutReceipt(receipt, contextErr)

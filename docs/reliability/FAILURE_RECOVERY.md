@@ -53,6 +53,14 @@ reuse with changed canonical content is an integrity collision.
 The in-memory adapters are not durable and are not an authoritative restart
 mechanism.
 
+Phase 3 Milestone 3 production-style rules treat missing controls, unknown or
+unavailable exposure, inconsistent currency, and checked-arithmetic overflow as
+fail-closed deferrals. Active or recovery-pending kill switches and open or
+half-open circuit breakers reject new allocation authority. Operational APIs
+are read-only; they cannot recover or mutate controls. Release evidence is
+valid only when its JSON, SHA-256, reviewed commit, race/stress results, and
+empty failure-reason list agree.
+
 ## Invariants
 
 - Startup does not place orders while reconciliation is incomplete.

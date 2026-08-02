@@ -173,13 +173,17 @@ revision without reserving capital. Neither decision outcome is executable.
 Replay calls the same runner serially. Verified checkpoint restoration produces
 the same subsequent decision bytes and final state as uninterrupted replay.
 
-## Deferred Milestones
+## Milestone 3 Production Controls and Release
 
-Milestone 3 will add reviewed production risk controls, telemetry, read-only
-operational APIs, durable-adapter release evidence, and paper-pipeline
-composition.
+Milestone 3 adds the reviewed ten-rule production-style catalog, provider-neutral
+risk telemetry, bounded GET-only operational APIs, projected instrument,
+underlying, and portfolio-wide exposure, and machine-readable race/stress
+release evidence. Unknown or missing risk data remains fail-closed. Rules remain
+pure; portfolio mutation remains inside the Milestone 2 atomic publication.
 
-Neither milestone authorizes live trading or direct broker execution.
+The reference repositories remain bounded and in-memory. This milestone adds no
+broker, execution intent, OMS, order, fill, position, live-trading, credential,
+or durable database capability and does not begin Phase 4.
 
 ## Milestone 1 Completion Checklist
 
@@ -209,3 +213,15 @@ Neither milestone authorizes live trading or direct broker execution.
 - [x] Deterministic replay and checkpoint continuation equivalence.
 - [x] Bounded in-memory provider-neutral reference repository with defensive copies.
 - [x] No production rules, telemetry/API wiring, broker, OMS, order, position, or execution capability.
+
+## Milestone 3 Completion Checklist
+
+- [x] Pure deterministic capital, allocation, loss, drawdown, exposure, reserve, kill-switch, and circuit-breaker rules.
+- [x] Checked integer-only calculations, typed bounded evidence, and fail-closed unknown-input behavior.
+- [x] Safe lot-aligned `MODIFICATION_REQUIRED` results where resizing can repair a breach.
+- [x] Provider-neutral risk telemetry with bounded Prometheus dimensions.
+- [x] GET-only, timeout-bounded, list-bounded risk operational APIs.
+- [x] Deterministic replay/checkpoint, duplicate/conflict, atomicity, containment, and concurrency regression coverage.
+- [x] Race/stress workflow with versioned JSON and SHA-256 release evidence.
+- [x] Forbidden capability, credential, broker/execution, and authoritative floating-point scans.
+- [x] No Phase 4, broker, OMS, order, fill, position, execution, live-trading, or durable-database capability.

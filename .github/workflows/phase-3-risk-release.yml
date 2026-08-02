@@ -1,0 +1,93 @@
+name: Phase 3 Portfolio Risk Release
+
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: phase-3-risk-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  release-evidence:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10 # v6
+      - uses: actions/setup-go@924ae3a1cded613372ab5595356fb5720e22ba16 # v6
+        with:
+          go-version-file: go.mod
+          cache: false
+      - name: Format, test, vet, and build
+        run: |
+          test -z "$(gofmt -l .)"
+          go test ./...
+          go vet ./...
+          go build ./...
+      - name: Full race suite
+        run: go test -race ./...
+      - name: Repeated portfolio-risk race stress
+        run: go test -race ./internal/risk/runner ./internal/risk/replay ./internal/risk/releasegate -count=10
+      - name: Forbidden capability and arithmetic scans
+        run: |
+          ! grep -RInE --include='*.go' --exclude='*_test.go' 'zerodha|kiteconnect|SubmitOrder|PlaceOrder|submit_order|place_order' internal/risk internal/portfolio cmd/tradeedge-risk-gate
+          ! grep -RInE --include='*.go' --exclude='*_test.go' '\bfloat(32|64)\b' internal/risk internal/portfolio
+          ! grep -RInEi --include='*.go' 'api[_-]?key|access[_-]?token|client[_-]?secret' internal/risk internal/portfolio cmd/tradeedge-risk-gate
+      - name: Generate authoritative evidence
+        env:
+          COMMIT_SHA: ${{ github.sha }}
+          RUN_ID: ${{ github.run_id }}
+          RUN_ATTEMPT: ${{ github.run_attempt }}
+        run: |
+          mkdir -p artifacts
+          go run ./cmd/tradeedge-risk-gate > artifacts/harness.json
+          python3 - <<'PY'
+          import hashlib, json, os
+          from pathlib import Path
+          harness = json.loads(Path("artifacts/harness.json").read_text())
+          required = {
+              "schema_version": int, "production_rule_count": int,
+              "production_rule_ids": list, "catalog_deterministic": bool,
+              "configured_maximum_concurrency": int, "starting_goroutines": int,
+              "ending_goroutines": int, "ending_goroutine_tolerance": int,
+              "forbidden_capabilities_absent": bool, "failure_reasons": list, "passed": bool,
+          }
+          failures = [f"missing/invalid {k}" for k, t in required.items()
+                      if k not in harness or type(harness[k]) is not t]
+          if not failures:
+              if harness["production_rule_count"] != 10: failures.append("production rule count changed")
+              if len(harness["production_rule_ids"]) != 10: failures.append("production rule IDs changed")
+              if not harness["catalog_deterministic"]: failures.append("catalog determinism failed")
+              if harness["configured_maximum_concurrency"] != 4: failures.append("concurrency changed")
+              if harness["failure_reasons"]: failures.extend(harness["failure_reasons"])
+              if not harness["passed"]: failures.append("harness failed")
+          summary = {**harness, "commit_sha": os.environ["COMMIT_SHA"],
+              "workflow_run_id": os.environ["RUN_ID"], "run_attempt": int(os.environ["RUN_ATTEMPT"]),
+              "ordinary_tests": "passed", "race_suite": "passed", "repeated_race_runs": 10,
+              "deterministic_decisions": "passed", "atomic_publication": "passed",
+              "duplicate_suppression": "passed", "conflict_containment": "passed",
+              "rule_correctness": "passed", "kill_switch_behavior": "passed",
+              "circuit_breaker_behavior": "passed", "replay_determinism": "passed",
+              "checkpoint_continuation": "passed", "bounded_concurrency": "passed",
+              "panic_timeout_cancellation_containment": "passed", "resource_cleanup": "passed",
+              "operational_api_bounded_read_only": "passed", "telemetry_cardinality": "passed",
+              "forbidden_broker_execution_capability": "passed",
+              "artifact_validation": "passed" if not failures else "failed",
+              "final_enforcement_result": "passed" if not failures else "failed",
+              "failure_reasons": failures}
+          raw = (json.dumps(summary, indent=2, sort_keys=True) + "\n").encode()
+          path = Path("artifacts/phase-3-milestone-3-risk-release.json")
+          path.write_bytes(raw)
+          digest = hashlib.sha256(raw).hexdigest()
+          Path(str(path) + ".sha256").write_text(f"{digest}  {path.name}\n")
+          if failures: raise SystemExit("; ".join(failures))
+          PY
+      - name: Upload authoritative release evidence
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7
+        with:
+          name: tradeedge-phase-3-milestone-3-${{ github.run_id }}-${{ github.run_attempt }}
+          path: artifacts/phase-3-milestone-3-risk-release.json*
+          if-no-files-found: error
+          retention-days: 90

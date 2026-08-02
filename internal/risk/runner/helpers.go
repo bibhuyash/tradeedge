@@ -193,6 +193,9 @@ func nextCheckpoint(logical time.Time, current riskstorage.PortfolioCheckpoint,
 		}
 		reservation = &value
 	}
+	if err := applyControlEffects(logical, decision, &spec); err != nil {
+		return nil, riskstorage.PortfolioCheckpoint{}, err
+	}
 	source, _ := portfoliomodel.NewStateChecksum([]byte(strings.Join([]string{
 		current.Snapshot.ID().String(), current.CheckpointChecksum.String(), decision.ID().String(),
 	}, "|")))
@@ -210,6 +213,100 @@ func nextCheckpoint(logical time.Time, current riskstorage.PortfolioCheckpoint,
 	}
 	next, err := riskstorage.NewPortfolioCheckpoint(checkpoint)
 	return reservation, next, err
+}
+
+func applyControlEffects(logical time.Time, decision riskmodel.PortfolioRiskDecision,
+	snapshot *portfoliomodel.PortfolioSnapshotSpec) error {
+	evidence, _ := portfoliomodel.NewStateChecksum(decision.CanonicalJSON())
+	activateKill, tripCircuit := false, false
+	var reason portfoliomodel.ControlReason
+	for _, violation := range decision.Spec().Violations {
+		switch violation.Effect() {
+		case riskmodel.EffectActivateKillSwitch:
+			activateKill = true
+			if reason == "" {
+				reason, _ = portfoliomodel.NewControlReason(string(violation.Spec().ReasonCode))
+			}
+		case riskmodel.EffectTripCircuitBreaker:
+			tripCircuit = true
+			if reason == "" {
+				reason, _ = portfoliomodel.NewControlReason(string(violation.Spec().ReasonCode))
+			}
+		}
+	}
+	if activateKill {
+		updated := false
+		for index, control := range snapshot.KillSwitches {
+			item := control.Spec()
+			if !controlEffectApplies(item.Scope, item.ScopeSubject, decision) ||
+				item.State == portfoliomodel.KillSwitchDisabledByConfiguration {
+				continue
+			}
+			item.State, item.ReasonCode, item.ActivationEvidence = portfoliomodel.KillSwitchActive, reason, evidence
+			item.ActivatedAt, item.ExpiresAt, item.StateRevision = logical, time.Time{}, item.StateRevision+1
+			value, err := portfoliomodel.NewKillSwitch(item)
+			if err != nil {
+				return ErrInvalidOutput
+			}
+			snapshot.KillSwitches[index], updated = value, true
+		}
+		if !updated {
+			return ErrInvalidOutput
+		}
+	}
+	if tripCircuit {
+		updated := false
+		for index, control := range snapshot.CircuitBreakers {
+			item := control.Spec()
+			if !controlEffectApplies(item.Scope, item.ScopeSubject, decision) ||
+				item.State == portfoliomodel.CircuitBreakerDisabled {
+				continue
+			}
+			item.State, item.ReasonCode, item.Evidence = portfoliomodel.CircuitBreakerOpen, reason, evidence
+			item.ChangedAt, item.StateRevision = logical, item.StateRevision+1
+			value, err := portfoliomodel.NewCircuitBreaker(item)
+			if err != nil {
+				return ErrInvalidOutput
+			}
+			snapshot.CircuitBreakers[index], updated = value, true
+		}
+		if !updated {
+			return ErrInvalidOutput
+		}
+	}
+	return nil
+}
+
+func controlEffectApplies(scope portfoliomodel.ControlScope, subject string,
+	decision riskmodel.PortfolioRiskDecision) bool {
+	spec := decision.Spec()
+	switch scope {
+	case portfoliomodel.ScopeGlobal:
+		return true
+	case portfoliomodel.ScopePortfolio:
+		return subject == spec.PortfolioID.String()
+	case portfoliomodel.ScopeStrategyDefinition:
+		return subject == spec.Proposal.Metadata().DefinitionID.String()
+	case portfoliomodel.ScopeStrategyInstance:
+		return subject == string(spec.Proposal.Metadata().InstanceID)
+	case portfoliomodel.ScopeInstrument:
+		for _, leg := range spec.Proposal.Draft().Legs {
+			if subject == leg.InstrumentID.String() {
+				return true
+			}
+		}
+	case portfoliomodel.ScopeUnderlying, portfoliomodel.ScopeExposureGroup:
+		dimension := portfoliomodel.ExposureUnderlying
+		if scope == portfoliomodel.ScopeExposureGroup {
+			dimension = portfoliomodel.ExposureGroup
+		}
+		for _, exposure := range spec.AllocationCandidate.Spec().ProjectedExposure {
+			if exposure.Dimension() == dimension && exposure.Subject() == subject {
+				return true
+			}
+		}
+	}
+	return false
 }
 
 func mergeExposures(current, projected []portfoliomodel.ExposureRecord) []portfoliomodel.ExposureRecord {
