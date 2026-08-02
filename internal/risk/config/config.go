@@ -141,7 +141,7 @@ func newConfiguration(input document, canonical []byte,
 			return RiskConfiguration{}, ErrInvalidConfiguration
 		}
 		seen[id] = struct{}{}
-		if err := validateRuleLimit(rule.Config, groups); err != nil {
+		if err := validateRuleLimit(id, rule.Config, groups); err != nil {
 			return RiskConfiguration{}, err
 		}
 		configRaw, _ := json.Marshal(rule.Config)
@@ -217,7 +217,7 @@ func newConfiguration(input document, canonical []byte,
 	}, nil
 }
 
-func validateRuleLimit(value ruleLimitDocument, groups map[string]struct{}) error {
+func validateRuleLimit(id riskmodel.RiskRuleID, value ruleLimitDocument, groups map[string]struct{}) error {
 	present := 0
 	if value.LimitMinor != nil {
 		present++
@@ -260,6 +260,36 @@ func validateRuleLimit(value ruleLimitDocument, groups map[string]struct{}) erro
 	}
 	if present == 0 {
 		return ErrInvalidConfiguration
+	}
+	moneyOnly := value.LimitMinor != nil && value.LossLimitMinor == nil && value.LimitBPS == nil &&
+		value.Threshold == nil && value.ResetThreshold == nil && value.Currency != "" && value.ExposureGroup == ""
+	lossOnly := value.LimitMinor == nil && value.LossLimitMinor != nil && value.LimitBPS == nil &&
+		value.Threshold == nil && value.ResetThreshold == nil && value.Currency != "" && value.ExposureGroup == ""
+	switch string(id) {
+	case "PORTFOLIO_CAPITAL_LIMIT", "STRATEGY_ALLOCATION_LIMIT", "INSTRUMENT_EXPOSURE_LIMIT",
+		"UNDERLYING_EXPOSURE_LIMIT", "MAXIMUM_OPEN_EXPOSURE":
+		if !moneyOnly {
+			return ErrInvalidConfiguration
+		}
+	case "DAILY_LOSS_LIMIT":
+		if !lossOnly {
+			return ErrInvalidConfiguration
+		}
+	case "DRAWDOWN_LIMIT":
+		if value.LimitMinor != nil || value.Threshold != nil || value.ResetThreshold != nil || value.ExposureGroup != "" ||
+			(value.LossLimitMinor == nil && value.LimitBPS == nil) || (value.LossLimitMinor != nil && value.Currency == "") {
+			return ErrInvalidConfiguration
+		}
+	case "RESERVE_CAPITAL":
+		if value.LimitBPS == nil || value.LimitMinor != nil || value.LossLimitMinor != nil || value.Threshold != nil ||
+			value.ResetThreshold != nil || value.Currency != "" || value.ExposureGroup != "" {
+			return ErrInvalidConfiguration
+		}
+	case "KILL_SWITCH", "CIRCUIT_BREAKER":
+		if value.Threshold == nil || value.LimitMinor != nil || value.LossLimitMinor != nil || value.LimitBPS != nil ||
+			value.Currency != "" || value.ExposureGroup != "" {
+			return ErrInvalidConfiguration
+		}
 	}
 	return nil
 }

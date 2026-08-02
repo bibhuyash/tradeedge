@@ -49,6 +49,7 @@ type testRule struct {
 	inFlight   *atomic.Int32
 	maximum    *atomic.Int32
 	record     func(string)
+	effect     riskmodel.RuleEffect
 }
 
 func (rule *testRule) Descriptor() riskmodel.RiskRuleDescriptor { return rule.descriptor }
@@ -98,6 +99,9 @@ func (rule *testRule) Evaluate(ctx context.Context, input riskmodel.RiskRuleInpu
 		effect, reason = riskmodel.EffectDefer, "DATA_UNAVAILABLE"
 	case riskmodel.RuleError:
 		effect, reason = riskmodel.EffectDefer, "RULE_ERROR"
+	}
+	if rule.effect != "" && rule.status == riskmodel.RuleViolation {
+		effect = rule.effect
 	}
 	resultSpec := riskmodel.RuleResultSpec{RuleID: configured.Descriptor.ID,
 		RuleVersion: configured.Descriptor.Version, ConfigurationHash: configured.ConfigurationHash,
@@ -182,6 +186,23 @@ func newRunnerFixture(t *testing.T, status riskmodel.RuleResultStatus, mutate fu
 	capital, _ := portfoliomodel.NewCapitalState(money(t, 1000000), money(t, 1000000), money(t, 0), money(t, 0))
 	date, _ := domain.NewCivilDate(2026, 8, 1)
 	source, _ := portfoliomodel.NewStateChecksum([]byte("genesis"))
+	controlReason, _ := portfoliomodel.NewControlReason("RUNNER_FIXTURE_CLEAR")
+	killID, _ := portfoliomodel.NewKillSwitchID("runner-fixture")
+	kill, err := portfoliomodel.NewKillSwitch(portfoliomodel.KillSwitchSpec{ID: killID,
+		Scope: portfoliomodel.ScopePortfolio, ScopeSubject: portfolioID.String(), State: portfoliomodel.KillSwitchInactive,
+		ReasonCode: controlReason, ConfigurationID: configuration.ID(), ConfigurationHash: configuration.Hash(),
+		StateRevision: 1, SchemaVersion: "kill-switch/v1"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	circuitID, _ := portfoliomodel.NewCircuitBreakerID("runner-fixture")
+	circuit, err := portfoliomodel.NewCircuitBreaker(portfoliomodel.CircuitBreakerSpec{ID: circuitID,
+		Scope: portfoliomodel.ScopePortfolio, ScopeSubject: portfolioID.String(), State: portfoliomodel.CircuitBreakerClosed,
+		ReasonCode: controlReason, ConfigurationID: configuration.ID(), ConfigurationHash: configuration.Hash(),
+		StateRevision: 1, SchemaVersion: "circuit-breaker/v1"})
+	if err != nil {
+		t.Fatal(err)
+	}
 	snapshot, err := portfoliomodel.NewPortfolioSnapshot(portfoliomodel.PortfolioSnapshotSpec{
 		SchemaVersion: "portfolio-snapshot/v1", PortfolioID: portfolioID, Revision: 1,
 		AsOfExchangeTime: now.Add(-time.Minute), GeneratedAt: now.Add(-time.Minute), TradingDate: date,
@@ -190,6 +211,7 @@ func newRunnerFixture(t *testing.T, status riskmodel.RuleResultStatus, mutate fu
 		RealizedPnL: money(t, 0), UnrealizedPnL: money(t, 0), DailyRealizedPnL: money(t, 0),
 		DailyUnrealizedPnL: money(t, 0), WeeklyRealizedPnL: money(t, 0), HighWaterMark: money(t, 1000000),
 		CurrentEquity: money(t, 1000000), StrategyAllocations: []portfoliomodel.StrategyAllocation{allocation},
+		KillSwitches: []portfoliomodel.KillSwitch{kill}, CircuitBreakers: []portfoliomodel.CircuitBreaker{circuit},
 		SourceStateChecksum: source})
 	if err != nil {
 		t.Fatal(err)

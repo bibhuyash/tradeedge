@@ -3,6 +3,7 @@ package memory
 import (
 	"bytes"
 	"context"
+	"sort"
 	"sync"
 
 	portfoliomodel "github.com/bibhuyash/tradeedge/internal/portfolio/model"
@@ -12,6 +13,37 @@ import (
 
 type Limits struct {
 	Portfolios, Publications int
+}
+
+// RecentDecisions returns a defensive, deterministic newest-revision-first operational view.
+func (store *Store) RecentDecisions(ctx context.Context, portfolio portfoliomodel.PortfolioID,
+	limit int) ([]riskmodel.PortfolioRiskDecision, error) {
+	if err := ctx.Err(); err != nil {
+		return nil, err
+	}
+	if limit <= 0 || limit > 100 {
+		return nil, riskstorage.ErrInternal
+	}
+	store.mu.RLock()
+	defer store.mu.RUnlock()
+	values := make([]riskmodel.PortfolioRiskDecision, 0)
+	for _, publication := range store.publications {
+		if publication.value.PortfolioID == portfolio {
+			values = append(values, publication.value.Decision)
+		}
+	}
+	sort.Slice(values, func(i, j int) bool {
+		left := values[i].Spec().ExpectedPortfolioRevision
+		right := values[j].Spec().ExpectedPortfolioRevision
+		if left != right {
+			return left > right
+		}
+		return values[i].ID().String() < values[j].ID().String()
+	})
+	if len(values) > limit {
+		values = values[:limit]
+	}
+	return values, nil
 }
 
 func DefaultLimits() Limits { return Limits{Portfolios: 16, Publications: 10000} }

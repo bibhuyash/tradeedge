@@ -12,6 +12,7 @@ import (
 
 	"github.com/bibhuyash/tradeedge/internal/marketdata/model"
 	"github.com/bibhuyash/tradeedge/internal/marketdata/telemetry"
+	risktelemetry "github.com/bibhuyash/tradeedge/internal/risk/telemetry"
 	strategytelemetry "github.com/bibhuyash/tradeedge/internal/strategy/telemetry"
 )
 
@@ -48,6 +49,11 @@ type Recorder struct {
 	strategyPublish     *prometheus.HistogramVec
 	strategyStateBytes  prometheus.Gauge
 	strategyInFlight    prometheus.Gauge
+	riskDecisions       *prometheus.CounterVec
+	riskRules           *prometheus.CounterVec
+	riskDuration        *prometheus.HistogramVec
+	riskPublish         prometheus.Histogram
+	riskInFlight        prometheus.Gauge
 
 	mu            sync.Mutex
 	readinessSeen map[string]string
@@ -80,6 +86,11 @@ func New() *Recorder {
 		strategyPublish:     prometheus.NewHistogramVec(prometheus.HistogramOpts{Name: "tradeedge_strategy_publication_duration_seconds", Help: "Atomic publication duration.", Buckets: processingBuckets}, []string{"definition", "outcome"}),
 		strategyStateBytes:  prometheus.NewGauge(prometheus.GaugeOpts{Name: "tradeedge_strategy_state_bytes", Help: "Most recent bounded strategy state size."}),
 		strategyInFlight:    prometheus.NewGauge(prometheus.GaugeOpts{Name: "tradeedge_strategy_in_flight", Help: "Current strategy evaluations in flight."}),
+		riskDecisions:       prometheus.NewCounterVec(prometheus.CounterOpts{Name: "tradeedge_risk_decisions_total", Help: "Portfolio-risk runner outcomes."}, []string{"outcome"}),
+		riskRules:           prometheus.NewCounterVec(prometheus.CounterOpts{Name: "tradeedge_risk_rule_results_total", Help: "Bounded production risk-rule results."}, []string{"rule_id", "status", "effect", "severity"}),
+		riskDuration:        prometheus.NewHistogramVec(prometheus.HistogramOpts{Name: "tradeedge_risk_evaluation_duration_seconds", Help: "Portfolio-risk evaluation duration.", Buckets: processingBuckets}, []string{"outcome"}),
+		riskPublish:         prometheus.NewHistogram(prometheus.HistogramOpts{Name: "tradeedge_risk_publication_duration_seconds", Help: "Atomic portfolio-risk publication duration.", Buckets: processingBuckets}),
+		riskInFlight:        prometheus.NewGauge(prometheus.GaugeOpts{Name: "tradeedge_risk_in_flight", Help: "Current portfolio-risk evaluations in flight."}),
 		readinessSeen:       make(map[string]string),
 	}
 	r.registry.MustRegister(collectors.NewGoCollector(), collectors.NewProcessCollector(collectors.ProcessCollectorOpts{}))
@@ -88,6 +99,7 @@ func New() *Recorder {
 		r.datasetBytes, r.checksums, r.replayEvents, r.replayTime, r.consumerTime, r.backpressure, r.pause)
 	r.registry.MustRegister(r.strategyEvaluations, r.strategyDuration, r.strategyPublish,
 		r.strategyStateBytes, r.strategyInFlight)
+	r.registry.MustRegister(r.riskDecisions, r.riskRules, r.riskDuration, r.riskPublish, r.riskInFlight)
 	return r
 }
 
@@ -170,4 +182,28 @@ func (r *Recorder) Record(event strategytelemetry.Event) {
 		r.strategyStateBytes.Set(float64(event.StateBytes))
 	}
 	r.strategyInFlight.Set(float64(event.InFlight))
+}
+
+type RiskRecorder struct{ recorder *Recorder }
+
+// Risk exposes the same private registry through the provider-neutral risk recorder contract.
+func (r *Recorder) Risk() risktelemetry.Recorder { return RiskRecorder{recorder: r} }
+
+// Record implements the provider-neutral risk telemetry contract without identity labels.
+func (adapter RiskRecorder) Record(event risktelemetry.Event) {
+	r := adapter.recorder
+	if event.RuleID != "" {
+		r.riskRules.WithLabelValues(string(event.RuleID), string(event.Status),
+			string(event.Effect), string(event.Severity)).Inc()
+	}
+	if event.Outcome != "" {
+		r.riskDecisions.WithLabelValues(event.Outcome).Inc()
+		if event.Duration > 0 {
+			r.riskDuration.WithLabelValues(event.Outcome).Observe(event.Duration.Seconds())
+		}
+	}
+	if event.Publish > 0 {
+		r.riskPublish.Observe(event.Publish.Seconds())
+	}
+	r.riskInFlight.Set(float64(event.InFlight))
 }

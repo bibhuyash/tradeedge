@@ -34,6 +34,7 @@ type Options struct {
 	MarketReadiness    MarketReadinessSource
 	Operations         http.Handler
 	StrategyOperations http.Handler
+	RiskOperations     http.Handler
 	Metrics            http.Handler
 }
 
@@ -103,6 +104,9 @@ func NewHandlerWithOptions(process *Readiness, options Options) http.Handler {
 	}
 	if options.StrategyOperations != nil {
 		mux.Handle("/api/v1/strategy/", options.StrategyOperations)
+	}
+	if options.RiskOperations != nil {
+		mux.Handle("/api/v1/risk/", options.RiskOperations)
 	}
 	return mux
 }

@@ -64,6 +64,17 @@ func NewPortfolioID(parts ...string) (PortfolioID, error) {
 	}
 	return PortfolioID(derive("portfolio-id/v1", parts...)), nil
 }
+
+// ParsePortfolioID decodes the canonical operational representation without deriving a new identity.
+func ParsePortfolioID(value string) (PortfolioID, error) {
+	decoded, err := hex.DecodeString(strings.TrimSpace(value))
+	if err != nil || len(decoded) != sha256.Size {
+		return PortfolioID{}, ErrInvalidIdentity
+	}
+	var result PortfolioID
+	copy(result[:], decoded)
+	return result, nil
+}
 func NewPortfolioConfigurationID(parts ...string) (PortfolioConfigurationID, error) {
 	if !validParts(parts) {
 		return PortfolioConfigurationID{}, ErrInvalidIdentity

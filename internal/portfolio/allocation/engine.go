@@ -3,6 +3,7 @@ package allocation
 import (
 	"errors"
 	"math"
+	"strings"
 	"time"
 
 	"github.com/bibhuyash/tradeedge/internal/domain"
@@ -150,21 +151,58 @@ func (Engine) Evaluate(input Input) (portfoliomodel.AllocationCandidate, error) 
 
 func exposure(input Input, bounds []portfoliomodel.AllocationLegBound) ([]portfoliomodel.ExposureRecord, []portfoliomodel.ExposureRecord, error) {
 	currency := input.Snapshot.Spec().BaseCurrency.String()
-	grossMinor, netMinor, paidMinor, receivedMinor := int64(0), int64(0), int64(0), int64(0)
-	hasShort := false
+	type totals struct {
+		gross, net, paid, received int64
+		hasShort                   bool
+	}
+	values := map[string]*totals{}
+	add := func(dimension portfoliomodel.ExposureDimension, subject string, amount int64, side domain.Side) error {
+		key := string(dimension) + "|" + subject
+		value := values[key]
+		if value == nil {
+			value = &totals{}
+			values[key] = value
+		}
+		if value.gross > math.MaxInt64-amount {
+			return portfoliomodel.ErrArithmeticOverflow
+		}
+		value.gross += amount
+		if side == domain.SideBuy {
+			if value.net > math.MaxInt64-amount || value.paid > math.MaxInt64-amount {
+				return portfoliomodel.ErrArithmeticOverflow
+			}
+			value.net += amount
+			value.paid += amount
+		} else {
+			if value.net < math.MinInt64+amount || value.received > math.MaxInt64-amount {
+				return portfoliomodel.ErrArithmeticOverflow
+			}
+			value.net -= amount
+			value.received += amount
+			value.hasShort = true
+		}
+		return nil
+	}
 	for index, leg := range input.Proposal.Draft().Legs {
 		value, ok := checkedMul(leg.ReferencePrice.MinorUnits(), bounds[index].MaximumUnits.Int64())
-		if !ok || grossMinor > math.MaxInt64-value {
+		if !ok {
 			return nil, nil, portfoliomodel.ErrArithmeticOverflow
 		}
-		grossMinor += value
-		if leg.Side == domain.SideBuy {
-			netMinor += value
-			paidMinor += value
-		} else {
-			hasShort = true
-			netMinor -= value
-			receivedMinor += value
+		instrument, found := input.Master.Instrument(leg.InstrumentID)
+		if !found {
+			return nil, nil, ErrAllocationFailed
+		}
+		for _, key := range []struct {
+			dimension portfoliomodel.ExposureDimension
+			subject   string
+		}{
+			{portfoliomodel.ExposurePortfolioWide, input.Snapshot.PortfolioID().String()},
+			{portfoliomodel.ExposureInstrument, leg.InstrumentID.String()},
+			{portfoliomodel.ExposureUnderlying, string(instrument.UnderlyingID())},
+		} {
+			if err := add(key.dimension, key.subject, value, leg.Side); err != nil {
+				return nil, nil, err
+			}
 		}
 	}
 	money := func(value int64) domain.Money { result, _ := domain.NewMoney(value, currency); return result }
@@ -173,40 +211,47 @@ func exposure(input Input, bounds []portfoliomodel.AllocationLegBound) ([]portfo
 		return result
 	}
 	zero := known(0)
-	maximumLoss := known(grossMinor)
-	lossBound := portfoliomodel.LossBoundKnown
-	if hasShort {
-		maximumLoss, _ = portfoliomodel.NewUnavailableMoney(portfoliomodel.AvailabilityUnknown)
-		lossBound = portfoliomodel.LossBoundUnbounded
-	}
-	incremental, err := portfoliomodel.NewExposureRecord(portfoliomodel.ExposureRecordSpec{
-		Dimension: portfoliomodel.ExposurePortfolioWide, Subject: input.Snapshot.PortfolioID().String(),
-		Gross: known(grossMinor), NetDirectional: known(netMinor), PremiumAtRisk: known(paidMinor),
-		Long: known(paidMinor), Short: known(receivedMinor), PremiumPaid: known(paidMinor),
-		PremiumReceived: known(receivedMinor), MaximumLoss: maximumLoss, LossBound: lossBound,
-	})
-	if err != nil {
-		return nil, nil, err
-	}
-	current, err := portfoliomodel.NewExposureRecord(portfoliomodel.ExposureRecordSpec{
-		Dimension: incremental.Dimension(), Subject: incremental.Subject(), Gross: zero,
-		NetDirectional: zero, PremiumAtRisk: zero, Long: zero, Short: zero,
-		PremiumPaid: zero, PremiumReceived: zero, MaximumLoss: zero, LossBound: portfoliomodel.LossBoundKnown,
-	})
-	if err != nil {
-		return nil, nil, err
-	}
-	for _, value := range input.Snapshot.Exposures() {
-		if value.Dimension() == incremental.Dimension() && value.Subject() == incremental.Subject() {
-			current = value
-			break
+	incrementalValues := make([]portfoliomodel.ExposureRecord, 0, len(values))
+	projectedValues := make([]portfoliomodel.ExposureRecord, 0, len(values))
+	for key, value := range values {
+		parts := strings.SplitN(key, "|", 2)
+		maximumLoss := known(value.gross)
+		lossBound := portfoliomodel.LossBoundKnown
+		if value.hasShort {
+			maximumLoss, _ = portfoliomodel.NewUnavailableMoney(portfoliomodel.AvailabilityUnknown)
+			lossBound = portfoliomodel.LossBoundUnbounded
 		}
+		incremental, err := portfoliomodel.NewExposureRecord(portfoliomodel.ExposureRecordSpec{
+			Dimension: portfoliomodel.ExposureDimension(parts[0]), Subject: parts[1],
+			Gross: known(value.gross), NetDirectional: known(value.net), PremiumAtRisk: known(value.paid),
+			Long: known(value.paid), Short: known(value.received), PremiumPaid: known(value.paid),
+			PremiumReceived: known(value.received), MaximumLoss: maximumLoss, LossBound: lossBound,
+		})
+		if err != nil {
+			return nil, nil, err
+		}
+		current, err := portfoliomodel.NewExposureRecord(portfoliomodel.ExposureRecordSpec{
+			Dimension: incremental.Dimension(), Subject: incremental.Subject(), Gross: zero,
+			NetDirectional: zero, PremiumAtRisk: zero, Long: zero, Short: zero,
+			PremiumPaid: zero, PremiumReceived: zero, MaximumLoss: zero, LossBound: portfoliomodel.LossBoundKnown,
+		})
+		if err != nil {
+			return nil, nil, err
+		}
+		for _, existing := range input.Snapshot.Exposures() {
+			if existing.Dimension() == incremental.Dimension() && existing.Subject() == incremental.Subject() {
+				current = existing
+				break
+			}
+		}
+		projected, err := portfoliomodel.ProjectExposure(current, incremental)
+		if err != nil {
+			return nil, nil, err
+		}
+		incrementalValues = append(incrementalValues, incremental)
+		projectedValues = append(projectedValues, projected)
 	}
-	projected, err := portfoliomodel.ProjectExposure(current, incremental)
-	if err != nil {
-		return nil, nil, err
-	}
-	return []portfoliomodel.ExposureRecord{incremental}, []portfoliomodel.ExposureRecord{projected}, nil
+	return incrementalValues, projectedValues, nil
 }
 
 func checkedMul(left, right int64) (int64, bool) {

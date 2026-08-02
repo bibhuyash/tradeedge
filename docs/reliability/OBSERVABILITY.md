@@ -76,3 +76,17 @@ not Prometheus labels. A later milestone may expose bounded status and counters
 but must not label metrics with portfolio, strategy, proposal, decision,
 evaluation, allocation, instrument, configuration, account, error, or
 free-text values.
+
+## Phase 3 Milestone 3 Metric Catalog
+
+The provider-neutral recorder is adapted to
+`tradeedge_risk_{decisions_total,rule_results_total,evaluation_duration_seconds,publication_duration_seconds,in_flight}`.
+Labels are restricted to registered rule ID and bounded outcome, status, effect,
+and severity. Portfolio, strategy, proposal, decision, evaluation, allocation,
+instrument, underlying, configuration, account, checksum, error, and free-text
+values are prohibited labels.
+
+The GET-only risk API under `/api/v1/risk/` exposes bounded snapshot, capital,
+decision, violation, rule, control, configuration-metadata, and runner-health
+views. Limits default to 50 and cannot exceed 100. It exposes no mutation,
+credential, provider, broker, order, position, or execution capability.

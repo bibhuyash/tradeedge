@@ -11,6 +11,7 @@ import (
 	portfoliomodel "github.com/bibhuyash/tradeedge/internal/portfolio/model"
 	riskmodel "github.com/bibhuyash/tradeedge/internal/risk/model"
 	riskstorage "github.com/bibhuyash/tradeedge/internal/risk/storage"
+	risktelemetry "github.com/bibhuyash/tradeedge/internal/risk/telemetry"
 	strategymodel "github.com/bibhuyash/tradeedge/internal/strategy/model"
 )
 
@@ -99,4 +100,5 @@ type Dependencies struct {
 	Policies  RiskPolicySource
 	Masters   MasterSource
 	Runtime   riskstorage.RuntimeRepository
+	Telemetry risktelemetry.Recorder
 }

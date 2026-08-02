@@ -6,6 +6,9 @@ import (
 	"strings"
 	"sync"
 	"testing"
+
+	riskmodel "github.com/bibhuyash/tradeedge/internal/risk/model"
+	risktelemetry "github.com/bibhuyash/tradeedge/internal/risk/telemetry"
 	"time"
 
 	"github.com/bibhuyash/tradeedge/internal/domain"
@@ -80,6 +83,25 @@ func TestRecorderExposesCatalogWithoutHighCardinalityLabels(t *testing.T) {
 	}
 	if len(buckets) != 0 {
 		t.Fatalf("histogram families not gathered: %#v", buckets)
+	}
+}
+
+func TestRiskMetricsUseOnlyBoundedLabels(t *testing.T) {
+	recorder := New()
+	recorder.Risk().Record(risktelemetry.Event{Outcome: "COMMITTED_REJECTED", RuleID: "DAILY_LOSS_LIMIT",
+		Status: riskmodel.RuleViolation, Effect: riskmodel.EffectReject, Severity: riskmodel.SeverityBlocking})
+	response := httptest.NewRecorder()
+	recorder.Handler().ServeHTTP(response, httptest.NewRequest(http.MethodGet, "/metrics", nil))
+	body := response.Body.String()
+	for _, expected := range []string{"tradeedge_risk_decisions_total", "tradeedge_risk_rule_results_total", `rule_id="DAILY_LOSS_LIMIT"`} {
+		if !strings.Contains(body, expected) {
+			t.Fatalf("missing %q", expected)
+		}
+	}
+	for _, forbidden := range []string{"portfolio_id=", "strategy_id=", "instrument_id=", "decision_id="} {
+		if strings.Contains(body, forbidden) {
+			t.Fatalf("forbidden label %q", forbidden)
+		}
 	}
 }
 
