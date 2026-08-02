@@ -1,10 +1,11 @@
 # TradeEdge
 
-TradeEdge is a safety-first automated options-trading platform for the Indian market. The repository includes the Phase 0 runtime foundation, Phase 1 provider-neutral historical market data, Phase 1.1 operational hardening, the formally released Phase 2 strategy framework, the released Phase 3 portfolio/risk subsystem, and Phase 4 Milestone 1 execution/OMS contracts.
+TradeEdge is a safety-first automated options-trading platform for the Indian market. The repository includes the Phase 0 runtime foundation, released Phase 1 market data, Phase 2 strategy, Phase 3 portfolio/risk, Phase 4 paper execution/OMS, and the Phase 5 M1 read-only Zerodha connectivity foundation.
 
-The application is **paper-only**. It contains no Zerodha network integration,
-live broker route, real credentials, production trading strategy, or
-order-orchestration path. The moving-average crossover is a non-production
+The application is **paper-only**. The default runtime contains no composed
+Zerodha network route, live broker route, real credentials, or production
+trading strategy. The M1 Zerodha package exposes only authentication, profile,
+and instrument reads and has no order mutation API. The moving-average crossover is a non-production
 engineering fixture with no profitability claim.
 
 ## Prerequisites
@@ -320,13 +321,11 @@ live-trading capability exists. See `docs/plans/PHASE-3-PORTFOLIO-RISK.md`.
 
 See `docs/` for the product, architecture, trading, reliability, integration, and phase plans.
 
-## Phase 4 Milestone 1 status
+## Phase 5 Milestone 1 status
 
-Milestone 1 defines deterministic execution intents bounded by unexpired Phase
-3 positive decisions, dependency-safe order plans, explicit order lifecycle,
-provider-neutral reports and fills, stable pre-broker identities, optimistic
-order revisions, checksummed restoration, and atomic OMS publication. The
-reference store is bounded and in-memory. No coordinator, paper-broker
-simulation, real adapter, reconciliation runner, telemetry/API, position/P&L,
-credential, network call, or live execution path was added. See
-`docs/plans/PHASE-4-EXECUTION-OMS.md`.
+Milestone 1 adds an isolated read-only Zerodha client boundary, explicit daily
+session lifecycle, opaque credential loading, canonical/provider instrument
+mapping, readiness, bounded telemetry, and deterministic fakes. It is disabled
+and uncomposed by default. There is no Zerodha `BrokerPort` implementation,
+order submission/modification/cancellation method, live mode, or production
+credential. See `docs/plans/PHASE-5-ZERODHA.md`.

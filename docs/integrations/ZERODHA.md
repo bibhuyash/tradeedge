@@ -2,7 +2,7 @@
 
 ## Scope
 
-Zerodha is the initial market-data and future broker provider, isolated behind provider-neutral interfaces. Phase 1.1 contains no Zerodha network code.
+Zerodha is the initial market-data and future broker provider, isolated behind provider-neutral interfaces. Phase 5 M1 provides a read-only connectivity foundation; it is not composed into the default application runtime and contains no order capability.
 
 ## Assumptions
 
@@ -10,7 +10,10 @@ REST and streaming APIs can disconnect, throttle, duplicate, reorder, delay, or 
 
 ## Responsibilities
 
-A future adapter will authenticate, normalize instruments and events, enforce bounded timeouts and rate limits, map order states, support authoritative lookup, and redact sensitive data.
+The M1 adapter supports explicit authentication/session state, profile and
+instrument reads, bounded timeouts/concurrency/safe-read retries, capability
+discovery, mapping validation, readiness, redaction, and deterministic fakes.
+Order state, lookup, updates, and reconciliation remain M2 work.
 
 For market data, it must also report provider availability, preserve exact provider sequencing when available, maintain bounded socket-to-normalizer buffering, and fail readiness on overflow or stale delivery. Provider tokens remain mapping-table inputs and are prohibited from canonical IDs, operational responses, logs, and metric labels.
 
@@ -31,10 +34,14 @@ A provider-neutral boundary may not expose every Zerodha feature, but it protect
 
 ## Unresolved Questions
 
-Authentication renewal, exact rate limits, request correlation, historical-data use, and instrument licensing must be validated against current official documentation before implementation.
+Retail access tokens expire at the documented daily session boundary and
+require re-login after expiry or invalidation. M1 does not use refresh tokens.
+Production secret storage, instrument licensing/retention, read-only runtime
+composition, and operational login ownership remain deployment decisions.
 
 ## Acceptance Criteria
 
-- Phase 1.1 cannot make a Zerodha call and requires no Zerodha credential.
-- Future adapter behavior is context-aware, bounded, redacted, and reconcilable.
+- Default runtime operation makes no Zerodha call and requires no credential.
+- M1 adapter behavior is context-aware, bounded, redacted, and read-only.
 - Provider-specific limitations are contained within the adapter.
+- No M1 API can submit, modify, or cancel an order.
