@@ -28,18 +28,43 @@ any Phase 5 milestone does not authorize unrestricted live trading.
 - [x] Existing Phase 4 `BrokerPort` remains unchanged and unimplemented by the
   Zerodha M1 adapter.
 
-## Deferred to Milestone 2
+## Milestone 2: Guarded Order Adapter
 
-Order translation, submission, cancellation, broker order IDs, order updates,
-UNKNOWN recovery, and broker-state reconciliation are intentionally absent.
+- [x] Existing provider-neutral `BrokerPort` implemented without changing its
+  interface or allowing provider types into domain packages.
+- [x] Fixed-profile canonical order translation and provider-neutral execution
+  reports preserve TradeEdge client/order identity and approved authority.
+- [x] Mutation requires an explicit injected permit; the default gate denies
+  submission and cancellation and normal startup does not compose the adapter.
+- [x] Durable-checkpoint contract records exact request correlation, compact
+  provider tag, mapping version, broker order ID, and uncertain delivery state.
+- [x] Proven-not-sent failures alone are retryable; possibly-sent submissions
+  become `UNKNOWN` and require exact broker evidence before resolution.
+- [x] Bounded update journal contains duplicate, stale, out-of-order, late-fill,
+  overfill, collision, and stream-gap handling.
+- [x] REST snapshot translation cross-checks orders and trades and marks
+  incomplete or inconsistent evidence rather than fabricating state.
+- [x] Session expiry, rate limits, cancellation ambiguity, disconnects,
+  restoration, concurrency, and shutdown have deterministic fake tests.
+- [x] Provider-neutral bounded telemetry and CI scans cover secrets, logging,
+  dependencies, float authority, live mode, and reachable order capability.
+- [x] Phase 4 coordinator, OMS atomic publication, UNKNOWN recovery, and
+  reconciliation semantics remain unchanged.
+
+## Deferred to Milestone 3
+
+Paper/shadow runtime composition, a production Zerodha transport, durable
+checkpoint persistence, operational login/runbooks, release evidence, and
+controlled rollout remain intentionally absent.
 
 ## Operational Safety
 
 The main runtime remains `paper` by default and rejects live trading mode. M1
-is not automatically composed into application startup, so credentials and
-network access are unnecessary for normal operation. A future controlled
-read-only composition must explicitly load the adapter configuration and
-credentials and must keep `order_mutation_permitted=false`.
+is not automatically composed into application startup, so credentials,
+network access, and mutation authority are unnecessary for normal operation.
+The M2 constructor defaults to a deny gate. Supplying the permit implementation
+is necessary but not sufficient for a future deployment: runtime composition
+and operational authorization remain M3 work. No unrestricted live mode exists.
 
 M1 recognizes `TRADEEDGE_ZERODHA_READ_ONLY`, `TRADEEDGE_ZERODHA_BASE_URL`,
 `TRADEEDGE_ZERODHA_TIMEOUT`, `TRADEEDGE_ZERODHA_MAX_CONCURRENCY`,

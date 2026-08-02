@@ -1,6 +1,6 @@
 # TradeEdge
 
-TradeEdge is a safety-first automated options-trading platform for the Indian market. The repository includes the Phase 0 runtime foundation, released Phase 1 market data, Phase 2 strategy, Phase 3 portfolio/risk, Phase 4 paper execution/OMS, and the Phase 5 M1 read-only Zerodha connectivity foundation.
+TradeEdge is a safety-first automated options-trading platform for the Indian market. The repository includes the Phase 0 runtime foundation, released Phase 1 market data, Phase 2 strategy, Phase 3 portfolio/risk, Phase 4 paper execution/OMS, and the Phase 5 M2 guarded Zerodha order-adapter boundary.
 
 The application is **paper-only**. The default runtime contains no composed
 Zerodha network route, live broker route, real credentials, or production
@@ -321,11 +321,11 @@ live-trading capability exists. See `docs/plans/PHASE-3-PORTFOLIO-RISK.md`.
 
 See `docs/` for the product, architecture, trading, reliability, integration, and phase plans.
 
-## Phase 5 Milestone 1 status
+## Phase 5 Milestone 2 status
 
-Milestone 1 adds an isolated read-only Zerodha client boundary, explicit daily
-session lifecycle, opaque credential loading, canonical/provider instrument
-mapping, readiness, bounded telemetry, and deterministic fakes. It is disabled
-and uncomposed by default. There is no Zerodha `BrokerPort` implementation,
-order submission/modification/cancellation method, live mode, or production
+Milestone 2 adds a guarded Zerodha implementation of the unchanged Phase 4
+`BrokerPort`, exact logical/broker correlation, provider-neutral update and
+snapshot translation, UNKNOWN recovery, and restart checkpoints. Mutation is
+denied by default and the adapter is uncomposed from normal startup. There is
+no unrestricted live mode, production order transport, or production
 credential. See `docs/plans/PHASE-5-ZERODHA.md`.
