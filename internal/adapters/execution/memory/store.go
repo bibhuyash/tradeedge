@@ -440,6 +440,61 @@ func (store *Store) Order(ctx context.Context, id executionmodel.OrderID) (execu
 	}
 	return checkpoint.Order, nil
 }
+func (store *Store) OrderByClientOrderID(ctx context.Context, id executionmodel.ClientOrderID) (executionmodel.Order, error) {
+	if err := ctx.Err(); err != nil {
+		return executionmodel.Order{}, err
+	}
+	store.mu.RLock()
+	defer store.mu.RUnlock()
+	for orderID, revision := range store.current {
+		value := store.checkpoints[orderID][revision].Order
+		if value.ClientOrderID() == id {
+			return value, nil
+		}
+	}
+	return executionmodel.Order{}, executionstorage.ErrNotFound
+}
+func (store *Store) OrdersForPlan(ctx context.Context, id executionmodel.OrderPlanID) ([]executionmodel.Order, error) {
+	if err := ctx.Err(); err != nil {
+		return nil, err
+	}
+	store.mu.RLock()
+	defer store.mu.RUnlock()
+	result := []executionmodel.Order{}
+	for orderID, revision := range store.current {
+		value := store.checkpoints[orderID][revision].Order
+		if value.Spec().PlanID == id {
+			result = append(result, value)
+		}
+	}
+	sort.Slice(result, func(i, j int) bool { return result[i].ID().String() < result[j].ID().String() })
+	if len(result) == 0 {
+		return nil, executionstorage.ErrNotFound
+	}
+	return result, nil
+}
+func (store *Store) NonTerminalOrders(ctx context.Context, limit int) ([]executionmodel.Order, error) {
+	if err := ctx.Err(); err != nil {
+		return nil, err
+	}
+	if limit <= 0 || limit > 1000 {
+		return nil, executionstorage.ErrInternal
+	}
+	store.mu.RLock()
+	defer store.mu.RUnlock()
+	result := []executionmodel.Order{}
+	for orderID, revision := range store.current {
+		value := store.checkpoints[orderID][revision].Order
+		if !value.Spec().State.Terminal() {
+			result = append(result, value)
+		}
+	}
+	sort.Slice(result, func(i, j int) bool { return result[i].ID().String() < result[j].ID().String() })
+	if len(result) > limit {
+		result = result[:limit]
+	}
+	return result, nil
+}
 func (store *Store) Reports(ctx context.Context, id executionmodel.OrderID) ([]executionmodel.ExecutionReport, error) {
 	if err := ctx.Err(); err != nil {
 		return nil, err

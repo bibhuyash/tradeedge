@@ -7,9 +7,10 @@ target pipeline is:
 
 `PortfolioRiskDecision -> ExecutionIntent -> OrderPlan -> Order -> ExecutionReport -> Fill`
 
-Milestone 1 establishes deterministic contracts and atomic OMS persistence. It
-does not submit orders, simulate a broker, reconcile broker state, expose HTTP
-operations, or enable live trading.
+Milestone 1 establishes deterministic contracts and atomic OMS persistence.
+Milestone 2 makes those contracts operational through a bounded coordinator,
+provider-neutral broker port, deterministic paper broker, and fail-closed
+reconciliation. It exposes no HTTP operations and enables no live trading.
 
 ## Invariants
 
@@ -44,9 +45,27 @@ operations, or enable live trading.
 - [x] No coordinator, broker adapter, reconciliation runner, telemetry, HTTP,
   position/P&L, credential, or live-execution capability.
 
-## Deferred Milestones
+## Milestone 2 Checklist
 
-- [ ] M2: bounded execution coordinator, deterministic paper broker,
-  unknown-outcome recovery, and provider-neutral reconciliation.
+- [x] Bounded cross-plan concurrency, keyed per-plan admission, and per-order
+  serialization with deterministic dependency scheduling.
+- [x] Runtime protective BUY-before-SELL enforcement and authority-expiry gate.
+- [x] Provider-neutral submission, cancellation, event, lookup, and snapshot
+  contracts with stable TradeEdge client identity.
+- [x] Deterministic paper scenarios for fills, partial/delayed fills,
+  rejection, cancellation, timeout, lost response, duplicate/out-of-order and
+  late events, and temporary unavailability.
+- [x] Submission idempotency, committed/in-progress duplicate handling, and
+  explicit `UNKNOWN` outcome recovery without blind resubmission.
+- [x] Provider-neutral reconciliation that repairs only broker-supported facts
+  and blocks on absent, unknown, inconsistent, or incomplete evidence.
+- [x] Broker reports and fills publish only through the M1 atomic OMS boundary.
+- [x] Coordinator/paper checkpoints, deterministic replay continuation,
+  cancellation, shutdown, panic, timeout, duplicate, race, and stress tests.
+- [x] No Zerodha/Kite, credentials, live orders, positions/P&L, telemetry, or
+  HTTP release capability.
+
+## Deferred Milestone
+
 - [ ] M3: telemetry, GET-only operational APIs, replay/stress evidence, and
   Phase 4 release gate.

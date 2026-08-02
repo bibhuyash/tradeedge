@@ -38,6 +38,13 @@ an order state. Execution assigns stable client-order IDs, persists intent and
 plan before submission, validates state transitions, and requests future
 reconciliation for ambiguity.
 
+The Phase 4 M2 coordinator schedules canonical plan order with bounded
+cross-plan concurrency and per-order serialization. A protective BUY dependency
+must be fully filled before its dependent exposure-increasing SELL is eligible.
+The deterministic paper broker and future adapters share the same
+provider-neutral port. Duplicate and stale events are harmless; changed content
+under the same event identity is an integrity failure.
+
 ## Invariants
 
 - Timeout never implies failure.
@@ -46,6 +53,7 @@ reconciliation for ambiguity.
 - Cancellation is a request until broker-confirmed.
 - A confirmed cancellation may still be corrected by a causally valid late
   fill without deleting the cancellation evidence.
+- Every state/report/fill effect uses the atomic OMS publication boundary.
 
 ## Failure Modes
 

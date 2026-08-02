@@ -50,6 +50,26 @@ func newFixture(t *testing.T) fixture {
 	return fixture{intent, plan, []executionmodel.Order{order}}
 }
 
+func TestOMSQueriesUseStableTradeEdgeIdentity(t *testing.T) {
+	value := newFixture(t)
+	store := memory.NewStore()
+	if _, err := store.RegisterPlan(context.Background(), value.intent, value.plan, value.orders); err != nil {
+		t.Fatal(err)
+	}
+	order, err := store.OrderByClientOrderID(context.Background(), value.orders[0].ClientOrderID())
+	if err != nil || order.ID() != value.orders[0].ID() {
+		t.Fatalf("client identity lookup: %v", err)
+	}
+	orders, err := store.OrdersForPlan(context.Background(), value.plan.ID())
+	if err != nil || len(orders) != len(value.orders) {
+		t.Fatalf("plan orders: %d %v", len(orders), err)
+	}
+	nonTerminal, err := store.NonTerminalOrders(context.Background(), 1)
+	if err != nil || len(nonTerminal) != 1 || nonTerminal[0].ID() != value.orders[0].ID() {
+		t.Fatalf("non-terminal orders: %v %v", nonTerminal, err)
+	}
+}
+
 func transitionReason(kind executionmodel.ReportType) executionmodel.TransitionReason {
 	return map[executionmodel.ReportType]executionmodel.TransitionReason{executionmodel.ReportPlanned: executionmodel.ReasonPlanned, executionmodel.ReportSubmissionPending: executionmodel.ReasonSubmissionStarted, executionmodel.ReportSubmitted: executionmodel.ReasonBrokerAccepted, executionmodel.ReportAcknowledged: executionmodel.ReasonBrokerAcknowledged, executionmodel.ReportPartialFill: executionmodel.ReasonBrokerFill, executionmodel.ReportFill: executionmodel.ReasonBrokerFill, executionmodel.ReportCancelPending: executionmodel.ReasonCancellationRequested, executionmodel.ReportCancelled: executionmodel.ReasonBrokerCancelled, executionmodel.ReportRejected: executionmodel.ReasonBrokerRejected, executionmodel.ReportExpired: executionmodel.ReasonAuthorityExpired, executionmodel.ReportFailed: executionmodel.ReasonInternalFailure, executionmodel.ReportUnknown: executionmodel.ReasonSubmissionOutcomeUnknown}[kind]
 }
