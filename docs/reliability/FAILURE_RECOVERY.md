@@ -62,6 +62,12 @@ regressed evidence. Verified OMS, paper-broker, and event-cursor checkpoints
 continue deterministically in tests; durable startup orchestration remains
 deferred.
 
+Phase 4 Milestone 3 makes UNKNOWN and reconciliation disagreement visible as
+bounded `BLOCKED` health without guessing recovery. Operational APIs cannot
+trigger reconciliation or mutate state. The closure artifact proves replay,
+checkpoint, containment, shutdown, and race gates for its reviewed commit; it
+is evidence, not a recovery mechanism or live-trading authorization.
+
 Phase 3 Milestone 3 production-style rules treat missing controls, unknown or
 unavailable exposure, inconsistent currency, and checked-arithmetic overflow as
 fail-closed deferrals. Active or recovery-pending kill switches and open or

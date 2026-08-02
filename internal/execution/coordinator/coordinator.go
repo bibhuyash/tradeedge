@@ -12,8 +12,10 @@ import (
 
 	"github.com/bibhuyash/tradeedge/internal/domain"
 	executionbroker "github.com/bibhuyash/tradeedge/internal/execution/broker"
+	executionhealth "github.com/bibhuyash/tradeedge/internal/execution/health"
 	executionmodel "github.com/bibhuyash/tradeedge/internal/execution/model"
 	executionstorage "github.com/bibhuyash/tradeedge/internal/execution/storage"
+	executiontelemetry "github.com/bibhuyash/tradeedge/internal/execution/telemetry"
 )
 
 var (
@@ -78,14 +80,20 @@ type Coordinator struct {
 	stopped    chan struct{}
 	eventMu    sync.Mutex
 	cursor     executionbroker.EventCursor
+	telemetry  executiontelemetry.Recorder
 }
 
 func New(repository Repository, broker executionbroker.Port, config Config) (*Coordinator, error) {
+	return NewInstrumented(repository, broker, config, executiontelemetry.NopRecorder{})
+}
+
+func NewInstrumented(repository Repository, broker executionbroker.Port, config Config, recorder executiontelemetry.Recorder) (*Coordinator, error) {
 	if repository == nil || broker == nil || config.MaxConcurrentPlans <= 0 || config.MaxConcurrentPlans > 64 || config.BrokerTimeout <= 0 || config.BrokerTimeout > time.Minute || config.KnownNotSentRetries < 0 || config.KnownNotSentRetries > 10 || config.EventBatchSize <= 0 || config.EventBatchSize > 1000 {
 		return nil, ErrInvalidCoordinator
 	}
+	recorder = executiontelemetry.Safe(recorder)
 	ctx, cancel := context.WithCancel(context.Background())
-	return &Coordinator{repository: repository, broker: broker, config: config, ctx: ctx, cancel: cancel, semaphore: make(chan struct{}, config.MaxConcurrentPlans), plans: map[executionmodel.OrderPlanID]string{}, orders: map[executionmodel.OrderID]bool{}, stopped: make(chan struct{})}, nil
+	return &Coordinator{repository: repository, broker: broker, config: config, ctx: ctx, cancel: cancel, semaphore: make(chan struct{}, config.MaxConcurrentPlans), plans: map[executionmodel.OrderPlanID]string{}, orders: map[executionmodel.OrderID]bool{}, stopped: make(chan struct{}), telemetry: recorder}, nil
 }
 
 func (runner *Coordinator) ExecutePlan(ctx context.Context, planID executionmodel.OrderPlanID, logicalTime time.Time) (PlanReceipt, error) {
@@ -96,6 +104,8 @@ func (runner *Coordinator) ResumePlan(ctx context.Context, planID executionmodel
 }
 
 func (runner *Coordinator) execute(ctx context.Context, planID executionmodel.OrderPlanID, logicalTime time.Time) (receipt PlanReceipt, err error) {
+	started := time.Now()
+	defer func() { runner.recordPlan(receipt, err, time.Since(started)) }()
 	receipt.PlanID = planID
 	if err := ctx.Err(); err != nil {
 		return receipt, err
@@ -224,6 +234,12 @@ func (runner *Coordinator) execute(ctx context.Context, planID executionmodel.Or
 		}
 	}
 	orders, _ = runner.repository.OrdersForPlan(ctx, planID)
+	unknownCount := 0
+	for _, order := range orders {
+		if order.Spec().State == executionmodel.OrderUnknown {
+			unknownCount++
+		}
+	}
 	switch {
 	case allFilled(orders):
 		receipt.Outcome = OutcomeCompleted
@@ -235,7 +251,31 @@ func (runner *Coordinator) execute(ctx context.Context, planID executionmodel.Or
 	default:
 		receipt.Outcome = OutcomePending
 	}
+	runner.telemetry.Record(executiontelemetry.Event{Operation: executiontelemetry.OperationHealth, Outcome: executiontelemetry.OutcomeCompleted, Occurred: logicalTime.UTC(), UnknownOrders: unknownCount, HasUnknownOrders: true})
 	return receipt, err
+}
+
+func (runner *Coordinator) recordPlan(receipt PlanReceipt, err error, duration time.Duration) {
+	outcome := executiontelemetry.OutcomeFailed
+	switch receipt.Outcome {
+	case OutcomeCompleted, OutcomeDuplicateCommitted:
+		outcome = executiontelemetry.OutcomeCompleted
+	case OutcomePending:
+		outcome = executiontelemetry.OutcomePending
+	case OutcomeUnknown:
+		outcome = executiontelemetry.OutcomeUnknown
+	case OutcomeIncomplete:
+		outcome = executiontelemetry.OutcomeFailed
+	case OutcomeDuplicateInProgress:
+		outcome = executiontelemetry.OutcomeDuplicate
+	case OutcomeShutdown:
+		outcome = executiontelemetry.OutcomeShutdown
+	}
+	if err != nil && errors.Is(err, executionbroker.ErrUnavailable) {
+		outcome = executiontelemetry.OutcomeUnavailable
+	}
+	health := runner.Health()
+	runner.telemetry.Record(executiontelemetry.Event{Operation: executiontelemetry.OperationPlan, Outcome: outcome, PlanID: receipt.PlanID.String(), Duration: duration, InFlight: health.InFlightPlans})
 }
 
 func dependenciesFilled(leg executionmodel.OrderLeg, orders map[executionmodel.OrderLegID]executionmodel.Order) bool {
@@ -303,6 +343,7 @@ func (runner *Coordinator) submit(ctx context.Context, order executionmodel.Orde
 		}
 	}
 	if submitErr != nil {
+		runner.telemetry.Record(executiontelemetry.Event{Operation: executiontelemetry.OperationSubmission, Outcome: executiontelemetry.OutcomeUnknown, OrderID: current.ID().String(), Occurred: logicalTime.UTC()})
 		unknown, publishErr := runner.publishInternal(ctx, current, executionmodel.ReportUnknown, executionmodel.ReasonSubmissionOutcomeUnknown, logicalTime, attemptID.String()+"-unknown")
 		if publishErr != nil {
 			return OrderReceipt{}, publishErr
@@ -313,9 +354,11 @@ func (runner *Coordinator) submit(ctx context.Context, order executionmodel.Orde
 		return OrderReceipt{unknown.ID(), unknown.Spec().State}, ErrUnknownOutcome
 	}
 	if result.Status == executionbroker.SubmissionRejected {
+		runner.telemetry.Record(executiontelemetry.Event{Operation: executiontelemetry.OperationSubmission, Outcome: executiontelemetry.OutcomeRejected, OrderID: current.ID().String(), Occurred: logicalTime.UTC()})
 		next, err := runner.publishInternalWithBroker(ctx, current, executionmodel.ReportRejected, executionmodel.ReasonBrokerRejected, logicalTime, attemptID.String()+"-rejected", result.BrokerOrderID)
 		return OrderReceipt{next.ID(), next.Spec().State}, err
 	}
+	runner.telemetry.Record(executiontelemetry.Event{Operation: executiontelemetry.OperationSubmission, Outcome: executiontelemetry.OutcomeAccepted, OrderID: current.ID().String(), Occurred: logicalTime.UTC()})
 	next, err := runner.publishInternalWithBroker(ctx, current, executionmodel.ReportSubmitted, executionmodel.ReasonBrokerAccepted, logicalTime, attemptID.String()+"-submitted", result.BrokerOrderID)
 	return OrderReceipt{next.ID(), next.Spec().State}, err
 }
@@ -395,12 +438,20 @@ func (runner *Coordinator) publishInternalWithBroker(ctx context.Context, order 
 	return runner.publish(ctx, order, report, nil)
 }
 
-func (runner *Coordinator) publish(ctx context.Context, current executionmodel.Order, report executionmodel.ExecutionReport, fill *executionmodel.Fill) (executionmodel.Order, error) {
+func (runner *Coordinator) publish(ctx context.Context, current executionmodel.Order, report executionmodel.ExecutionReport, fill *executionmodel.Fill) (next executionmodel.Order, err error) {
+	started := time.Now()
+	defer func() {
+		outcome := executiontelemetry.OutcomeCompleted
+		if err != nil {
+			outcome = executiontelemetry.OutcomeInvalid
+		}
+		runner.telemetry.Record(executiontelemetry.Event{Operation: executiontelemetry.OperationPublication, Outcome: outcome, Detail: string(report.Spec().Type), OrderID: current.ID().String(), Occurred: report.Spec().ReceivedAt, Duration: time.Since(started)})
+	}()
 	checkpoint, err := runner.repository.CurrentOrderCheckpoint(ctx, current.ID())
 	if err != nil {
 		return executionmodel.Order{}, err
 	}
-	next, err := executionmodel.ApplyExecutionReport(checkpoint.Order, report, fill)
+	next, err = executionmodel.ApplyExecutionReport(checkpoint.Order, report, fill)
 	if err != nil {
 		return executionmodel.Order{}, err
 	}
@@ -464,12 +515,15 @@ func (runner *Coordinator) PublishBrokerEvent(ctx context.Context, event executi
 	for _, existing := range existingReports {
 		if existing.ID() == report.ID() {
 			if !bytes.Equal(existing.CanonicalJSON(), report.CanonicalJSON()) {
+				runner.telemetry.Record(executiontelemetry.Event{Operation: executiontelemetry.OperationOrderEvent, Outcome: executiontelemetry.OutcomeInvalid, Detail: string(event.Type), OrderID: order.ID().String(), Occurred: receivedAt.UTC()})
 				return OrderReceipt{}, &executionstorage.IdentityCollisionError{Kind: "report", Identity: report.ID().String()}
 			}
+			runner.telemetry.Record(executiontelemetry.Event{Operation: executiontelemetry.OperationOrderEvent, Outcome: executiontelemetry.OutcomeDuplicate, Detail: string(event.Type), OrderID: order.ID().String(), Occurred: receivedAt.UTC()})
 			return OrderReceipt{order.ID(), order.Spec().State}, nil
 		}
 	}
 	if staleBrokerEvent(order, event) {
+		runner.telemetry.Record(executiontelemetry.Event{Operation: executiontelemetry.OperationOrderEvent, Outcome: executiontelemetry.OutcomeDuplicate, Detail: string(event.Type), OrderID: order.ID().String(), Occurred: receivedAt.UTC()})
 		return OrderReceipt{order.ID(), order.Spec().State}, nil
 	}
 	var fill *executionmodel.Fill
@@ -486,9 +540,45 @@ func (runner *Coordinator) PublishBrokerEvent(ctx context.Context, event executi
 	}
 	next, err := runner.publish(ctx, order, report, fill)
 	if err != nil {
+		runner.telemetry.Record(executiontelemetry.Event{Operation: executiontelemetry.OperationOrderEvent, Outcome: executiontelemetry.OutcomeInvalid, Detail: string(event.Type), OrderID: order.ID().String(), Occurred: receivedAt.UTC()})
 		return OrderReceipt{}, err
 	}
+	runner.telemetry.Record(executiontelemetry.Event{Operation: executiontelemetry.OperationOrderEvent, Outcome: eventOutcome(event.Type), Detail: string(event.Type), OrderID: order.ID().String(), Occurred: receivedAt.UTC()})
+	runner.recordUnknownCount(ctx, receivedAt)
 	return OrderReceipt{next.ID(), next.Spec().State}, nil
+}
+
+func (runner *Coordinator) recordUnknownCount(ctx context.Context, occurred time.Time) {
+	orders, err := runner.repository.NonTerminalOrders(ctx, 1000)
+	if err != nil {
+		return
+	}
+	count := 0
+	for _, order := range orders {
+		if order.Spec().State == executionmodel.OrderUnknown {
+			count++
+		}
+	}
+	runner.telemetry.Record(executiontelemetry.Event{Operation: executiontelemetry.OperationHealth, Outcome: executiontelemetry.OutcomeCompleted, Occurred: occurred.UTC(), UnknownOrders: count, HasUnknownOrders: true})
+}
+
+func eventOutcome(kind executionmodel.ReportType) executiontelemetry.Outcome {
+	switch kind {
+	case executionmodel.ReportAcknowledged:
+		return executiontelemetry.OutcomeAcknowledged
+	case executionmodel.ReportPartialFill:
+		return executiontelemetry.OutcomePartialFill
+	case executionmodel.ReportFill:
+		return executiontelemetry.OutcomeFilled
+	case executionmodel.ReportCancelled:
+		return executiontelemetry.OutcomeCancelled
+	case executionmodel.ReportRejected:
+		return executiontelemetry.OutcomeRejected
+	case executionmodel.ReportUnknown:
+		return executiontelemetry.OutcomeUnknown
+	default:
+		return executiontelemetry.OutcomeCompleted
+	}
 }
 
 func staleBrokerEvent(order executionmodel.Order, event executionbroker.Event) bool {
@@ -529,8 +619,10 @@ func (runner *Coordinator) RequestCancel(ctx context.Context, id executionmodel.
 		order, publishErr := runner.publishInternal(ctx, order, executionmodel.ReportUnknown, executionmodel.ReasonSubmissionOutcomeUnknown, logicalTime, "cancel-unknown-"+fmt.Sprint(order.Spec().Revision))
 		runner.releaseOrder(id)
 		if publishErr != nil {
+			runner.telemetry.Record(executiontelemetry.Event{Operation: executiontelemetry.OperationCancellation, Outcome: executiontelemetry.OutcomeInvalid, OrderID: id.String(), Occurred: logicalTime.UTC()})
 			return OrderReceipt{}, publishErr
 		}
+		runner.telemetry.Record(executiontelemetry.Event{Operation: executiontelemetry.OperationCancellation, Outcome: executiontelemetry.OutcomeUnknown, OrderID: id.String(), Occurred: logicalTime.UTC()})
 		return OrderReceipt{id, order.Spec().State}, ErrUnknownOutcome
 	}
 	runner.releaseOrder(id)
@@ -538,6 +630,7 @@ func (runner *Coordinator) RequestCancel(ctx context.Context, id executionmodel.
 		return OrderReceipt{}, err
 	}
 	order, _ = runner.repository.Order(ctx, id)
+	runner.telemetry.Record(executiontelemetry.Event{Operation: executiontelemetry.OperationCancellation, Outcome: executiontelemetry.OutcomeCancelled, OrderID: id.String(), Occurred: logicalTime.UTC()})
 	return OrderReceipt{id, order.Spec().State}, nil
 }
 
@@ -587,6 +680,7 @@ func (runner *Coordinator) RestoreCursor(value executionbroker.EventCursor) {
 	runner.eventMu.Unlock()
 }
 func (runner *Coordinator) Shutdown(ctx context.Context) error {
+	started := time.Now()
 	runner.stopOnce.Do(func() {
 		runner.mu.Lock()
 		runner.closed = true
@@ -599,10 +693,22 @@ func (runner *Coordinator) Shutdown(ctx context.Context) error {
 	})
 	select {
 	case <-runner.stopped:
+		runner.telemetry.Record(executiontelemetry.Event{Operation: executiontelemetry.OperationShutdown, Outcome: executiontelemetry.OutcomeShutdown, Duration: time.Since(started)})
 		return nil
 	case <-ctx.Done():
+		runner.telemetry.Record(executiontelemetry.Event{Operation: executiontelemetry.OperationShutdown, Outcome: executiontelemetry.OutcomeFailed, Duration: time.Since(started)})
 		return ctx.Err()
 	}
+}
+
+func (runner *Coordinator) Health() executionhealth.Coordinator {
+	runner.mu.Lock()
+	value := executionhealth.Coordinator{Available: true, Closed: runner.closed, InFlightPlans: len(runner.plans), KeyedOrders: len(runner.orders), MaximumPlans: runner.config.MaxConcurrentPlans, BrokerTimeout: runner.config.BrokerTimeout}
+	runner.mu.Unlock()
+	runner.eventMu.Lock()
+	value.Cursor = uint64(runner.cursor)
+	runner.eventMu.Unlock()
+	return value
 }
 
 func SortedOrderIDs(values []executionmodel.Order) []executionmodel.OrderID {

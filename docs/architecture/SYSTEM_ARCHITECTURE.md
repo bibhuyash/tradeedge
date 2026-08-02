@@ -31,6 +31,10 @@ The monolith isolates domain modules, owns orchestration, applies timeouts and c
   decisions and keep TradeEdge order identity independent of broker identity.
 - The OMS atomically publishes each order transition with its report and
   optional fill under optimistic revision control.
+- Phase 4 operational HTTP is bounded and GET-only; its telemetry and health
+  views are provider-neutral and cannot invoke broker operations.
+- Execution metrics use finite lifecycle dimensions and never use TradeEdge,
+  broker, account, or instrument identities as labels.
 - PostgreSQL is authoritative for internal durable state; broker state is authoritative for actual external orders and positions.
 
 ## Failure Modes

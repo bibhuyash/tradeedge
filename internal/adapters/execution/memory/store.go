@@ -8,8 +8,10 @@ import (
 	"sort"
 	"sync"
 
+	executionhealth "github.com/bibhuyash/tradeedge/internal/execution/health"
 	executionmodel "github.com/bibhuyash/tradeedge/internal/execution/model"
 	executionstorage "github.com/bibhuyash/tradeedge/internal/execution/storage"
+	executiontelemetry "github.com/bibhuyash/tradeedge/internal/execution/telemetry"
 )
 
 type Limits struct{ Plans, Orders, Publications, Reports, Fills int }
@@ -39,17 +41,22 @@ type Store struct {
 	reportReceipts   map[executionmodel.ExecutionReportID]executionstorage.PublicationReceipt
 	fills            map[executionmodel.FillID]executionmodel.Fill
 	failBeforeCommit bool
+	telemetry        executiontelemetry.Recorder
 }
 
 func NewStore() *Store { return NewStoreWithLimits(DefaultLimits()) }
 func NewStoreWithLimits(limits Limits) *Store {
+	return NewStoreInstrumented(limits, executiontelemetry.NopRecorder{})
+}
+func NewStoreInstrumented(limits Limits, recorder executiontelemetry.Recorder) *Store {
 	if limits.Plans <= 0 || limits.Orders <= 0 || limits.Publications <= 0 || limits.Reports <= 0 || limits.Fills <= 0 {
 		limits = DefaultLimits()
 	}
+	recorder = executiontelemetry.Safe(recorder)
 	return &Store{limits: limits, plans: map[executionmodel.OrderPlanID]storedPlan{}, intents: map[executionmodel.ExecutionIntentID]executionmodel.ExecutionIntent{},
 		current: map[executionmodel.OrderID]executionmodel.OrderRevision{}, checkpoints: map[executionmodel.OrderID]map[executionmodel.OrderRevision]executionstorage.OrderCheckpoint{},
 		publications: map[executionmodel.PublicationID]storedPublication{}, reports: map[executionmodel.ExecutionReportID]executionmodel.ExecutionReport{},
-		reportReceipts: map[executionmodel.ExecutionReportID]executionstorage.PublicationReceipt{}, fills: map[executionmodel.FillID]executionmodel.Fill{}}
+		reportReceipts: map[executionmodel.ExecutionReportID]executionstorage.PublicationReceipt{}, fills: map[executionmodel.FillID]executionmodel.Fill{}, telemetry: recorder}
 }
 
 func (store *Store) SetFailBeforeCommitForTest(value bool) {
@@ -86,12 +93,20 @@ func (store *Store) RegisterPlan(ctx context.Context, intent executionmodel.Exec
 	}
 	canonical := canonicalPlanBundle(intent, plan, checkpoints, nil, nil)
 	store.mu.Lock()
+	var observed *executiontelemetry.Event
+	defer func() {
+		if observed != nil {
+			store.telemetry.Record(*observed)
+		}
+	}()
 	defer store.mu.Unlock()
 	if err := ctx.Err(); err != nil {
 		return executionstorage.RegistrationOutcome{}, err
 	}
 	if existing, found := store.plans[plan.ID()]; found {
 		if bytes.Equal(existing.canonical, canonical) {
+			value := executiontelemetry.Event{Operation: executiontelemetry.OperationPlan, Outcome: executiontelemetry.OutcomeDuplicate, PlanID: plan.ID().String(), Occurred: plan.Spec().CreatedAt}
+			observed = &value
 			return executionstorage.RegistrationOutcome{Status: executionstorage.RegistrationIdempotent}, nil
 		}
 		return executionstorage.RegistrationOutcome{}, &executionstorage.IdentityCollisionError{Kind: "plan", Identity: plan.ID().String()}
@@ -110,6 +125,8 @@ func (store *Store) RegisterPlan(ctx context.Context, intent executionmodel.Exec
 		store.current[checkpoint.Order.ID()] = 1
 		store.checkpoints[checkpoint.Order.ID()] = map[executionmodel.OrderRevision]executionstorage.OrderCheckpoint{1: checkpoint}
 	}
+	value := executiontelemetry.Event{Operation: executiontelemetry.OperationPlan, Outcome: executiontelemetry.OutcomeCreated, PlanID: plan.ID().String(), Occurred: plan.Spec().CreatedAt}
+	observed = &value
 	return executionstorage.RegistrationOutcome{Status: executionstorage.RegistrationCommitted}, nil
 }
 
@@ -536,6 +553,133 @@ func (store *Store) Fills(ctx context.Context, id executionmodel.OrderID) ([]exe
 		return left.OccurredAt.Before(right.OccurredAt)
 	})
 	return result, nil
+}
+
+type Status struct {
+	Plans, Orders, Publications, Reports, Fills int
+	Limits                                      Limits
+}
+
+func (store *Store) Status() Status {
+	store.mu.RLock()
+	defer store.mu.RUnlock()
+	return Status{Plans: len(store.plans), Orders: len(store.current), Publications: len(store.publications), Reports: len(store.reports), Fills: len(store.fills), Limits: store.limits}
+}
+
+func (store *Store) Health() executionhealth.OMS {
+	store.mu.RLock()
+	defer store.mu.RUnlock()
+	unknown := 0
+	for id, revision := range store.current {
+		if store.checkpoints[id][revision].Order.Spec().State == executionmodel.OrderUnknown {
+			unknown++
+		}
+	}
+	return executionhealth.OMS{Available: true, Plans: len(store.plans), Orders: len(store.current), Publications: len(store.publications), Reports: len(store.reports), Fills: len(store.fills),
+		UnknownOrders: unknown, PlanLimit: store.limits.Plans, OrderLimit: store.limits.Orders, PublicationLimit: store.limits.Publications, ReportLimit: store.limits.Reports, FillLimit: store.limits.Fills}
+}
+
+func (store *Store) RecentPlans(ctx context.Context, limit int) ([]executionmodel.OrderPlan, error) {
+	if err := ctx.Err(); err != nil {
+		return nil, err
+	}
+	if limit <= 0 || limit > 100 {
+		return nil, executionstorage.ErrInvalidPublication
+	}
+	store.mu.RLock()
+	values := make([]executionmodel.OrderPlan, 0, len(store.plans))
+	for _, value := range store.plans {
+		values = append(values, value.plan)
+	}
+	store.mu.RUnlock()
+	sort.Slice(values, func(i, j int) bool {
+		if !values[i].Spec().CreatedAt.Equal(values[j].Spec().CreatedAt) {
+			return values[i].Spec().CreatedAt.After(values[j].Spec().CreatedAt)
+		}
+		return values[i].ID().String() < values[j].ID().String()
+	})
+	if len(values) > limit {
+		values = values[:limit]
+	}
+	return values, nil
+}
+
+func (store *Store) RecentOrders(ctx context.Context, state executionmodel.OrderState, limit int) ([]executionmodel.Order, error) {
+	if err := ctx.Err(); err != nil {
+		return nil, err
+	}
+	if limit <= 0 || limit > 100 || (state != "" && state.Validate() != nil) {
+		return nil, executionstorage.ErrInvalidPublication
+	}
+	store.mu.RLock()
+	values := make([]executionmodel.Order, 0, len(store.current))
+	for id, revision := range store.current {
+		order := store.checkpoints[id][revision].Order
+		if state == "" || order.Spec().State == state {
+			values = append(values, order)
+		}
+	}
+	store.mu.RUnlock()
+	sort.Slice(values, func(i, j int) bool {
+		if !values[i].Spec().UpdatedAt.Equal(values[j].Spec().UpdatedAt) {
+			return values[i].Spec().UpdatedAt.After(values[j].Spec().UpdatedAt)
+		}
+		return values[i].ID().String() < values[j].ID().String()
+	})
+	if len(values) > limit {
+		values = values[:limit]
+	}
+	return values, nil
+}
+
+func (store *Store) RecentReports(ctx context.Context, limit int) ([]executionmodel.ExecutionReport, error) {
+	if err := ctx.Err(); err != nil {
+		return nil, err
+	}
+	if limit <= 0 || limit > 100 {
+		return nil, executionstorage.ErrInvalidPublication
+	}
+	store.mu.RLock()
+	values := make([]executionmodel.ExecutionReport, 0, len(store.reports))
+	for _, value := range store.reports {
+		values = append(values, value)
+	}
+	store.mu.RUnlock()
+	sort.Slice(values, func(i, j int) bool {
+		if !values[i].Spec().ReceivedAt.Equal(values[j].Spec().ReceivedAt) {
+			return values[i].Spec().ReceivedAt.After(values[j].Spec().ReceivedAt)
+		}
+		return values[i].ID().String() < values[j].ID().String()
+	})
+	if len(values) > limit {
+		values = values[:limit]
+	}
+	return values, nil
+}
+
+func (store *Store) RecentFills(ctx context.Context, limit int) ([]executionmodel.Fill, error) {
+	if err := ctx.Err(); err != nil {
+		return nil, err
+	}
+	if limit <= 0 || limit > 100 {
+		return nil, executionstorage.ErrInvalidPublication
+	}
+	store.mu.RLock()
+	values := make([]executionmodel.Fill, 0, len(store.fills))
+	for _, value := range store.fills {
+		values = append(values, value)
+	}
+	store.mu.RUnlock()
+	sort.Slice(values, func(i, j int) bool {
+		if !values[i].Spec().OccurredAt.Equal(values[j].Spec().OccurredAt) {
+			return values[i].Spec().OccurredAt.After(values[j].Spec().OccurredAt)
+		}
+		return values[i].ID().String() < values[j].ID().String()
+	})
+	if len(values) > limit {
+		values = values[:limit]
+	}
+	return values, nil
 }
 
 var _ executionstorage.OMSRepository = (*Store)(nil)

@@ -10,7 +10,7 @@ flowchart LR
     P1 --> P2["Phase 2: Strategy & Evidence"]
     P2 --> P3["Phase 3: Portfolio & Risk"]
     P3 --> P4["Phase 4: Execution & OMS"]
-    P4 --> P5["Phase 5: Reliability Validation"]
+    P4 --> P5["Phase 5: Broker Adapter & Reliability Validation"]
     P5 --> G{"Explicit live approval?"}
     G -->|No| PT["Continue paper trading"]
     G -->|Yes| LP["Separately scoped live pilot"]
@@ -28,8 +28,11 @@ Each phase has objective entry and exit criteria. Passing a technical milestone 
 - Phase 3 establishes portfolio/risk decisions, bounded rule execution, atomic
   reservations, operational controls, and release evidence.
 - Phase 4 establishes provider-neutral execution/OMS contracts before adding a
-  deterministic paper broker and execution reliability evidence.
-- Later phases add longer-duration reliability validation and failure drills.
+  deterministic paper broker, bounded operations, and machine-readable
+  execution reliability evidence. Phase 4 closure remains paper-only.
+- Phase 5 may design a Zerodha adapter behind the broker port and exercise it
+  only through controlled paper integration, reliability validation, and
+  failure drills; live orders remain separately approval-gated.
 
 ## Invariants
 

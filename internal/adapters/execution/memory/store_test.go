@@ -68,6 +68,21 @@ func TestOMSQueriesUseStableTradeEdgeIdentity(t *testing.T) {
 	if err != nil || len(nonTerminal) != 1 || nonTerminal[0].ID() != value.orders[0].ID() {
 		t.Fatalf("non-terminal orders: %v %v", nonTerminal, err)
 	}
+	plans, err := store.RecentPlans(context.Background(), 100)
+	if err != nil || len(plans) != 1 || plans[0].ID() != value.plan.ID() {
+		t.Fatalf("recent plans: %v %v", plans, err)
+	}
+	orders, err = store.RecentOrders(context.Background(), executionmodel.OrderCreated, 100)
+	if err != nil || len(orders) != 1 || orders[0].ID() != value.orders[0].ID() {
+		t.Fatalf("recent orders: %v %v", orders, err)
+	}
+	health := store.Health()
+	if !health.Available || health.Plans != 1 || health.Orders != 1 || health.UnknownOrders != 0 || health.OrderLimit != memory.DefaultLimits().Orders {
+		t.Fatalf("OMS health: %+v", health)
+	}
+	if _, err = store.RecentPlans(context.Background(), 101); !errors.Is(err, executionstorage.ErrInvalidPublication) {
+		t.Fatalf("unbounded recent query: %v", err)
+	}
 }
 
 func transitionReason(kind executionmodel.ReportType) executionmodel.TransitionReason {

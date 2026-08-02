@@ -90,3 +90,15 @@ The GET-only risk API under `/api/v1/risk/` exposes bounded snapshot, capital,
 decision, violation, rule, control, configuration-metadata, and runner-health
 views. Limits default to 50 and cannot exceed 100. It exposes no mutation,
 credential, provider, broker, order, position, or execution capability.
+
+## Phase 4 Milestone 3 Metric Catalog
+
+Execution exposes `tradeedge_execution_{plans_total,submissions_total,order_events_total,reconciliation_total,reconciliation_issues_total,reconciliation_repairs_total,in_flight,unknown_orders,duration_seconds}` and `tradeedge_paper_broker_scenarios_total`.
+Labels are restricted to finite operation, outcome, report/state, mismatch, and
+paper-scenario vocabularies. Plan, order, client-order, broker, instrument,
+account, payload, path, error, and free-text labels are prohibited.
+
+The GET-only API under `/api/v1/execution/` exposes bounded recent lifecycle,
+UNKNOWN, reconciliation, component-health, and audit status. Limits default to
+50 and cannot exceed 100. Telemetry and audit status are diagnostic only and
+cannot submit, cancel, reconcile, mutate OMS state, or establish trading truth.

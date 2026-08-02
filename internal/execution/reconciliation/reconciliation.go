@@ -9,8 +9,10 @@ import (
 	"time"
 
 	executionbroker "github.com/bibhuyash/tradeedge/internal/execution/broker"
+	executionhealth "github.com/bibhuyash/tradeedge/internal/execution/health"
 	executionmodel "github.com/bibhuyash/tradeedge/internal/execution/model"
 	executionstorage "github.com/bibhuyash/tradeedge/internal/execution/storage"
+	executiontelemetry "github.com/bibhuyash/tradeedge/internal/execution/telemetry"
 )
 
 var (
@@ -66,17 +68,24 @@ type Runner struct {
 	publish    PublisherFunc
 	mu         sync.Mutex
 	running    bool
+	telemetry  executiontelemetry.Recorder
+	status     Status
 }
 
 func New(repository Repository, broker executionbroker.Port, publish PublisherFunc) (*Runner, error) {
+	return NewInstrumented(repository, broker, publish, executiontelemetry.NopRecorder{})
+}
+
+func NewInstrumented(repository Repository, broker executionbroker.Port, publish PublisherFunc, recorder executiontelemetry.Recorder) (*Runner, error) {
 	if repository == nil || broker == nil || publish == nil {
 		return nil, ErrInvalidReconciler
 	}
-	return &Runner{repository: repository, broker: broker, publish: publish}, nil
+	recorder = executiontelemetry.Safe(recorder)
+	return &Runner{repository: repository, broker: broker, publish: publish, telemetry: recorder}, nil
 }
 
-func (runner *Runner) Run(ctx context.Context, logicalTime time.Time) (Receipt, error) {
-	receipt := Receipt{ObservedAt: logicalTime.UTC()}
+func (runner *Runner) Run(ctx context.Context, logicalTime time.Time) (receipt Receipt, err error) {
+	receipt = Receipt{ObservedAt: logicalTime.UTC()}
 	if logicalTime.IsZero() {
 		return receipt, ErrInvalidReconciler
 	}
@@ -86,8 +95,10 @@ func (runner *Runner) Run(ctx context.Context, logicalTime time.Time) (Receipt, 
 		return receipt, ErrReconciliationInProgress
 	}
 	runner.running = true
+	runner.status.Running = true
+	runner.status.LastAttempt = logicalTime.UTC()
 	runner.mu.Unlock()
-	defer func() { runner.mu.Lock(); runner.running = false; runner.mu.Unlock() }()
+	defer func() { runner.finish(receipt, err) }()
 	snapshot, err := runner.snapshot(ctx)
 	if err != nil {
 		return receipt, err
@@ -180,6 +191,59 @@ func (runner *Runner) Run(ctx context.Context, logicalTime time.Time) (Receipt, 
 		return left.ClientOrderID.String() < right.ClientOrderID.String()
 	})
 	return receipt, nil
+}
+
+type Status struct {
+	Running     bool
+	LastAttempt time.Time
+	LastSuccess time.Time
+	LastReceipt Receipt
+	LastError   string
+}
+
+func (runner *Runner) finish(receipt Receipt, err error) {
+	runner.mu.Lock()
+	runner.running = false
+	runner.status.Running = false
+	runner.status.LastReceipt = receipt
+	runner.status.LastReceipt.Issues = append([]Issue(nil), receipt.Issues...)
+	if err != nil {
+		runner.status.LastError = "reconciliation_failed"
+	} else {
+		runner.status.LastError = ""
+		runner.status.LastSuccess = receipt.ObservedAt
+	}
+	runner.mu.Unlock()
+	outcome := executiontelemetry.OutcomeClean
+	if err != nil {
+		outcome = executiontelemetry.OutcomeUnavailable
+	} else if receipt.Blocked {
+		outcome = executiontelemetry.OutcomeBlocked
+	}
+	runner.telemetry.Record(executiontelemetry.Event{Operation: executiontelemetry.OperationReconciliation, Outcome: outcome, Occurred: receipt.ObservedAt})
+	for _, issue := range receipt.Issues {
+		runner.telemetry.Record(executiontelemetry.Event{Operation: executiontelemetry.OperationMismatch, Outcome: executiontelemetry.OutcomeBlocked, Detail: string(issue.Kind), OrderID: issue.OrderID.String(), Occurred: receipt.ObservedAt})
+	}
+	for repaired := 0; repaired < receipt.Repaired; repaired++ {
+		runner.telemetry.Record(executiontelemetry.Event{Operation: executiontelemetry.OperationRepair, Outcome: executiontelemetry.OutcomeRepaired, Occurred: receipt.ObservedAt})
+	}
+}
+
+func (runner *Runner) Status() Status {
+	runner.mu.Lock()
+	defer runner.mu.Unlock()
+	value := runner.status
+	value.LastReceipt.Issues = append([]Issue(nil), runner.status.LastReceipt.Issues...)
+	return value
+}
+
+func (runner *Runner) Health() executionhealth.Reconciliation {
+	status := runner.Status()
+	issues := make(map[string]int)
+	for _, issue := range status.LastReceipt.Issues {
+		issues[string(issue.Kind)]++
+	}
+	return executionhealth.Reconciliation{Available: true, Running: status.Running, Blocked: status.LastReceipt.Blocked, LastAttempt: status.LastAttempt, LastSuccess: status.LastSuccess, Repairs: status.LastReceipt.Repaired, IssueCounts: issues, LastError: status.LastError}
 }
 
 func (runner *Runner) snapshot(parent context.Context) (snapshot executionbroker.Snapshot, err error) {

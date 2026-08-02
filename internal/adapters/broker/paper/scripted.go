@@ -10,7 +10,9 @@ import (
 
 	"github.com/bibhuyash/tradeedge/internal/domain"
 	executionbroker "github.com/bibhuyash/tradeedge/internal/execution/broker"
+	executionhealth "github.com/bibhuyash/tradeedge/internal/execution/health"
 	executionmodel "github.com/bibhuyash/tradeedge/internal/execution/model"
+	executiontelemetry "github.com/bibhuyash/tradeedge/internal/execution/telemetry"
 )
 
 type ScriptClock interface{ Now() time.Time }
@@ -65,9 +67,14 @@ type ScriptedBroker struct {
 	orders              map[executionmodel.ClientOrderID]scriptedOrder
 	scheduled           []scheduledEvent
 	delivered           []executionbroker.Event
+	telemetry           executiontelemetry.Recorder
 }
 
 func NewScripted(clock ScriptClock, scenarios []Scenario) (*ScriptedBroker, error) {
+	return NewScriptedInstrumented(clock, scenarios, executiontelemetry.NopRecorder{})
+}
+
+func NewScriptedInstrumented(clock ScriptClock, scenarios []Scenario, recorder executiontelemetry.Recorder) (*ScriptedBroker, error) {
 	if clock == nil || len(scenarios) == 0 {
 		return nil, errors.New("paper script clock and scenarios are required")
 	}
@@ -77,7 +84,8 @@ func NewScripted(clock ScriptClock, scenarios []Scenario) (*ScriptedBroker, erro
 			return nil, errors.New("invalid paper scenario")
 		}
 	}
-	return &ScriptedBroker{clock: clock, scenarios: values, orders: map[executionmodel.ClientOrderID]scriptedOrder{}}, nil
+	recorder = executiontelemetry.Safe(recorder)
+	return &ScriptedBroker{clock: clock, scenarios: values, orders: map[executionmodel.ClientOrderID]scriptedOrder{}, telemetry: recorder}, nil
 }
 
 func validBehavior(value Behavior) bool {
@@ -101,7 +109,13 @@ func (broker *ScriptedBroker) Submit(ctx context.Context, request executionbroke
 		return executionbroker.SubmissionResult{}, executionbroker.ErrInvalidRequest
 	}
 	broker.mu.Lock()
-	defer broker.mu.Unlock()
+	var observed *executiontelemetry.Event
+	defer func() {
+		broker.mu.Unlock()
+		if observed != nil {
+			broker.telemetry.Record(*observed)
+		}
+	}()
 	canonical := submissionCanonical(request)
 	if existing, ok := broker.orders[request.ClientOrderID]; ok {
 		if existing.canonical != canonical {
@@ -119,6 +133,8 @@ func (broker *ScriptedBroker) Submit(ctx context.Context, request executionbroke
 	scenario := broker.scenarios[broker.scenarioIndex]
 	if broker.unavailableAttempts < scenario.UnavailableAttempts {
 		broker.unavailableAttempts++
+		value := executiontelemetry.Event{Operation: executiontelemetry.OperationPaperScenario, Outcome: executiontelemetry.OutcomeUnavailable, Detail: string(scenario.Behavior), Occurred: broker.clock.Now().UTC()}
+		observed = &value
 		return executionbroker.SubmissionResult{}, executionbroker.ErrUnavailable
 	}
 	if scenario.Behavior == BehaviorPartialFill && request.Quantity.Int64() < 2 {
@@ -135,6 +151,8 @@ func (broker *ScriptedBroker) Submit(ctx context.Context, request executionbroke
 	order := scriptedOrder{request: request, canonical: canonical, snapshot: executionbroker.OrderSnapshot{ClientOrderID: request.ClientOrderID, BrokerOrderID: brokerID, InstrumentID: request.InstrumentID, Side: request.Side, Quantity: request.Quantity, LimitPrice: request.LimitPrice, State: state, UpdatedAt: now}, lateFill: scenario.Behavior == BehaviorLateFill}
 	broker.orders[request.ClientOrderID] = order
 	if scenario.Behavior == BehaviorReject {
+		value := executiontelemetry.Event{Operation: executiontelemetry.OperationPaperScenario, Outcome: executiontelemetry.OutcomeRejected, Detail: string(scenario.Behavior), Occurred: now}
+		observed = &value
 		return executionbroker.SubmissionResult{Status: executionbroker.SubmissionRejected, BrokerOrderID: brokerID}, nil
 	}
 	broker.schedule(request.ClientOrderID, brokerID, executionmodel.ReportAcknowledged, executionmodel.ReasonBrokerAcknowledged, 0, 0, request.LimitPrice, now, "ack")
@@ -163,8 +181,12 @@ func (broker *ScriptedBroker) Submit(ctx context.Context, request executionbroke
 	}
 	result := executionbroker.SubmissionResult{Status: executionbroker.SubmissionAccepted, BrokerOrderID: brokerID}
 	if scenario.Behavior == BehaviorTimeout || scenario.Behavior == BehaviorLostResponse {
+		value := executiontelemetry.Event{Operation: executiontelemetry.OperationPaperScenario, Outcome: executiontelemetry.OutcomeUnknown, Detail: string(scenario.Behavior), Occurred: now}
+		observed = &value
 		return executionbroker.SubmissionResult{}, executionbroker.ErrOutcomeUnknown
 	}
+	value := executiontelemetry.Event{Operation: executiontelemetry.OperationPaperScenario, Outcome: executiontelemetry.OutcomeCompleted, Detail: string(scenario.Behavior), Occurred: now}
+	observed = &value
 	return result, nil
 }
 
@@ -319,6 +341,21 @@ func RestoreScripted(clock ScriptClock, scenarios []Scenario, checkpoint Scripte
 	value.scheduled = append([]scheduledEvent(nil), checkpoint.Scheduled...)
 	value.delivered = append([]executionbroker.Event(nil), checkpoint.Delivered...)
 	return value, nil
+}
+
+type Status struct {
+	ScenarioIndex, ScenarioCount, ActiveOrders, ScheduledEvents, DeliveredEvents, UnavailableAttempts int
+}
+
+func (broker *ScriptedBroker) Status() Status {
+	broker.mu.Lock()
+	defer broker.mu.Unlock()
+	return Status{ScenarioIndex: broker.scenarioIndex, ScenarioCount: len(broker.scenarios), ActiveOrders: len(broker.orders), ScheduledEvents: len(broker.scheduled), DeliveredEvents: len(broker.delivered), UnavailableAttempts: broker.unavailableAttempts}
+}
+
+func (broker *ScriptedBroker) Health() executionhealth.PaperBroker {
+	status := broker.Status()
+	return executionhealth.PaperBroker{Available: true, ScenarioIndex: status.ScenarioIndex, ScenarioCount: status.ScenarioCount, ActiveOrders: status.ActiveOrders, ScheduledEvents: status.ScheduledEvents, DeliveredEvents: status.DeliveredEvents, UnavailableAttempts: status.UnavailableAttempts}
 }
 
 var _ executionbroker.Port = (*ScriptedBroker)(nil)

@@ -119,6 +119,10 @@ func TestScriptedBrokerIdempotencyUnavailabilityCancellationAndRestore(t *testin
 	if len(snapshot.Orders) != 1 || snapshot.Orders[0].State != executionmodel.OrderFilled {
 		t.Fatal("restore diverged")
 	}
+	health := restored.Health()
+	if !health.Available || health.ActiveOrders != 1 || health.ScenarioIndex != 1 || health.DeliveredEvents == 0 {
+		t.Fatalf("paper health: %+v", health)
+	}
 	snapshot.Orders[0].Fills[0].ExecutionID = "mutated"
 	again, _ := restored.LookupByClientOrderID(context.Background(), request.ClientOrderID)
 	if again.Fills[0].ExecutionID == "mutated" {
