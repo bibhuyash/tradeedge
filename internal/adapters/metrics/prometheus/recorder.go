@@ -10,6 +10,7 @@ import (
 	"github.com/prometheus/client_golang/prometheus/collectors"
 	"github.com/prometheus/client_golang/prometheus/promhttp"
 
+	brokertelemetry "github.com/bibhuyash/tradeedge/internal/broker/telemetry"
 	executiontelemetry "github.com/bibhuyash/tradeedge/internal/execution/telemetry"
 	"github.com/bibhuyash/tradeedge/internal/marketdata/model"
 	"github.com/bibhuyash/tradeedge/internal/marketdata/telemetry"
@@ -60,6 +61,9 @@ type Recorder struct {
 	executionDuration   *prometheus.HistogramVec
 	executionInFlight   *prometheus.GaugeVec
 	executionUnknown    prometheus.Gauge
+	brokerReads         *prometheus.CounterVec
+	brokerReadDuration  *prometheus.HistogramVec
+	brokerReadInFlight  prometheus.Gauge
 	riskDecisions       *prometheus.CounterVec
 	riskRules           *prometheus.CounterVec
 	riskDuration        *prometheus.HistogramVec
@@ -107,6 +111,9 @@ func New() *Recorder {
 		executionDuration:   prometheus.NewHistogramVec(prometheus.HistogramOpts{Name: "tradeedge_execution_duration_seconds", Help: "Execution operation duration.", Buckets: processingBuckets}, []string{"operation", "outcome"}),
 		executionInFlight:   prometheus.NewGaugeVec(prometheus.GaugeOpts{Name: "tradeedge_execution_in_flight", Help: "Bounded execution work in flight."}, []string{"scope"}),
 		executionUnknown:    prometheus.NewGauge(prometheus.GaugeOpts{Name: "tradeedge_execution_unknown_orders", Help: "Current OMS orders in UNKNOWN state."}),
+		brokerReads:         prometheus.NewCounterVec(prometheus.CounterOpts{Name: "tradeedge_broker_connectivity_reads_total", Help: "Read-only broker connectivity outcomes."}, []string{"operation", "outcome"}),
+		brokerReadDuration:  prometheus.NewHistogramVec(prometheus.HistogramOpts{Name: "tradeedge_broker_connectivity_read_duration_seconds", Help: "Read-only broker connectivity duration.", Buckets: processingBuckets}, []string{"operation", "outcome"}),
+		brokerReadInFlight:  prometheus.NewGauge(prometheus.GaugeOpts{Name: "tradeedge_broker_connectivity_reads_in_flight", Help: "Current read-only broker operations."}),
 		riskDecisions:       prometheus.NewCounterVec(prometheus.CounterOpts{Name: "tradeedge_risk_decisions_total", Help: "Portfolio-risk runner outcomes."}, []string{"outcome"}),
 		riskRules:           prometheus.NewCounterVec(prometheus.CounterOpts{Name: "tradeedge_risk_rule_results_total", Help: "Bounded production risk-rule results."}, []string{"rule_id", "status", "effect", "severity"}),
 		riskDuration:        prometheus.NewHistogramVec(prometheus.HistogramOpts{Name: "tradeedge_risk_evaluation_duration_seconds", Help: "Portfolio-risk evaluation duration.", Buckets: processingBuckets}, []string{"outcome"}),
@@ -123,6 +130,7 @@ func New() *Recorder {
 	r.registry.MustRegister(r.executionPlans, r.executionSubmits, r.executionEvents,
 		r.executionReconciles, r.executionIssues, r.executionRepairs, r.executionScenarios,
 		r.executionDuration, r.executionInFlight, r.executionUnknown)
+	r.registry.MustRegister(r.brokerReads, r.brokerReadDuration, r.brokerReadInFlight)
 	r.registry.MustRegister(r.riskDecisions, r.riskRules, r.riskDuration, r.riskPublish, r.riskInFlight)
 	return r
 }
@@ -274,4 +282,22 @@ func (adapter ExecutionRecorder) Record(event executiontelemetry.Event) {
 	if event.HasUnknownOrders {
 		r.executionUnknown.Set(float64(event.UnknownOrders))
 	}
+}
+
+type BrokerRecorder struct{ recorder *Recorder }
+
+// Broker exposes bounded provider-neutral connectivity metrics. Provider,
+// account, instrument, token, request, path, and error values are never labels.
+func (r *Recorder) Broker() brokertelemetry.Recorder { return BrokerRecorder{recorder: r} }
+
+func (adapter BrokerRecorder) Record(event brokertelemetry.Event) {
+	if !brokertelemetry.Valid(event) {
+		return
+	}
+	operation, outcome := string(event.Operation), string(event.Outcome)
+	adapter.recorder.brokerReads.WithLabelValues(operation, outcome).Inc()
+	if event.Duration > 0 {
+		adapter.recorder.brokerReadDuration.WithLabelValues(operation, outcome).Observe(event.Duration.Seconds())
+	}
+	adapter.recorder.brokerReadInFlight.Set(float64(event.InFlight))
 }

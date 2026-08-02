@@ -11,6 +11,7 @@ import (
 	risktelemetry "github.com/bibhuyash/tradeedge/internal/risk/telemetry"
 	"time"
 
+	brokertelemetry "github.com/bibhuyash/tradeedge/internal/broker/telemetry"
 	"github.com/bibhuyash/tradeedge/internal/domain"
 	executiontelemetry "github.com/bibhuyash/tradeedge/internal/execution/telemetry"
 	"github.com/bibhuyash/tradeedge/internal/marketdata/model"
@@ -169,5 +170,24 @@ func TestExecutionMetricCatalogHasFiniteSeriesBound(t *testing.T) {
 	}
 	if series > 384 {
 		t.Fatalf("execution metric series = %d, want <= 384", series)
+	}
+}
+
+func TestBrokerConnectivityMetricsHaveOnlyBoundedLabels(t *testing.T) {
+	recorder := New()
+	recorder.Broker().Record(brokertelemetry.Event{Operation: brokertelemetry.OperationAuthentication, Outcome: brokertelemetry.OutcomeSuccess, Duration: time.Millisecond, InFlight: 1})
+	recorder.Broker().Record(brokertelemetry.Event{Operation: "unbounded-operation", Outcome: "secret-value"})
+	response := httptest.NewRecorder()
+	recorder.Handler().ServeHTTP(response, httptest.NewRequest(http.MethodGet, "/metrics", nil))
+	body := response.Body.String()
+	for _, expected := range []string{"tradeedge_broker_connectivity_reads_total", "tradeedge_broker_connectivity_read_duration_seconds", `operation="authentication"`, `outcome="success"`} {
+		if !strings.Contains(body, expected) {
+			t.Fatalf("missing %q", expected)
+		}
+	}
+	for _, forbidden := range []string{"provider=", "account_id=", "instrument_id=", "token=", "secret-value", "unbounded-operation"} {
+		if strings.Contains(body, forbidden) {
+			t.Fatalf("forbidden broker metric value %q", forbidden)
+		}
 	}
 }

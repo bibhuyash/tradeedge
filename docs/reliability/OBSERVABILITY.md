@@ -102,3 +102,12 @@ The GET-only API under `/api/v1/execution/` exposes bounded recent lifecycle,
 UNKNOWN, reconciliation, component-health, and audit status. Limits default to
 50 and cannot exceed 100. Telemetry and audit status are diagnostic only and
 cannot submit, cancel, reconcile, mutate OMS state, or establish trading truth.
+
+## Phase 5 Milestone 1 Metric Catalog
+
+Read-only broker connectivity exposes
+`tradeedge_broker_connectivity_{reads_total,read_duration_seconds,reads_in_flight}`.
+Labels are restricted to fixed operation and outcome vocabularies. Provider,
+account, instrument, symbol, token, request, path, error, credential, and
+free-text values are prohibited. Telemetry is diagnostic and cannot affect
+session or mapping truth.

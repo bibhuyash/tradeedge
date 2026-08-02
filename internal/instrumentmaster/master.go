@@ -15,6 +15,7 @@ import (
 var (
 	ErrInvalidMaster      = errors.New("invalid instrument master")
 	ErrInstrumentNotFound = errors.New("instrument mapping not found")
+	ErrAmbiguousMapping   = errors.New("ambiguous instrument mapping")
 )
 
 type Version string
@@ -53,6 +54,17 @@ func New(asOf time.Time, instruments []domain.Instrument, mappings []domain.Prov
 			mapping.Provider, mapping.Token, mapping.TradingSymbol, mapping.InstrumentID,
 			mapping.ValidFrom.UTC().Format(time.RFC3339Nano),
 			mapping.ValidUntil.UTC().Format(time.RFC3339Nano)))
+	}
+	for left := 0; left < len(mappings); left++ {
+		for right := left + 1; right < len(mappings); right++ {
+			if mappings[left].Provider != mappings[right].Provider ||
+				!intervalsOverlap(mappings[left].ValidFrom, mappings[left].ValidUntil, mappings[right].ValidFrom, mappings[right].ValidUntil) {
+				continue
+			}
+			if mappings[left].Token == mappings[right].Token || mappings[left].InstrumentID == mappings[right].InstrumentID {
+				return Master{}, ErrAmbiguousMapping
+			}
+		}
 	}
 	sort.Strings(keys)
 	digest := sha256.Sum256([]byte("v1|" + asOf.UTC().Format(time.RFC3339Nano) + "|" + strings.Join(keys, "|")))
@@ -98,7 +110,7 @@ func (m Master) Resolve(provider domain.Provider, token string, at time.Time) (d
 	for _, mapping := range m.mappings {
 		if mapping.Provider == provider && mapping.Token == token && mapping.ValidAt(at) {
 			if !found.IsZero() && found != mapping.InstrumentID {
-				return domain.InstrumentID{}, ErrInvalidMaster
+				return domain.InstrumentID{}, ErrAmbiguousMapping
 			}
 			found = mapping.InstrumentID
 		}
@@ -107,4 +119,27 @@ func (m Master) Resolve(provider domain.Provider, token string, at time.Time) (d
 		return domain.InstrumentID{}, ErrInstrumentNotFound
 	}
 	return found, nil
+}
+
+// ResolveInstrument maps authoritative canonical identity to provider metadata
+// valid at the requested instant. Provider identity never replaces InstrumentID.
+func (m Master) ResolveInstrument(provider domain.Provider, id domain.InstrumentID, at time.Time) (domain.ProviderInstrumentRef, error) {
+	var found domain.ProviderInstrumentRef
+	for _, mapping := range m.mappings {
+		if mapping.Provider != provider || mapping.InstrumentID != id || !mapping.ValidAt(at) {
+			continue
+		}
+		if found.Token != "" {
+			return domain.ProviderInstrumentRef{}, ErrAmbiguousMapping
+		}
+		found = mapping
+	}
+	if found.Token == "" {
+		return domain.ProviderInstrumentRef{}, ErrInstrumentNotFound
+	}
+	return found, nil
+}
+
+func intervalsOverlap(leftFrom, leftUntil, rightFrom, rightUntil time.Time) bool {
+	return leftFrom.Before(rightUntil) && rightFrom.Before(leftUntil)
 }
