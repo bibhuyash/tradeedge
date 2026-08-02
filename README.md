@@ -1,6 +1,6 @@
 # TradeEdge
 
-TradeEdge is a safety-first automated options-trading platform for the Indian market. The repository includes the Phase 0 runtime foundation, Phase 1 provider-neutral historical market data, Phase 1.1 operational hardening, the formally released Phase 2 strategy framework, and the Phase 3 Milestone 2 portfolio/risk decision runtime.
+TradeEdge is a safety-first automated options-trading platform for the Indian market. The repository includes the Phase 0 runtime foundation, Phase 1 provider-neutral historical market data, Phase 1.1 operational hardening, the formally released Phase 2 strategy framework, the released Phase 3 portfolio/risk subsystem, and Phase 4 Milestone 1 execution/OMS contracts.
 
 The application is **paper-only**. It contains no Zerodha network integration,
 live broker route, real credentials, production trading strategy, or
@@ -235,7 +235,15 @@ reports for 90 days. See
   reference adapter atomically commits decision artifacts, an optional capital
   reservation, and portfolio checkpoint/revision under optimistic revision
   control.
-- `internal/execution` owns the broker interface.
+- `internal/execution/model` owns Phase 4 M1 provider-neutral execution
+  authority, plan, leg, order, state-machine, report, fill, and stable identity
+  contracts.
+- `internal/execution/storage` owns optimistic revisions, checksummed
+  checkpoints, restoration, and atomic order/report/fill publication.
+- `internal/adapters/execution/memory` is the bounded concurrency-safe M1 OMS
+  reference store. It is not durable production storage.
+- The Phase 0 `internal/execution` broker interface remains uncomposed pending
+  its replacement by the Milestone 2 provider-neutral broker port.
 - `internal/adapters/broker/paper` is an in-memory, context-aware paper skeleton with duplicate prevention and no network access.
 - Configuration, HTTP, and logging are platform concerns and do not contain trading policy.
 
@@ -288,7 +296,7 @@ containment, replay divergence, resource growth beyond explicit tolerances, or
 artifact failure. See
 `docs/runbooks/PHASE_2_STRATEGY_RELEASE_GATE.md` for the evidence contract.
 
-## Phase 3 Milestone 2 status
+## Phase 3 status
 
 Milestone 1 defines deterministic portfolio snapshots, capital accounting,
 current/incremental/projected exposure, strategy allocation state,
@@ -311,3 +319,14 @@ operational API, Prometheus wiring, broker integration, credential, order, or
 live-trading capability exists. See `docs/plans/PHASE-3-PORTFOLIO-RISK.md`.
 
 See `docs/` for the product, architecture, trading, reliability, integration, and phase plans.
+
+## Phase 4 Milestone 1 status
+
+Milestone 1 defines deterministic execution intents bounded by unexpired Phase
+3 positive decisions, dependency-safe order plans, explicit order lifecycle,
+provider-neutral reports and fills, stable pre-broker identities, optimistic
+order revisions, checksummed restoration, and atomic OMS publication. The
+reference store is bounded and in-memory. No coordinator, paper-broker
+simulation, real adapter, reconciliation runner, telemetry/API, position/P&L,
+credential, network call, or live execution path was added. See
+`docs/plans/PHASE-4-EXECUTION-OMS.md`.

@@ -27,6 +27,10 @@ The monolith isolates domain modules, owns orchestration, applies timeouts and c
 - Domain packages do not depend on broker SDKs or HTTP handlers.
 - Strategies cannot reach a broker.
 - The execution module owns the broker port.
+- Phase 4 execution contracts derive authority only from positive Phase 3
+  decisions and keep TradeEdge order identity independent of broker identity.
+- The OMS atomically publishes each order transition with its report and
+  optional fill under optimistic revision control.
 - PostgreSQL is authoritative for internal durable state; broker state is authoritative for actual external orders and positions.
 
 ## Failure Modes

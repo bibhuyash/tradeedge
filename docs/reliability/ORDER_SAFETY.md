@@ -7,8 +7,9 @@ Order execution is an explicit state machine with idempotency, ambiguity handlin
 ```mermaid
 stateDiagram-v2
     [*] --> CREATED
-    CREATED --> RISK_APPROVED
-    RISK_APPROVED --> SUBMISSION_PENDING
+    CREATED --> PLANNED
+    CREATED --> EXPIRED
+    PLANNED --> SUBMISSION_PENDING
     SUBMISSION_PENDING --> SUBMITTED
     SUBMISSION_PENDING --> UNKNOWN: timeout or lost response
     SUBMITTED --> ACKNOWLEDGED
@@ -18,10 +19,12 @@ stateDiagram-v2
     ACKNOWLEDGED --> CANCEL_PENDING
     PARTIALLY_FILLED --> CANCEL_PENDING
     CANCEL_PENDING --> CANCELLED
-    CREATED --> REJECTED
-    RISK_APPROVED --> REJECTED
+    SUBMISSION_PENDING --> REJECTED
+    PLANNED --> FAILED
     UNKNOWN --> SUBMITTED: reconciled
     UNKNOWN --> REJECTED: authoritative absence and safe resolution
+    CANCELLED --> PARTIALLY_FILLED: causally valid late fill
+    CANCELLED --> FILLED: causally valid late fill
 ```
 
 ## Assumptions
@@ -30,7 +33,10 @@ Broker submission may succeed even when the response times out. Linked legs are 
 
 ## Responsibilities
 
-Execution assigns stable client request IDs, persists intent before submission, validates state transitions, and requests reconciliation for ambiguity.
+Phase 3 authority is represented by an immutable execution intent rather than
+an order state. Execution assigns stable client-order IDs, persists intent and
+plan before submission, validates state transitions, and requests future
+reconciliation for ambiguity.
 
 ## Invariants
 
@@ -38,6 +44,8 @@ Execution assigns stable client request IDs, persists intent before submission, 
 - Unknown state blocks retry and new exposure until resolved.
 - Duplicate prevention survives caller retries.
 - Cancellation is a request until broker-confirmed.
+- A confirmed cancellation may still be corrected by a causally valid late
+  fill without deleting the cancellation evidence.
 
 ## Failure Modes
 
