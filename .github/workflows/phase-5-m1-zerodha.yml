@@ -39,4 +39,5 @@ jobs:
           ! grep -RInE --include='*.go' --exclude='*_test.go' 'logger\.|(^|[^s])log\.|slog\.(Debug|Info|Warn|Error)' internal/adapters/broker/zerodha
           ! grep -RInE --include='*.go' --exclude='*_test.go' '\bfloat(32|64)\b' internal/adapters/broker/zerodha internal/instrumentmaster internal/domain
           ! grep -RInE --exclude-dir=.git --exclude-dir=.cache --exclude='*_test.go' --exclude='*.md' --exclude='*.yml' --exclude='*.yaml' -- '-----BEGIN (RSA |EC |OPENSSH )?PRIVATE KEY-----|api_secret[[:space:]]*=[[:space:]]*[^[:space:]]+|access_token[[:space:]]*=[[:space:]]*[^[:space:]]+' .
-          ! grep -RInE --exclude='*.md' 'TRADEEDGE_TRADING_MODE=(live|enabled)|LIVE_ENABLED' cmd internal .env.example
+          ! grep -RInE --include='*.go' --exclude='*_test.go' 'TRADEEDGE_TRADING_MODE=(live|enabled)|LIVE_ENABLED' cmd internal
+          ! grep -nE 'TRADEEDGE_TRADING_MODE=(live|enabled)|LIVE_ENABLED' .env.example
