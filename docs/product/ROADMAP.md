@@ -33,6 +33,9 @@ Each phase has objective entry and exit criteria. Passing a technical milestone 
 - Phase 5 may design a Zerodha adapter behind the broker port and exercise it
   only through controlled paper integration, reliability validation, and
   failure drills; live orders remain separately approval-gated.
+- Phase 5 closes with OFFLINE/PAPER/SHADOW observation and release evidence;
+  LIVE_DISABLED remains blocked. Phase 6 begins authoritative positions, fills,
+  P&L, and broker reconciliation without inheriting live-order authorization.
 
 ## Invariants
 

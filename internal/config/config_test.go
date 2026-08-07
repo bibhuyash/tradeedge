@@ -20,6 +20,9 @@ func TestLoadWithLookupDefaults(t *testing.T) {
 	if cfg.RiskMaxConcurrency != 4 || cfg.RiskTimeout != 100*time.Millisecond {
 		t.Fatalf("unexpected risk defaults: %#v", cfg)
 	}
+	if cfg.ZerodhaMode != ZerodhaModeOffline {
+		t.Fatalf("zerodha mode = %q", cfg.ZerodhaMode)
+	}
 }
 
 func TestLoadWithLookupOverrides(t *testing.T) {
@@ -35,6 +38,8 @@ func TestLoadWithLookupOverrides(t *testing.T) {
 		"TRADEEDGE_STRATEGY_TIMEOUT":         "75ms",
 		"TRADEEDGE_RISK_MAX_CONCURRENCY":     "6",
 		"TRADEEDGE_RISK_TIMEOUT":             "80ms",
+		"TRADEEDGE_ZERODHA_MODE":             "shadow",
+		"TRADEEDGE_ZERODHA_READ_ONLY":        "true",
 	}))
 	if err != nil {
 		t.Fatalf("LoadWithLookup() error = %v", err)
@@ -49,6 +54,9 @@ func TestLoadWithLookupOverrides(t *testing.T) {
 	}
 	if cfg.RiskMaxConcurrency != 6 || cfg.RiskTimeout != 80*time.Millisecond {
 		t.Fatalf("unexpected risk overrides: %#v", cfg)
+	}
+	if cfg.ZerodhaMode != ZerodhaModeShadow {
+		t.Fatalf("zerodha mode = %q", cfg.ZerodhaMode)
 	}
 }
 
@@ -68,6 +76,9 @@ func TestLoadWithLookupRejectsInvalidValues(t *testing.T) {
 		"large risk concurrency": {"TRADEEDGE_RISK_MAX_CONCURRENCY": "65"},
 		"bad risk timeout":       {"TRADEEDGE_RISK_TIMEOUT": "never"},
 		"large risk timeout":     {"TRADEEDGE_RISK_TIMEOUT": "61s"},
+		"invalid zerodha mode":   {"TRADEEDGE_ZERODHA_MODE": "LIVE_ENABLED"},
+		"invalid read only":      {"TRADEEDGE_ZERODHA_READ_ONLY": "sometimes"},
+		"shadow without opt in":  {"TRADEEDGE_ZERODHA_MODE": "SHADOW"},
 	}
 	for name, values := range tests {
 		t.Run(name, func(t *testing.T) {
@@ -77,6 +88,21 @@ func TestLoadWithLookupRejectsInvalidValues(t *testing.T) {
 			}
 			if name == "live mode" && !strings.Contains(err.Error(), "live trading is unavailable") {
 				t.Fatalf("error %q does not explain live-mode rejection", err)
+			}
+		})
+	}
+}
+
+func TestLoadWithLookupAcceptsEveryNonMutatingZerodhaMode(t *testing.T) {
+	for _, mode := range []string{ZerodhaModeOffline, ZerodhaModePaper, ZerodhaModeShadow, ZerodhaModeLiveDisabled} {
+		t.Run(mode, func(t *testing.T) {
+			values := map[string]string{"TRADEEDGE_ZERODHA_MODE": strings.ToLower(mode)}
+			if mode == ZerodhaModePaper || mode == ZerodhaModeShadow {
+				values["TRADEEDGE_ZERODHA_READ_ONLY"] = "true"
+			}
+			cfg, err := LoadWithLookup(mapLookup(values))
+			if err != nil || cfg.ZerodhaMode != mode {
+				t.Fatalf("LoadWithLookup() = %#v, %v", cfg, err)
 			}
 		})
 	}

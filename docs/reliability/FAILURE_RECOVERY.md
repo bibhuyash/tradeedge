@@ -90,6 +90,12 @@ empty failure-reason list agree.
 - Restart recovery cannot submit an `UNKNOWN` order until broker evidence
   resolves its identity and terms.
 
+Phase 5 PAPER/SHADOW treats WebSocket disconnect as missing observation, not
+order rejection. New work and quote-derived fills stop until session, mapping,
+stream, and reconciliation health recover. Exact duplicate quote/update events
+remain idempotent. Versioned paper and adapter checkpoints restore correlation;
+invalid versions or incomplete evidence remain blocked.
+
 ## Failure Modes
 
 Database loss, stale broker responses, split ownership, clock skew, repeated

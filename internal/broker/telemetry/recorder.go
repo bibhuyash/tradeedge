@@ -21,6 +21,12 @@ const (
 	OperationOrderUpdate    Operation = "order_update"
 	OperationSnapshot       Operation = "snapshot"
 	OperationLookup         Operation = "lookup"
+	OperationStream         Operation = "stream"
+	OperationReconnect      Operation = "reconnect"
+	OperationShadow         Operation = "shadow"
+	OperationPaper          Operation = "paper"
+	OperationCheckpoint     Operation = "checkpoint"
+	OperationIntegration    Operation = "integration"
 )
 
 const (
@@ -72,6 +78,7 @@ func Valid(event Event) bool {
 	switch event.Operation {
 	case OperationAuthentication, OperationProfile, OperationInstruments, OperationMapping, OperationReadiness, OperationShutdown,
 		OperationSubmission, OperationCancellation, OperationOrderUpdate, OperationSnapshot, OperationLookup:
+	case OperationStream, OperationReconnect, OperationShadow, OperationPaper, OperationCheckpoint, OperationIntegration:
 	default:
 		return false
 	}

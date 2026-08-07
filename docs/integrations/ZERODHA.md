@@ -56,3 +56,19 @@ deployment decisions.
 - Provider-specific limitations are contained within the adapter.
 - No normal runtime path can reach Zerodha submission or cancellation.
 - Phase 4 owns all OMS state/report/fill publication without bypasses.
+
+## Phase 5 Runtime Modes
+
+`OFFLINE` is the deny-by-default zero value. `PAPER` consumes canonical Zerodha
+observations but uses simulated execution. `SHADOW` additionally records the
+exact would-be request fingerprint before simulated execution.
+`LIVE_DISABLED` is blocked and non-mutating. No mode composes the M2 mutation
+transport into normal runtime startup.
+PAPER and SHADOW additionally require the explicit
+`TRADEEDGE_ZERODHA_READ_ONLY=true` opt-in; omission fails configuration before
+any provider component is created.
+
+One adapter-owned stream supervisor handles quote subscriptions and text order
+updates with bounded reconnects. Disconnect, overflow, session expiry, stale
+mapping, UNKNOWN orders, or reconciliation disagreement blocks readiness and
+never becomes rejection evidence.

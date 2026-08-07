@@ -31,12 +31,13 @@ type MarketReadinessSource interface {
 }
 
 type Options struct {
-	MarketReadiness     MarketReadinessSource
-	Operations          http.Handler
-	StrategyOperations  http.Handler
-	RiskOperations      http.Handler
-	ExecutionOperations http.Handler
-	Metrics             http.Handler
+	MarketReadiness       MarketReadinessSource
+	Operations            http.Handler
+	StrategyOperations    http.Handler
+	RiskOperations        http.Handler
+	ExecutionOperations   http.Handler
+	IntegrationOperations http.Handler
+	Metrics               http.Handler
 }
 
 func New(address string, logger *slog.Logger, readiness *Readiness) (*Server, error) {
@@ -111,6 +112,9 @@ func NewHandlerWithOptions(process *Readiness, options Options) http.Handler {
 	}
 	if options.ExecutionOperations != nil {
 		mux.Handle("/api/v1/execution/", options.ExecutionOperations)
+	}
+	if options.IntegrationOperations != nil {
+		mux.Handle("/api/v1/integrations/zerodha/", options.IntegrationOperations)
 	}
 	return mux
 }
