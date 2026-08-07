@@ -96,6 +96,15 @@ stream, and reconciliation health recover. Exact duplicate quote/update events
 remain idempotent. Versioned paper and adapter checkpoints restore correlation;
 invalid versions or incomplete evidence remain blocked.
 
+Phase 6 Milestone 1 restores only a complete verified position publication
+chain. Each checkpoint binds its immutable snapshot, parent checkpoint,
+causative fill application, and fill identity. Restoration re-applies every
+fill and compares canonical application and snapshot bytes before exposing
+state. A late canonical predecessor invalidates later checkpoints for
+continuation and requires replay from an earlier verified checkpoint or
+genesis. The bounded in-memory adapter is reference storage, not durable
+restart authority.
+
 ## Failure Modes
 
 Database loss, stale broker responses, split ownership, clock skew, repeated

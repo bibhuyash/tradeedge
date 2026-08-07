@@ -71,6 +71,22 @@ Synchronous control flow is simpler initially but may add latency. Messaging is 
 - Every ambiguous outcome routes to reconciliation.
 - There is no direct strategy-to-broker path.
 
+## Phase 6 Milestone 1 Accounting Boundary
+
+```mermaid
+flowchart LR
+    F["Immutable execution fill"] --> R["Resolved accounting fill"]
+    R --> O["Canonical ordering and deduplication"]
+    O --> E["Weighted-average accounting engine"]
+    E --> A["Atomic application + position + checkpoint"]
+    B["Broker-observed position"] -. "evidence only" .-> C["Future reconciliation comparison"]
+```
+
+Occurrence time, normalized receipt time, and fill identity define the total
+order. Reports without fills and broker position snapshots cannot change M1
+accounting. A canonical predecessor discovered after committed state fails
+closed pending verified replay.
+
 ## Phase 1.1 Operational Flow
 
 ```mermaid

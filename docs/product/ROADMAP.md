@@ -11,7 +11,8 @@ flowchart LR
     P2 --> P3["Phase 3: Portfolio & Risk"]
     P3 --> P4["Phase 4: Execution & OMS"]
     P4 --> P5["Phase 5: Broker Adapter & Reliability Validation"]
-    P5 --> G{"Explicit live approval?"}
+    P5 --> P6["Phase 6: Positions, P&L, and Reconciliation"]
+    P6 --> G{"Explicit live approval?"}
     G -->|No| PT["Continue paper trading"]
     G -->|Yes| LP["Separately scoped live pilot"]
 ```
@@ -36,6 +37,9 @@ Each phase has objective entry and exit criteria. Passing a technical milestone 
 - Phase 5 closes with OFFLINE/PAPER/SHADOW observation and release evidence;
   LIVE_DISABLED remains blocked. Phase 6 begins authoritative positions, fills,
   P&L, and broker reconciliation without inheriting live-order authorization.
+- Phase 6 Milestone 1 establishes immutable-fill-driven weighted-average
+  positions and gross realized P&L. Fill ingestion and broker-position
+  reconciliation remain Milestone 2.
 
 ## Invariants
 
