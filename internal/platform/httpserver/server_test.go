@@ -99,6 +99,16 @@ func TestExecutionOperationsAreMountedUnderExecutionPrefix(t *testing.T) {
 	}
 }
 
+func TestZerodhaIntegrationOperationsAreMountedUnderReadOnlyPrefix(t *testing.T) {
+	operations := http.HandlerFunc(func(writer http.ResponseWriter, request *http.Request) { writer.WriteHeader(http.StatusNoContent) })
+	handler := NewHandlerWithOptions(&Readiness{}, Options{IntegrationOperations: operations})
+	response := httptest.NewRecorder()
+	handler.ServeHTTP(response, httptest.NewRequest(http.MethodGet, "/api/v1/integrations/zerodha/health", nil))
+	if response.Code != http.StatusNoContent {
+		t.Fatalf("status = %d", response.Code)
+	}
+}
+
 func assertStatus(t *testing.T, handler http.Handler, method, path string, wantCode int, wantStatus string) {
 	t.Helper()
 	response := httptest.NewRecorder()

@@ -276,14 +276,18 @@ func (adapter *ExecutionAdapter) Snapshot(ctx context.Context, limit int) (resul
 }
 
 func (adapter *ExecutionAdapter) translateSubmission(value executionbroker.Submission) (OrderRequest, string, error) {
+	return translateSubmission(adapter.mapper, value)
+}
+
+func translateSubmission(mapper *Mapper, value executionbroker.Submission) (OrderRequest, string, error) {
 	if value.AttemptID.IsZero() || value.OrderID.IsZero() || value.ClientOrderID.IsZero() || value.InstrumentID.IsZero() || !value.Quantity.IsValid() || value.LimitPrice.IsZeroValue() || value.SubmittedAt.IsZero() {
 		return OrderRequest{}, "", executionbroker.ErrInvalidRequest
 	}
-	resolved, err := adapter.mapper.ResolveCanonical(value.InstrumentID, value.SubmittedAt)
+	resolved, err := mapper.ResolveCanonical(value.InstrumentID, value.SubmittedAt)
 	if err != nil {
 		return OrderRequest{}, "", executionbroker.ErrInvalidRequest
 	}
-	instrument, found := adapter.mapper.master.Instrument(value.InstrumentID)
+	instrument, found := mapper.master.Instrument(value.InstrumentID)
 	if !found || (instrument.Type() != domain.InstrumentOption && instrument.Type() != domain.InstrumentFuture) || value.Quantity.Int64()%instrument.LotSize().Int64() != 0 || value.LimitPrice.Currency() != instrument.Currency() || value.LimitPrice.MinorUnits() <= 0 || value.LimitPrice.MinorUnits()%instrument.TickSize().MinorUnits() != 0 {
 		return OrderRequest{}, "", executionbroker.ErrInvalidRequest
 	}

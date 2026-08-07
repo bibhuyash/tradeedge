@@ -176,6 +176,9 @@ func TestExecutionMetricCatalogHasFiniteSeriesBound(t *testing.T) {
 func TestBrokerConnectivityMetricsHaveOnlyBoundedLabels(t *testing.T) {
 	recorder := New()
 	recorder.Broker().Record(brokertelemetry.Event{Operation: brokertelemetry.OperationAuthentication, Outcome: brokertelemetry.OutcomeSuccess, Duration: time.Millisecond, InFlight: 1})
+	for _, operation := range []brokertelemetry.Operation{brokertelemetry.OperationStream, brokertelemetry.OperationReconnect, brokertelemetry.OperationShadow, brokertelemetry.OperationPaper, brokertelemetry.OperationCheckpoint, brokertelemetry.OperationIntegration} {
+		recorder.Broker().Record(brokertelemetry.Event{Operation: operation, Outcome: brokertelemetry.OutcomeSuccess})
+	}
 	recorder.Broker().Record(brokertelemetry.Event{Operation: "unbounded-operation", Outcome: "secret-value"})
 	response := httptest.NewRecorder()
 	recorder.Handler().ServeHTTP(response, httptest.NewRequest(http.MethodGet, "/metrics", nil))
@@ -188,6 +191,15 @@ func TestBrokerConnectivityMetricsHaveOnlyBoundedLabels(t *testing.T) {
 	for _, forbidden := range []string{"provider=", "account_id=", "instrument_id=", "token=", "secret-value", "unbounded-operation"} {
 		if strings.Contains(body, forbidden) {
 			t.Fatalf("forbidden broker metric value %q", forbidden)
+		}
+	}
+	families, err := recorder.Registry().Gather()
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, family := range families {
+		if family.GetName() == "tradeedge_broker_connectivity_reads_total" && len(family.Metric) > 32 {
+			t.Fatalf("broker metric series = %d", len(family.Metric))
 		}
 	}
 }

@@ -111,3 +111,15 @@ Labels are restricted to fixed operation and outcome vocabularies. Provider,
 account, instrument, symbol, token, request, path, error, credential, and
 free-text values are prohibited. Telemetry is diagnostic and cannot affect
 session or mapping truth.
+
+## Phase 5 Milestone 3
+
+Broker telemetry adds only fixed operations for stream, reconnect, shadow,
+paper, checkpoint, and integration outcomes. Existing broker connectivity
+metrics retain bounded operation/outcome labels; mode, IDs, instruments,
+symbols, tokens, accounts, paths, errors, and credentials are not labels.
+
+GET-only integration diagnostics expose aggregate health plus bounded recent
+errors and shadow decisions under `/api/v1/integrations/zerodha/`. Limits
+default to 50 and cannot exceed 100. APIs cannot mutate configuration, session,
+subscriptions, reconciliation, OMS, or broker state.

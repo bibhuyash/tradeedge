@@ -51,11 +51,27 @@ any Phase 5 milestone does not authorize unrestricted live trading.
 - [x] Phase 4 coordinator, OMS atomic publication, UNKNOWN recovery, and
   reconciliation semantics remain unchanged.
 
-## Deferred to Milestone 3
+## Milestone 3: Non-Mutating Runtime and Release
 
-Paper/shadow runtime composition, a production Zerodha transport, durable
-checkpoint persistence, operational login/runbooks, release evidence, and
-controlled rollout remain intentionally absent.
+- [x] Explicit OFFLINE, PAPER, SHADOW, and blocked LIVE_DISABLED modes.
+- [x] PAPER/SHADOW require a second explicit read-only opt-in; omission fails
+  closed before provider construction.
+- [x] PAPER fills derive deterministically from canonical executable quote
+  depth without any real broker mutation.
+- [x] SHADOW captures exact translated request fingerprints and delegates only
+  to the paper broker.
+- [x] Adapter-owned bounded stream supervision, reconnect, resubscription,
+  session-expiry, and shutdown contracts.
+- [x] Aggregate session, mapping, stream, reconciliation, UNKNOWN, and adapter
+  health with bounded GET-only diagnostics.
+- [x] Versioned observed-paper and execution correlation checkpoints with
+  deterministic restoration tests.
+- [x] Bounded telemetry vocabulary with no identity or credential labels.
+- [x] Ubuntu race/stress workflow, capability scans, machine-readable evidence,
+  checksum, enforcement, ADR, and release runbook.
+
+Phase 5 closure remains non-mutating. Positions/P&L, database migration,
+multi-broker routing, and all live capability are outside Phase 5.
 
 ## Operational Safety
 

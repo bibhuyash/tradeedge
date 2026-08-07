@@ -13,6 +13,7 @@ import (
 	prometheusmetrics "github.com/bibhuyash/tradeedge/internal/adapters/metrics/prometheus"
 	strategymemory "github.com/bibhuyash/tradeedge/internal/adapters/strategy/memory"
 	"github.com/bibhuyash/tradeedge/internal/config"
+	zerodhaintegration "github.com/bibhuyash/tradeedge/internal/integration/zerodha"
 	"github.com/bibhuyash/tradeedge/internal/marketdata/opshttp"
 	"github.com/bibhuyash/tradeedge/internal/marketdata/readiness"
 	"github.com/bibhuyash/tradeedge/internal/platform/httpserver"
@@ -25,12 +26,14 @@ func Run(ctx context.Context, cfg config.Config, logger *slog.Logger) error {
 }
 
 type Options struct {
-	MarketReadiness     httpserver.MarketReadinessSource
-	Metrics             *prometheusmetrics.Recorder
-	Quality             opshttp.QualitySource
-	StrategyOperations  http.Handler
-	ExecutionOperations http.Handler
-	StrategyRunner      interface{ Shutdown(context.Context) error }
+	MarketReadiness       httpserver.MarketReadinessSource
+	Metrics               *prometheusmetrics.Recorder
+	Quality               opshttp.QualitySource
+	StrategyOperations    http.Handler
+	ExecutionOperations   http.Handler
+	IntegrationOperations http.Handler
+	IntegrationRuntime    interface{ Shutdown(context.Context) error }
+	StrategyRunner        interface{ Shutdown(context.Context) error }
 }
 
 func RunWithMarketReadiness(
@@ -55,6 +58,20 @@ func RunWithOptions(
 	metrics := options.Metrics
 	if metrics == nil {
 		metrics = prometheusmetrics.New()
+	}
+	integrationOperations := options.IntegrationOperations
+	integrationRuntime := options.IntegrationRuntime
+	if integrationOperations == nil && integrationRuntime == nil {
+		mode := cfg.ZerodhaMode
+		if mode == "" {
+			mode = config.ZerodhaModeOffline
+		}
+		runtime, runtimeErr := zerodhaintegration.New(zerodhaintegration.Mode(mode), zerodhaintegration.Dependencies{})
+		if runtimeErr != nil {
+			return fmt.Errorf("compose zerodha integration: %w", runtimeErr)
+		}
+		integrationRuntime = runtime
+		integrationOperations = zerodhaintegration.NewHandler(runtime, 2*cfg.ShutdownTimeout/10)
 	}
 	strategyOperations := options.StrategyOperations
 	strategyRuntime := options.StrategyRunner
@@ -98,11 +115,12 @@ func RunWithOptions(
 		}
 	}
 	server, err := httpserver.NewWithOptions(cfg.HTTPAddress, logger, readiness, httpserver.Options{
-		MarketReadiness:     options.MarketReadiness,
-		Metrics:             metrics.Handler(),
-		Operations:          opshttp.New(operations),
-		StrategyOperations:  strategyOperations,
-		ExecutionOperations: options.ExecutionOperations,
+		MarketReadiness:       options.MarketReadiness,
+		Metrics:               metrics.Handler(),
+		Operations:            opshttp.New(operations),
+		StrategyOperations:    strategyOperations,
+		ExecutionOperations:   options.ExecutionOperations,
+		IntegrationOperations: integrationOperations,
 	})
 	if err != nil {
 		return fmt.Errorf("create HTTP server: %w", err)
@@ -137,6 +155,11 @@ func RunWithOptions(
 	if strategyRuntime != nil {
 		if err := strategyRuntime.Shutdown(shutdownCtx); err != nil {
 			shutdownErrors = append(shutdownErrors, fmt.Errorf("shutdown strategy runner: %w", err))
+		}
+	}
+	if integrationRuntime != nil {
+		if err := integrationRuntime.Shutdown(shutdownCtx); err != nil {
+			shutdownErrors = append(shutdownErrors, fmt.Errorf("shutdown zerodha integration: %w", err))
 		}
 	}
 	if err := server.Shutdown(shutdownCtx); err != nil {

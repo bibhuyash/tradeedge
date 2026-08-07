@@ -1,0 +1,121 @@
+name: Phase 5 M3 Zerodha Release
+
+on:
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: phase-5-m3-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  phase-5-release-evidence:
+    runs-on: ubuntu-latest
+    timeout-minutes: 35
+    steps:
+      - uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10 # v6
+      - uses: actions/setup-go@924ae3a1cded613372ab5595356fb5720e22ba16 # v6
+        with:
+          go-version-file: go.mod
+          cache: false
+      - name: Environment
+        id: environment
+        continue-on-error: true
+        run: mkdir -p artifacts/logs && { go version; gcc --version; uname -a; } 2>&1 | tee artifacts/logs/environment.log
+      - name: Format, test, vet, lint, and build
+        id: ordinary
+        continue-on-error: true
+        run: |
+          set -o pipefail
+          { test -z "$(gofmt -l .)"; go test ./... -timeout=10m; go vet ./...; make lint; go build ./...; } 2>&1 | tee artifacts/logs/ordinary.log
+      - name: Full Ubuntu race suite
+        id: race
+        continue-on-error: true
+        run: go test -race ./... -count=1 -timeout=15m 2>&1 | tee artifacts/logs/full-race.log
+      - name: Non-mutating boundaries and bounded operations
+        id: boundaries
+        continue-on-error: true
+        shell: bash
+        run: |
+          set -o pipefail
+          {
+            go test ./internal/integration/zerodha/... ./internal/adapters/broker/zerodha ./internal/adapters/broker/paper ./internal/execution/... -count=1
+            go test ./internal/integration/zerodha -run '^TestOperationalAPIIsGETOnlyBoundedAndRedacted$' -count=1
+            ! grep -RInE --include='*.go' --exclude='*_test.go' 'PermitMutationGate|NewExecutionAdapter|\.Place\(|\.Cancel\(' cmd/tradeedge internal/app internal/integration
+            ! grep -RInE --include='*.go' --exclude='*_test.go' 'LIVE_ENABLED|TRADEEDGE_TRADING_MODE=(live|enabled)' cmd internal .env.example
+            ! grep -RInE --include='*.go' --exclude='*_test.go' 'internal/adapters/broker/zerodha|github.com/zerodha' internal/domain internal/execution internal/risk internal/strategy internal/portfolio
+            ! grep -RInE --include='*.go' --exclude='*_test.go' 'logger\.|(^|[^s])log\.|slog\.(Debug|Info|Warn|Error)' internal/adapters/broker/zerodha internal/integration/zerodha
+            ! grep -RInE --include='*.go' --exclude='*_test.go' '\bfloat(32|64)\b' internal/adapters/broker/zerodha internal/adapters/broker/paper internal/integration/zerodha internal/domain
+            ! grep -RInE --exclude-dir=.git --exclude-dir=.cache --exclude='*_test.go' --exclude='*.md' --exclude='*.yml' --exclude='*.yaml' -- '-----BEGIN (RSA |EC |OPENSSH )?PRIVATE KEY-----|api_secret[[:space:]]*=[[:space:]]*[^[:space:]]+|access_token[[:space:]]*=[[:space:]]*[^[:space:]]+' .
+            git diff --check
+          } 2>&1 | tee artifacts/logs/boundaries.log
+      - name: Ten focused race and recovery repetitions
+        id: repeated
+        continue-on-error: true
+        run: |
+          set -uo pipefail
+          passed=0
+          for repetition in $(seq 1 10); do
+            if go test -race ./internal/integration/zerodha/... ./internal/adapters/broker/zerodha ./internal/adapters/broker/paper ./internal/execution/coordinator ./internal/execution/reconciliation ./internal/adapters/execution/memory -count=1 -timeout=4m 2>&1 | tee "artifacts/logs/repetition-${repetition}.log"; then passed=$((passed + 1)); fi
+          done
+          echo "passed=${passed}" >> "${GITHUB_OUTPUT}"
+          test "${passed}" -eq 10
+      - name: Deterministic Phase 5 closure harness
+        id: harness
+        continue-on-error: true
+        run: go run ./cmd/tradeedge-phase5-gate > artifacts/harness.json 2> artifacts/logs/harness.stderr.log
+      - name: Build and validate release evidence
+        id: summary
+        if: always()
+        continue-on-error: true
+        env:
+          ENVIRONMENT: ${{ steps.environment.outcome }}
+          ORDINARY: ${{ steps.ordinary.outcome }}
+          RACE: ${{ steps.race.outcome }}
+          BOUNDARIES: ${{ steps.boundaries.outcome }}
+          REPEATED: ${{ steps.repeated.outcome }}
+          REPEATED_PASSED: ${{ steps.repeated.outputs.passed }}
+          HARNESS: ${{ steps.harness.outcome }}
+          COMMIT_SHA: ${{ github.event.pull_request.head.sha || github.sha }}
+          RUN_ID: ${{ github.run_id }}
+          RUN_ATTEMPT: ${{ github.run_attempt }}
+        run: |
+          python3 - <<'PY'
+          import hashlib, json, os
+          from pathlib import Path
+          failures=[]
+          try: harness=json.loads(Path("artifacts/harness.json").read_text())
+          except Exception as exc: harness={}; failures.append(f"invalid harness JSON: {exc}")
+          outcomes={k.lower():os.environ[k] for k in ["ENVIRONMENT","ORDINARY","RACE","BOUNDARIES","REPEATED","HARNESS"]}
+          failures += [f"{k} outcome was {v}" for k,v in outcomes.items() if v != "success"]
+          required=["offline_fail_closed","live_disabled_fail_closed","paper_mutation_absent","shadow_mutation_absent","unknown_containment_passed","reconnect_bounded","checkpoint_continuation_passed","telemetry_vocabulary_bounded","operational_api_read_only_bounded","forbidden_mutation_capabilities_absent"]
+          for key in required:
+              if harness.get(key) is not True: failures.append(f"{key} did not pass")
+          if int(os.environ.get("REPEATED_PASSED") or 0) != 10: failures.append("focused race repetitions did not pass 10/10")
+          if harness.get("failure_reasons"): failures.extend(harness["failure_reasons"])
+          summary={**harness,"commit_sha":os.environ["COMMIT_SHA"],"workflow_run_id":os.environ["RUN_ID"],"run_attempt":int(os.environ["RUN_ATTEMPT"]),"check_outcomes":outcomes,"focused_race_repetitions_passed":int(os.environ.get("REPEATED_PASSED") or 0),"failure_reasons":failures,"final_enforcement_result":"passed" if not failures else "failed"}
+          raw=(json.dumps(summary,indent=2,sort_keys=True)+"\n").encode(); path=Path("artifacts/phase-5-milestone-3-release.json"); path.write_bytes(raw); Path(str(path)+".sha256").write_text(f"{hashlib.sha256(raw).hexdigest()}  {path.name}\n")
+          if failures: raise SystemExit("; ".join(failures))
+          PY
+      - name: Upload authoritative evidence
+        id: upload
+        if: always()
+        continue-on-error: true
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7
+        with:
+          name: tradeedge-phase-5-m3-${{ github.run_id }}-${{ github.run_attempt }}
+          path: |
+            artifacts/logs/
+            artifacts/harness.json
+            artifacts/phase-5-milestone-3-release.json*
+          if-no-files-found: error
+          retention-days: 90
+      - name: Enforce Phase 5 closure
+        if: always()
+        env:
+          SUMMARY: ${{ steps.summary.outcome }}
+          UPLOAD: ${{ steps.upload.outcome }}
+        run: test "${SUMMARY}" = success -a "${UPLOAD}" = success

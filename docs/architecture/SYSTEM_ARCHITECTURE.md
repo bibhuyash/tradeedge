@@ -4,6 +4,12 @@
 
 TradeEdge begins as a Go modular monolith deployed as a Linux container with a static outbound public IP. PostgreSQL is the future durable store; Redis and messaging are excluded until demonstrated needs justify them.
 
+Phase 5 composes Zerodha observations through an adapter-local stream and
+mapping boundary. PAPER/SHADOW execution continues through the provider-neutral
+Phase 4 coordinator and atomic OMS publication, backed only by a deterministic
+paper broker. SHADOW translation is observational and cannot reach a mutation
+transport.
+
 ```mermaid
 flowchart TB
     Z["Zerodha APIs"] --> A["Provider adapters"]

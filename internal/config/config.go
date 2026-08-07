@@ -11,7 +11,11 @@ import (
 )
 
 const (
-	ModePaper = "paper"
+	ModePaper               = "paper"
+	ZerodhaModeOffline      = "OFFLINE"
+	ZerodhaModePaper        = "PAPER"
+	ZerodhaModeShadow       = "SHADOW"
+	ZerodhaModeLiveDisabled = "LIVE_DISABLED"
 )
 
 type Config struct {
@@ -26,6 +30,8 @@ type Config struct {
 	StrategyTimeout        time.Duration
 	RiskMaxConcurrency     int
 	RiskTimeout            time.Duration
+	ZerodhaMode            string
+	ZerodhaReadOnly        bool
 }
 
 type LookupEnv func(string) (string, bool)
@@ -47,6 +53,7 @@ func LoadWithLookup(lookup LookupEnv) (Config, error) {
 		StrategyTimeout:        100 * time.Millisecond,
 		RiskMaxConcurrency:     4,
 		RiskTimeout:            100 * time.Millisecond,
+		ZerodhaMode:            strings.ToUpper(envOrDefault(lookup, "TRADEEDGE_ZERODHA_MODE", ZerodhaModeOffline)),
 	}
 
 	if raw, ok := lookup("TRADEEDGE_SHUTDOWN_TIMEOUT"); ok {
@@ -84,6 +91,13 @@ func LoadWithLookup(lookup LookupEnv) (Config, error) {
 		}
 		cfg.RiskTimeout = value
 	}
+	if raw, ok := lookup("TRADEEDGE_ZERODHA_READ_ONLY"); ok {
+		value, err := strconv.ParseBool(strings.TrimSpace(raw))
+		if err != nil {
+			return Config{}, fmt.Errorf("parse TRADEEDGE_ZERODHA_READ_ONLY: %w", err)
+		}
+		cfg.ZerodhaReadOnly = value
+	}
 
 	if err := cfg.Validate(); err != nil {
 		return Config{}, err
@@ -120,6 +134,14 @@ func (c Config) Validate() error {
 	}
 	if c.RiskTimeout <= 0 || c.RiskTimeout > time.Minute {
 		return errors.New("TRADEEDGE_RISK_TIMEOUT must be positive and at most one minute")
+	}
+	switch c.ZerodhaMode {
+	case "", ZerodhaModeOffline, ZerodhaModePaper, ZerodhaModeShadow, ZerodhaModeLiveDisabled:
+	default:
+		return fmt.Errorf("invalid TRADEEDGE_ZERODHA_MODE %q; live trading is unavailable", c.ZerodhaMode)
+	}
+	if (c.ZerodhaMode == ZerodhaModePaper || c.ZerodhaMode == ZerodhaModeShadow) && !c.ZerodhaReadOnly {
+		return errors.New("TRADEEDGE_ZERODHA_READ_ONLY=true is required for PAPER or SHADOW")
 	}
 	return nil
 }
