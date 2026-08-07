@@ -45,6 +45,9 @@ jobs:
       - name: Repeat portfolio risk runner and replay race tests
         run: go test -race ./internal/risk/runner ./internal/risk/replay -count=10
 
+      - name: Repeat position accounting and replay race tests
+        run: go test -race ./internal/accounting/engine ./internal/accounting/coordinator -count=10
+
       - name: Run static analysis
         run: go vet ./...
 

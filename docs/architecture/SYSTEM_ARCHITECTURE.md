@@ -10,6 +10,11 @@ Phase 4 coordinator and atomic OMS publication, backed only by a deterministic
 paper broker. SHADOW translation is observational and cannot reach a mutation
 transport.
 
+Phase 6 Milestone 1 adds a provider-neutral accounting module after the OMS.
+It accepts only immutable fills with resolved TradeEdge portfolio, instrument,
+side, and receipt evidence. Its atomic repository re-applies each transition
+before committing the fill application, position revision, and checkpoint.
+
 ```mermaid
 flowchart TB
     Z["Zerodha APIs"] --> A["Provider adapters"]
@@ -42,6 +47,9 @@ The monolith isolates domain modules, owns orchestration, applies timeouts and c
 - Execution metrics use finite lifecycle dimensions and never use TradeEdge,
   broker, account, or instrument identities as labels.
 - PostgreSQL is authoritative for internal durable state; broker state is authoritative for actual external orders and positions.
+- M1 local accounting is derived only from immutable fills. Broker-observed
+  positions are reconciliation evidence and cannot directly mutate quantity,
+  cost basis, or realized P&L.
 
 ## Failure Modes
 

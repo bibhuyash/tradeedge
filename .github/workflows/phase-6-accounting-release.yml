@@ -1,0 +1,46 @@
+name: Phase 6 M1 Accounting Release
+
+on:
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: phase-6-accounting-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  accounting-evidence:
+    name: Accounting race, replay, and boundary evidence
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@df4cb1b169e1874edd31b4311f1884172cec0e10 # v6
+
+      - uses: actions/setup-go@924ae3a1cded613372ab5595356fb5720e22ba16 # v6
+        with:
+          go-version-file: go.mod
+          cache: false
+
+      - name: Verify formatting, tests, vet, and build
+        run: |
+          test -z "$(gofmt -l .)"
+          go test ./...
+          go vet ./...
+          go build ./...
+
+      - name: Run full race suite
+        run: go test -race ./...
+
+      - name: Repeat accounting race and replay tests
+        run: go test -race ./internal/accounting/engine ./internal/accounting/coordinator -count=10
+
+      - name: Enforce accounting boundaries
+        shell: bash
+        run: |
+          set -euo pipefail
+          ! grep -RInE --include='*.go' '\b(float32|float64)\b' internal/accounting internal/adapters/accounting
+          ! grep -RInE --include='*.go' --exclude='*_test.go' 'zerodha|kiteconnect|SubmitOrder|PlaceOrder|live[_-]?trading' internal/accounting internal/adapters/accounting
+          ! grep -RInEi --include='*.go' 'api[_-]?key|access[_-]?token|client[_-]?secret' internal/accounting internal/adapters/accounting
