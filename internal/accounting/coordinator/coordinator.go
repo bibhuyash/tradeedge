@@ -57,6 +57,17 @@ func (runner *Coordinator) Health() (closed bool, inFlight, keyed, maximum int) 
 }
 
 func (runner *Coordinator) ApplyFill(ctx context.Context, fill accountingmodel.AccountingFill) (accountingstorage.PublicationReceipt, error) {
+	return runner.applyFill(ctx, fill, nil)
+}
+
+func (runner *Coordinator) ApplyIngestedFill(ctx context.Context, fill accountingmodel.AccountingFill, metadata accountingmodel.IngestionMetadata) (accountingstorage.PublicationReceipt, error) {
+	if metadata.ID.IsZero() || metadata.Binding.PortfolioID != fill.Spec().PortfolioID {
+		return accountingstorage.PublicationReceipt{}, accountingmodel.ErrInvalidIngestion
+	}
+	return runner.applyFill(ctx, fill, &metadata)
+}
+
+func (runner *Coordinator) applyFill(ctx context.Context, fill accountingmodel.AccountingFill, metadata *accountingmodel.IngestionMetadata) (accountingstorage.PublicationReceipt, error) {
 	if err := ctx.Err(); err != nil {
 		return accountingstorage.PublicationReceipt{}, err
 	}
@@ -67,6 +78,12 @@ func (runner *Coordinator) ApplyFill(ctx context.Context, fill accountingmodel.A
 	if application, existing, err := runner.repository.ApplicationByFill(ctx, fill.Spec().Fill.ID()); err == nil {
 		if !bytes.Equal(existing.CanonicalJSON(), fill.CanonicalJSON()) {
 			return accountingstorage.PublicationReceipt{}, &accountingstorage.IdentityCollisionError{Kind: "fill", Identity: fill.Spec().Fill.ID().String()}
+		}
+		if metadata != nil {
+			progress, progressErr := runner.repository.IngestionProgress(ctx, metadata.ID)
+			if progressErr != nil || progress.FillID != fill.Spec().Fill.ID() || progress.Metadata.SourceChecksum != metadata.SourceChecksum {
+				return accountingstorage.PublicationReceipt{}, &accountingstorage.IdentityCollisionError{Kind: "ingestion", Identity: metadata.ID.String()}
+			}
 		}
 		receipt, receiptErr := runner.repository.CommittedPublication(ctx, publicationID)
 		if receiptErr != nil || receipt.ApplicationID != application.ID() {
@@ -112,7 +129,15 @@ func (runner *Coordinator) ApplyFill(ctx context.Context, fill accountingmodel.A
 	if err != nil {
 		return accountingstorage.PublicationReceipt{}, err
 	}
-	publication, err := accountingstorage.NewPositionPublication(accountingstorage.PositionPublication{PublicationID: publicationID, ExpectedRevision: expectedRevision, ExpectedCheckpoint: expectedChecksum, Fill: fill, Application: result.Application, NextCheckpoint: nextCheckpoint})
+	var progress *accountingmodel.IngestionProgress
+	if metadata != nil {
+		value, progressErr := accountingmodel.NewIngestionProgress(accountingmodel.IngestionProgress{Metadata: *metadata, FillID: fill.Spec().Fill.ID(), FillChecksum: fill.Checksum(), PositionID: fill.PositionID(), PositionRevision: result.Snapshot.Revision(), ApplicationID: result.Application.ID(), CheckpointChecksum: nextCheckpoint.CheckpointChecksum})
+		if progressErr != nil {
+			return accountingstorage.PublicationReceipt{}, progressErr
+		}
+		progress = &value
+	}
+	publication, err := accountingstorage.NewPositionPublication(accountingstorage.PositionPublication{PublicationID: publicationID, ExpectedRevision: expectedRevision, ExpectedCheckpoint: expectedChecksum, Fill: fill, Application: result.Application, NextCheckpoint: nextCheckpoint, IngestionProgress: progress})
 	if err != nil {
 		return accountingstorage.PublicationReceipt{}, err
 	}

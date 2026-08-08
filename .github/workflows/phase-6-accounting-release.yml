@@ -1,4 +1,4 @@
-name: Phase 6 M1 Accounting Release
+name: Phase 6 Accounting Release
 
 on:
   pull_request:
@@ -35,7 +35,7 @@ jobs:
         run: go test -race ./...
 
       - name: Repeat accounting race and replay tests
-        run: go test -race ./internal/accounting/engine ./internal/accounting/coordinator -count=10
+        run: go test -race ./internal/accounting/engine ./internal/accounting/coordinator ./internal/accounting/ingestion ./internal/accounting/reconciliation -count=10
 
       - name: Enforce accounting boundaries
         shell: bash
@@ -44,3 +44,4 @@ jobs:
           ! grep -RInE --include='*.go' '\b(float32|float64)\b' internal/accounting internal/adapters/accounting
           ! grep -RInE --include='*.go' --exclude='*_test.go' 'zerodha|kiteconnect|SubmitOrder|PlaceOrder|live[_-]?trading' internal/accounting internal/adapters/accounting
           ! grep -RInEi --include='*.go' 'api[_-]?key|access[_-]?token|client[_-]?secret' internal/accounting internal/adapters/accounting
+          ! grep -RInE --include='*.go' '^\s*"github.com/.*/internal/adapters/broker/' internal/accounting

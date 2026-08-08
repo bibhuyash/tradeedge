@@ -88,6 +88,7 @@ type PositionPublication struct {
 	Fill                accountingmodel.AccountingFill
 	Application         accountingmodel.FillApplication
 	NextCheckpoint      PositionCheckpoint
+	IngestionProgress   *accountingmodel.IngestionProgress
 	PublicationChecksum accountingmodel.StateChecksum
 	canonical           []byte
 }
@@ -114,16 +115,37 @@ func NewPositionPublication(value PositionPublication) (PositionPublication, err
 	} else if value.ExpectedCheckpoint.IsZero() || value.Application.Spec().PreviousSnapshotChecksum.IsZero() {
 		return PositionPublication{}, ErrInvalidPublication
 	}
-	raw, err := json.Marshal(struct {
-		PublicationID, ExpectedCheckpoint string
-		ExpectedRevision                  uint64
-		Fill, Application, NextCheckpoint json.RawMessage
-	}{
-		value.PublicationID.String(), value.ExpectedCheckpoint.String(), uint64(value.ExpectedRevision), value.Fill.CanonicalJSON(), value.Application.CanonicalJSON(), value.NextCheckpoint.CanonicalJSON()})
+	if value.IngestionProgress != nil {
+		progress, progressErr := accountingmodel.NewIngestionProgress(*value.IngestionProgress)
+		if progressErr != nil || progress.FillID != value.Fill.Spec().Fill.ID() || progress.FillChecksum != value.Fill.Checksum() ||
+			progress.PositionID != value.Fill.PositionID() || progress.PositionRevision != value.NextCheckpoint.Snapshot.Revision() ||
+			progress.ApplicationID != value.Application.ID() || progress.CheckpointChecksum != value.NextCheckpoint.CheckpointChecksum ||
+			progress.Metadata.Binding.PortfolioID != value.Fill.Spec().PortfolioID {
+			return PositionPublication{}, ErrInvalidPublication
+		}
+		value.IngestionProgress = &progress
+	}
+	var raw []byte
+	var err error
+	checksumNamespace := "accounting-position-publication/v1"
+	if value.IngestionProgress == nil {
+		raw, err = json.Marshal(struct {
+			PublicationID, ExpectedCheckpoint string
+			ExpectedRevision                  uint64
+			Fill, Application, NextCheckpoint json.RawMessage
+		}{value.PublicationID.String(), value.ExpectedCheckpoint.String(), uint64(value.ExpectedRevision), value.Fill.CanonicalJSON(), value.Application.CanonicalJSON(), value.NextCheckpoint.CanonicalJSON()})
+	} else {
+		checksumNamespace = "accounting-position-publication/v2"
+		raw, err = json.Marshal(struct {
+			PublicationID, ExpectedCheckpoint                    string
+			ExpectedRevision                                     uint64
+			Fill, Application, NextCheckpoint, IngestionProgress json.RawMessage
+		}{value.PublicationID.String(), value.ExpectedCheckpoint.String(), uint64(value.ExpectedRevision), value.Fill.CanonicalJSON(), value.Application.CanonicalJSON(), value.NextCheckpoint.CanonicalJSON(), value.IngestionProgress.CanonicalJSON()})
+	}
 	if err != nil {
 		return PositionPublication{}, ErrInvalidPublication
 	}
-	checksum, _ := accountingmodel.NewStateChecksum("accounting-position-publication/v1", raw)
+	checksum, _ := accountingmodel.NewStateChecksum(checksumNamespace, raw)
 	if !value.PublicationChecksum.IsZero() && value.PublicationChecksum != checksum {
 		return PositionPublication{}, ErrInvalidPublication
 	}
@@ -160,6 +182,7 @@ type Repository interface {
 	Applications(context.Context, accountingmodel.PositionID) ([]accountingmodel.FillApplication, error)
 	Publications(context.Context, accountingmodel.PositionID) ([]PositionPublication, error)
 	CommittedPublication(context.Context, accountingmodel.PublicationID) (PublicationReceipt, error)
+	IngestionProgress(context.Context, accountingmodel.IngestionID) (accountingmodel.IngestionProgress, error)
 	PublishPosition(context.Context, PositionPublication) (PublicationReceipt, error)
 	RestorePosition(context.Context, []PositionPublication) error
 }

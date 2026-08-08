@@ -15,6 +15,11 @@ It accepts only immutable fills with resolved TradeEdge portfolio, instrument,
 side, and receipt evidence. Its atomic repository re-applies each transition
 before committing the fill application, position revision, and checkpoint.
 
+Phase 6 Milestone 2 validates complete OMS lineage and a versioned
+portfolio/account binding before extending that transaction with ingestion
+progress. A separate reconciler compares stable position revisions with
+provider-neutral broker observations and can publish evidence only.
+
 ```mermaid
 flowchart TB
     Z["Zerodha APIs"] --> A["Provider adapters"]
@@ -50,6 +55,8 @@ The monolith isolates domain modules, owns orchestration, applies timeouts and c
 - M1 local accounting is derived only from immutable fills. Broker-observed
   positions are reconciliation evidence and cannot directly mutate quantity,
   cost basis, or realized P&L.
+- M2 ingestion progress is atomic with its application and position revision.
+  The reconciliation package has no accounting-write or broker-mutation port.
 
 ## Failure Modes
 

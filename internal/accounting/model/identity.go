@@ -48,6 +48,7 @@ type PositionID digest
 type FillApplicationID digest
 type PublicationID digest
 type StateChecksum digest
+type IngestionID digest
 
 func NewPositionID(portfolioID, instrumentID string) (PositionID, error) {
 	if !validParts([]string{portfolioID, instrumentID}) {
@@ -77,16 +78,25 @@ func NewStateChecksum(namespace string, canonical []byte) (StateChecksum, error)
 	return StateChecksum(derive(namespace, string(canonical))), nil
 }
 
+func NewIngestionID(fillID, sourceCheckpoint, bindingChecksum string) (IngestionID, error) {
+	if !validParts([]string{fillID, sourceCheckpoint, bindingChecksum}) {
+		return IngestionID{}, ErrInvalidIdentity
+	}
+	return IngestionID(derive("accounting-ingestion-id/v1", fillID, sourceCheckpoint, bindingChecksum)), nil
+}
+
 func digestString(value digest) string { return hex.EncodeToString(value[:]) }
 
 func (value PositionID) String() string        { return digestString(digest(value)) }
 func (value FillApplicationID) String() string { return digestString(digest(value)) }
 func (value PublicationID) String() string     { return digestString(digest(value)) }
 func (value StateChecksum) String() string     { return digestString(digest(value)) }
+func (value IngestionID) String() string       { return digestString(digest(value)) }
 func (value PositionID) IsZero() bool          { return value == PositionID{} }
 func (value FillApplicationID) IsZero() bool   { return value == FillApplicationID{} }
 func (value PublicationID) IsZero() bool       { return value == PublicationID{} }
 func (value StateChecksum) IsZero() bool       { return value == StateChecksum{} }
+func (value IngestionID) IsZero() bool         { return value == IngestionID{} }
 
 type PositionRevision uint64
 
