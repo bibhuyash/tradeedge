@@ -105,6 +105,14 @@ continuation and requires replay from an earlier verified checkpoint or
 genesis. The bounded in-memory adapter is reference storage, not durable
 restart authority.
 
+Phase 6 Milestone 2 includes the OMS source checkpoint/checksum and
+portfolio/account binding checksum in the atomic ingestion progress record.
+Restart retries absent work and returns committed work idempotently; an
+in-memory reservation has no authoritative effect. Canonical predecessors stay
+quarantined pending a separately approved rebuild. Reconciliation revalidates
+the local revision before publishing evidence, so concurrent ingestion yields
+a retryable conflict instead of stale evidence or an accounting mutation.
+
 ## Failure Modes
 
 Database loss, stale broker responses, split ownership, clock skew, repeated

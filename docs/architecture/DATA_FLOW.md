@@ -87,6 +87,25 @@ order. Reports without fills and broker position snapshots cannot change M1
 accounting. A canonical predecessor discovered after committed state fails
 closed pending verified replay.
 
+## Phase 6 Milestone 2 Ingestion and Reconciliation
+
+```mermaid
+flowchart LR
+    OMS["Committed OMS Fill"] --> L["Validate lineage and account binding"]
+    L --> I["Deterministic ingestion identity"]
+    I --> A["Atomic application + position + checkpoints"]
+    A --> P["Authoritative TradeEdge position"]
+    BO["Immutable broker observation"] --> R["Revision-bound comparison"]
+    P --> R
+    R --> E["Immutable reconciliation evidence"]
+    BO -. "never mutates" .-> P
+```
+
+Exact ingestion retries return the committed publication. Canonical
+predecessors are quarantined for verified isolated replay and never rewrite
+current weighted-average history. Reconciliation has neither an accounting
+write port nor an order mutation port.
+
 ## Phase 1.1 Operational Flow
 
 ```mermaid

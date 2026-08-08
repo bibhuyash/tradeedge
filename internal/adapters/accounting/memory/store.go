@@ -3,6 +3,7 @@ package memory
 import (
 	"bytes"
 	"context"
+	"fmt"
 	"sort"
 	"sync"
 
@@ -39,6 +40,8 @@ type Store struct {
 	fills            map[executionmodel.FillID]storedFill
 	applications     map[accountingmodel.PositionID][]accountingmodel.FillApplication
 	publications     map[accountingmodel.PublicationID]storedPublication
+	ingestions       map[accountingmodel.IngestionID]accountingmodel.IngestionProgress
+	ingestionSources map[string]accountingmodel.IngestionID
 	failBeforeCommit bool
 }
 
@@ -46,7 +49,7 @@ func New(limits Limits) (*Store, error) {
 	if !limits.valid() {
 		return nil, accountingstorage.ErrCapacityExhausted
 	}
-	return &Store{limits: limits, current: map[accountingmodel.PositionID]accountingmodel.PositionRevision{}, checkpoints: map[accountingmodel.PositionID]map[accountingmodel.PositionRevision]accountingstorage.PositionCheckpoint{}, fills: map[executionmodel.FillID]storedFill{}, applications: map[accountingmodel.PositionID][]accountingmodel.FillApplication{}, publications: map[accountingmodel.PublicationID]storedPublication{}}, nil
+	return &Store{limits: limits, current: map[accountingmodel.PositionID]accountingmodel.PositionRevision{}, checkpoints: map[accountingmodel.PositionID]map[accountingmodel.PositionRevision]accountingstorage.PositionCheckpoint{}, fills: map[executionmodel.FillID]storedFill{}, applications: map[accountingmodel.PositionID][]accountingmodel.FillApplication{}, publications: map[accountingmodel.PublicationID]storedPublication{}, ingestions: map[accountingmodel.IngestionID]accountingmodel.IngestionProgress{}, ingestionSources: map[string]accountingmodel.IngestionID{}}, nil
 }
 func NewDefault() *Store { value, _ := New(DefaultLimits()); return value }
 func (store *Store) SetFailBeforeCommit(value bool) {
@@ -140,6 +143,19 @@ func (store *Store) CommittedPublication(ctx context.Context, id accountingmodel
 	return value.receipt, nil
 }
 
+func (store *Store) IngestionProgress(ctx context.Context, id accountingmodel.IngestionID) (accountingmodel.IngestionProgress, error) {
+	if err := ctx.Err(); err != nil {
+		return accountingmodel.IngestionProgress{}, err
+	}
+	store.mu.RLock()
+	defer store.mu.RUnlock()
+	value, ok := store.ingestions[id]
+	if !ok {
+		return accountingmodel.IngestionProgress{}, accountingstorage.ErrNotFound
+	}
+	return value, nil
+}
+
 func (store *Store) PublishPosition(ctx context.Context, publication accountingstorage.PositionPublication) (accountingstorage.PublicationReceipt, error) {
 	if err := ctx.Err(); err != nil {
 		return accountingstorage.PublicationReceipt{}, err
@@ -160,6 +176,18 @@ func (store *Store) PublishPosition(ctx context.Context, publication accountings
 			return receipt, nil
 		}
 		return accountingstorage.PublicationReceipt{}, &accountingstorage.IdentityCollisionError{Kind: "publication", Identity: validated.PublicationID.String()}
+	}
+	if validated.IngestionProgress != nil {
+		key := ingestionSourceKey(*validated.IngestionProgress)
+		if existing, ok := store.ingestionSources[key]; ok && existing != validated.IngestionProgress.ID() {
+			return accountingstorage.PublicationReceipt{}, &accountingstorage.IdentityCollisionError{Kind: "ingestion_source", Identity: key}
+		}
+		if existing, ok := store.ingestions[validated.IngestionProgress.ID()]; ok {
+			if bytes.Equal(existing.CanonicalJSON(), validated.IngestionProgress.CanonicalJSON()) {
+				return accountingstorage.PublicationReceipt{}, &accountingstorage.IdentityCollisionError{Kind: "ingestion_already_committed", Identity: validated.IngestionProgress.ID().String()}
+			}
+			return accountingstorage.PublicationReceipt{}, &accountingstorage.IdentityCollisionError{Kind: "ingestion", Identity: validated.IngestionProgress.ID().String()}
+		}
 	}
 	fillID := validated.Fill.Spec().Fill.ID()
 	if existing, ok := store.fills[fillID]; ok {
@@ -203,6 +231,10 @@ func (store *Store) PublishPosition(ctx context.Context, publication accountings
 	store.fills[fillID] = storedFill{validated.Fill, validated.Application}
 	store.applications[positionID] = append(store.applications[positionID], validated.Application)
 	store.publications[validated.PublicationID] = storedPublication{validated, receipt, validated.CanonicalJSON()}
+	if validated.IngestionProgress != nil {
+		store.ingestions[validated.IngestionProgress.ID()] = *validated.IngestionProgress
+		store.ingestionSources[ingestionSourceKey(*validated.IngestionProgress)] = validated.IngestionProgress.ID()
+	}
 	return receipt, nil
 }
 
@@ -240,6 +272,16 @@ func (store *Store) RestorePosition(ctx context.Context, publications []accounti
 			return &accountingstorage.IdentityCollisionError{Kind: "fill", Identity: id.String()}
 		}
 	}
+	for id, value := range temporary.ingestions {
+		if existing, ok := store.ingestions[id]; ok && !bytes.Equal(existing.CanonicalJSON(), value.CanonicalJSON()) {
+			return &accountingstorage.IdentityCollisionError{Kind: "ingestion", Identity: id.String()}
+		}
+	}
+	for key, id := range temporary.ingestionSources {
+		if existing, ok := store.ingestionSources[key]; ok && existing != id {
+			return &accountingstorage.IdentityCollisionError{Kind: "ingestion_source", Identity: key}
+		}
+	}
 	store.current[positionID] = temporary.current[positionID]
 	store.checkpoints[positionID] = temporary.checkpoints[positionID]
 	store.applications[positionID] = temporary.applications[positionID]
@@ -249,7 +291,17 @@ func (store *Store) RestorePosition(ctx context.Context, publications []accounti
 	for id, value := range temporary.publications {
 		store.publications[id] = value
 	}
+	for id, value := range temporary.ingestions {
+		store.ingestions[id] = value
+	}
+	for key, id := range temporary.ingestionSources {
+		store.ingestionSources[key] = id
+	}
 	return nil
+}
+
+func ingestionSourceKey(value accountingmodel.IngestionProgress) string {
+	return fmt.Sprintf("%020d|%s", value.Metadata.SourceSequence, value.Metadata.SourceCheckpoint)
 }
 
 func totalRevisions(store *Store) int {

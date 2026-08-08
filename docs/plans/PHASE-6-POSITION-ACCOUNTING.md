@@ -2,9 +2,9 @@
 
 ## Scope
 
-Phase 6 Milestone 1 converts immutable provider-neutral execution fills into
-deterministic local positions and gross realized P&L. It remains paper-only and
-does not ingest broker positions, value open positions, or authorize orders.
+Phase 6 Milestones 1 and 2 convert authoritative provider-neutral OMS fills
+into deterministic local positions and compare those positions with immutable
+broker observations. The phase remains non-live and excludes valuation.
 
 ## Milestone 1: Position, Lot, and Realized P&L Accounting
 
@@ -39,9 +39,32 @@ are reconciliation evidence only and cannot enter the M1 mutation port.
 Fees, taxes, market valuation, unrealized P&L, portfolio equity, daily MTM,
 durable PostgreSQL storage, and automatic repair remain outside M1.
 
+## Milestone 2: Fill Ingestion and Position Reconciliation
+
+- [x] Only a committed OMS `Fill` with validated report, order, plan, intent,
+  portfolio, instrument, side, and account-binding lineage enters accounting.
+- [x] A versioned one-to-one portfolio-to-account binding preserves the M1
+  `(portfolio, instrument)` position identity while making broker scope explicit.
+- [x] Deterministic ingestion identity, source checkpoint/checksum, binding
+  checksum, application, position revision, and accounting checkpoint share the
+  M1 atomic publication transaction.
+- [x] Exact committed retries are idempotent, in-progress duplicates are typed,
+  and changed content under an existing identity fails as an integrity error.
+- [x] Canonical predecessors are quarantined with rebuild-required evidence;
+  M2 does not rewrite weighted-average history or implement repair.
+- [x] Ingestion and reconciliation coordinators have fixed concurrency bounds,
+  keyed suppression, cancellation, deadlines, shutdown, and restart-safe stores.
+- [x] Provider-neutral immutable broker observations produce deterministic
+  match, mismatch, local-only, broker-only, stale, or unknown evidence without
+  access to accounting mutation or broker-order ports.
+- [x] PAPER compares paper scope. SHADOW real observations are non-comparable;
+  OFFLINE and LIVE_DISABLED fail closed.
+
+M2 does not add market valuation, unrealized P&L, portfolio equity, durable
+PostgreSQL, automatic correction, compensating orders, or live execution.
+
 ## Closure
 
-M1 closes only after format, unit, deterministic replay, race/stress, vet,
+Each milestone closes only after format, unit, deterministic replay, race/stress, vet,
 build, dependency, secret, floating-point-authority, and live-capability gates
-pass for the reviewed commit. Closure does not authorize Phase 6 M2 or live
-trading.
+pass for the reviewed commit. M2 closure does not authorize Phase 6 M3 or live trading.

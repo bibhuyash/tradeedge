@@ -38,8 +38,9 @@ Each phase has objective entry and exit criteria. Passing a technical milestone 
   LIVE_DISABLED remains blocked. Phase 6 begins authoritative positions, fills,
   P&L, and broker reconciliation without inheriting live-order authorization.
 - Phase 6 Milestone 1 establishes immutable-fill-driven weighted-average
-  positions and gross realized P&L. Fill ingestion and broker-position
-  reconciliation remain Milestone 2.
+  positions and gross realized P&L. Milestone 2 adds authoritative OMS fill
+  ingestion, atomic progress, and non-mutating broker-position reconciliation.
+  Market valuation and Phase 6 release closure remain M3.
 
 ## Invariants
 
