@@ -1,0 +1,89 @@
+{
+  "date": "2099-01-01",
+  "mode": "PAPER",
+  "scope": "OPERATIONS_ONLY",
+  "release_commit": "0000000000000000000000000000000000000000",
+  "versions": {
+    "calendar_version": "PENDING",
+    "mapping_version": "PENDING",
+    "watchlist_version": "PENDING",
+    "strategy_version": "strategies-disabled/v1",
+    "portfolio_configuration_hash": "PENDING",
+    "risk_configuration_hash": "PENDING"
+  },
+  "operations": {
+    "startup_result": "FAIL",
+    "ready_at": "2099-01-01T03:45:00Z",
+    "readiness_incidents": 0,
+    "restarts": 0,
+    "unexplained_restarts": 0,
+    "shutdown_result": "FAIL",
+    "clean_checkpoint": false,
+    "calendar_and_session_verified": false,
+    "kill_switch_verified": false,
+    "mandatory_evidence_complete": false,
+    "live_broker_mutation_observed": false,
+    "duplicate_authoritative_effects": 0,
+    "critical_incidents": 0,
+    "manual_interventions": []
+  },
+  "trading": {
+    "strategies_active": 0,
+    "proposals": 0,
+    "approved": 0,
+    "modified": 0,
+    "rejected": 0,
+    "paper_executions": 0,
+    "shadow_executions": 0,
+    "fills": 0
+  },
+  "financial": {
+    "status": "UNAVAILABLE",
+    "realized_pnl": {"availability": "UNAVAILABLE", "reason": "NOT_OBSERVED"},
+    "unrealized_pnl": {"availability": "UNAVAILABLE", "reason": "NOT_OBSERVED"},
+    "total_pnl": {"availability": "UNAVAILABLE", "reason": "NOT_OBSERVED"},
+    "max_drawdown": {"availability": "UNAVAILABLE", "reason": "NOT_OBSERVED"},
+    "by_strategy": []
+  },
+  "execution": {
+    "partial_fills": 0,
+    "unknown": 0,
+    "reconciliation_mismatches": 0,
+    "assumed_slippage_bps": 0,
+    "slippage_model": "OBSERVED_BEST_PRICE_NO_ADDITIONAL_SLIPPAGE",
+    "anomalies": []
+  },
+  "market_data": {
+    "disconnects": 0,
+    "reconnects": 0,
+    "stale_duration_seconds": 0,
+    "missing_data_incidents": 0,
+    "maximum_gap_seconds": 0,
+    "readiness_availability_bps": 0
+  },
+  "cas": {
+    "expected": false,
+    "regimes_observed": [],
+    "restricted_signals": 0,
+    "blocked_new_exposure": 0,
+    "evidence_records": 0,
+    "anomalies": []
+  },
+  "notifications": {
+    "telegram_enabled": true,
+    "delivery_successes": 0,
+    "delivery_failures": 0,
+    "terminal_failures": 0
+  },
+  "controls": {
+    "kill_switch_events": 0,
+    "circuit_breaker_events": 0
+  },
+  "evidence": [
+    {
+      "kind": "readiness",
+      "path": "readiness.json",
+      "sha256": "0000000000000000000000000000000000000000000000000000000000000000"
+    }
+  ]
+}
