@@ -11,11 +11,14 @@ import (
 	"github.com/bibhuyash/tradeedge/internal/adapters/marketdata/calendarfile"
 	marketdatafile "github.com/bibhuyash/tradeedge/internal/adapters/marketdata/file"
 	prometheusmetrics "github.com/bibhuyash/tradeedge/internal/adapters/metrics/prometheus"
+	telegramadapter "github.com/bibhuyash/tradeedge/internal/adapters/notification/telegram"
 	strategymemory "github.com/bibhuyash/tradeedge/internal/adapters/strategy/memory"
 	"github.com/bibhuyash/tradeedge/internal/config"
 	zerodhaintegration "github.com/bibhuyash/tradeedge/internal/integration/zerodha"
 	"github.com/bibhuyash/tradeedge/internal/marketdata/opshttp"
 	"github.com/bibhuyash/tradeedge/internal/marketdata/readiness"
+	"github.com/bibhuyash/tradeedge/internal/notification"
+	"github.com/bibhuyash/tradeedge/internal/operations"
 	"github.com/bibhuyash/tradeedge/internal/platform/httpserver"
 	strategyopshttp "github.com/bibhuyash/tradeedge/internal/strategy/opshttp"
 	strategyrunner "github.com/bibhuyash/tradeedge/internal/strategy/runner"
@@ -36,6 +39,8 @@ type Options struct {
 	StrategyRunner        interface{ Shutdown(context.Context) error }
 	RuntimeOperations     http.Handler
 	TradingRuntime        interface{ Shutdown(context.Context) error }
+	OperationalOperations http.Handler
+	NotificationRuntime   interface{ Shutdown(context.Context) error }
 }
 
 func RunWithMarketReadiness(
@@ -60,6 +65,24 @@ func RunWithOptions(
 	metrics := options.Metrics
 	if metrics == nil {
 		metrics = prometheusmetrics.New()
+	}
+	operationalOperations := options.OperationalOperations
+	notificationRuntime := options.NotificationRuntime
+	if operationalOperations == nil && notificationRuntime == nil {
+		var sender notification.Sender = telegramadapter.Disabled{}
+		if enabled, botToken, chatID := cfg.Telegram(); enabled {
+			adapter, adapterErr := telegramadapter.New(telegramadapter.Config{Enabled: true, Token: botToken, ChatID: chatID}, &http.Client{}, time.Now)
+			if adapterErr != nil {
+				return fmt.Errorf("compose Telegram notifications: %w", adapterErr)
+			}
+			sender = adapter
+		}
+		subsystem, subsystemErr := operations.NewSubsystem(sender, metrics)
+		if subsystemErr != nil {
+			return fmt.Errorf("compose operational subsystem: %w", subsystemErr)
+		}
+		notificationRuntime = subsystem
+		operationalOperations = subsystem.Handler()
 	}
 	integrationOperations := options.IntegrationOperations
 	integrationRuntime := options.IntegrationRuntime
@@ -124,6 +147,7 @@ func RunWithOptions(
 		ExecutionOperations:   options.ExecutionOperations,
 		IntegrationOperations: integrationOperations,
 		RuntimeOperations:     options.RuntimeOperations,
+		OperationalOperations: operationalOperations,
 	})
 	if err != nil {
 		return fmt.Errorf("create HTTP server: %w", err)
@@ -167,6 +191,11 @@ func RunWithOptions(
 	if options.TradingRuntime == nil && integrationRuntime != nil {
 		if err := integrationRuntime.Shutdown(shutdownCtx); err != nil {
 			shutdownErrors = append(shutdownErrors, fmt.Errorf("shutdown zerodha integration: %w", err))
+		}
+	}
+	if notificationRuntime != nil {
+		if err := notificationRuntime.Shutdown(shutdownCtx); err != nil {
+			shutdownErrors = append(shutdownErrors, fmt.Errorf("shutdown notifications: %w", err))
 		}
 	}
 	if err := server.Shutdown(shutdownCtx); err != nil {

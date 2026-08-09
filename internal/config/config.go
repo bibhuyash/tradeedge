@@ -32,6 +32,9 @@ type Config struct {
 	RiskTimeout            time.Duration
 	ZerodhaMode            string
 	ZerodhaReadOnly        bool
+	TelegramEnabled        bool
+	telegramBotToken       string
+	telegramChatID         string
 }
 
 type LookupEnv func(string) (string, bool)
@@ -98,6 +101,19 @@ func LoadWithLookup(lookup LookupEnv) (Config, error) {
 		}
 		cfg.ZerodhaReadOnly = value
 	}
+	if raw, ok := lookup("TRADEEDGE_TELEGRAM_ENABLED"); ok {
+		value, err := strconv.ParseBool(strings.TrimSpace(raw))
+		if err != nil {
+			return Config{}, errors.New("parse TRADEEDGE_TELEGRAM_ENABLED")
+		}
+		cfg.TelegramEnabled = value
+	}
+	if raw, ok := lookup("TRADEEDGE_TELEGRAM_BOT_TOKEN"); ok {
+		cfg.telegramBotToken = strings.TrimSpace(raw)
+	}
+	if raw, ok := lookup("TRADEEDGE_TELEGRAM_CHAT_ID"); ok {
+		cfg.telegramChatID = strings.TrimSpace(raw)
+	}
 
 	if err := cfg.Validate(); err != nil {
 		return Config{}, err
@@ -143,7 +159,16 @@ func (c Config) Validate() error {
 	if (c.ZerodhaMode == ZerodhaModePaper || c.ZerodhaMode == ZerodhaModeShadow) && !c.ZerodhaReadOnly {
 		return errors.New("TRADEEDGE_ZERODHA_READ_ONLY=true is required for PAPER or SHADOW")
 	}
+	if c.TelegramEnabled && (c.telegramBotToken == "" || c.telegramChatID == "" || strings.ContainsAny(c.telegramBotToken, " \t\r\n/?#") || strings.ContainsAny(c.telegramChatID, " \t\r\n")) {
+		return errors.New("invalid Telegram configuration")
+	}
 	return nil
+}
+
+// Telegram returns secrets only to runtime composition; Config's exported
+// representation cannot accidentally serialize or format them.
+func (c Config) Telegram() (enabled bool, botToken, chatID string) {
+	return c.TelegramEnabled, c.telegramBotToken, c.telegramChatID
 }
 
 func envOrDefault(lookup LookupEnv, key, fallback string) string {

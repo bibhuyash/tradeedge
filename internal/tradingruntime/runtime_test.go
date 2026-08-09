@@ -15,6 +15,7 @@ import (
 	executionfixture "github.com/bibhuyash/tradeedge/internal/execution/testfixture"
 	"github.com/bibhuyash/tradeedge/internal/marketdata/calendar"
 	marketmodel "github.com/bibhuyash/tradeedge/internal/marketdata/model"
+	"github.com/bibhuyash/tradeedge/internal/notification"
 	riskmodel "github.com/bibhuyash/tradeedge/internal/risk/model"
 	riskfixture "github.com/bibhuyash/tradeedge/internal/risk/testfixture"
 )
@@ -117,6 +118,27 @@ func TestRuntimeRestoreBeforeActivateEndToEndAndShutdown(t *testing.T) {
 	}
 	if runtime.Snapshot().State != RuntimeStopped || runtime.Snapshot().Session.State != SessionStopped {
 		t.Fatalf("not stopped: %+v", runtime.Snapshot())
+	}
+}
+
+type panicObserver struct{}
+
+func (panicObserver) Observe(notification.Event) { panic("notification failure") }
+func TestNotificationObserverCannotAffectTradingRuntime(t *testing.T) {
+	runtime, _, clock, manifest := testRuntime(t, nil)
+	runtime.deps.Observer = panicObserver{}
+	deps := healthyDependencies(*clock)
+	if err := runtime.Start(context.Background(), manifest, deps); err != nil {
+		t.Fatal(err)
+	}
+	runtime.Refresh(context.Background(), deps)
+	runtime.Refresh(context.Background(), deps)
+	receipt, err := runtime.Process(context.Background(), testQuote(t, *clock))
+	if err != nil || receipt.Outcome != OutcomeCompleted || receipt.FillCount != 1 {
+		t.Fatalf("observer altered trading: %+v %v", receipt, err)
+	}
+	if err := runtime.Shutdown(context.Background()); err != nil {
+		t.Fatal(err)
 	}
 }
 

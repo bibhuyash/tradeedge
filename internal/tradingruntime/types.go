@@ -12,6 +12,7 @@ import (
 	"github.com/bibhuyash/tradeedge/internal/domain"
 	executionmodel "github.com/bibhuyash/tradeedge/internal/execution/model"
 	marketmodel "github.com/bibhuyash/tradeedge/internal/marketdata/model"
+	"github.com/bibhuyash/tradeedge/internal/notification"
 	portfoliomodel "github.com/bibhuyash/tradeedge/internal/portfolio/model"
 	riskmodel "github.com/bibhuyash/tradeedge/internal/risk/model"
 	strategymodel "github.com/bibhuyash/tradeedge/internal/strategy/model"
@@ -113,6 +114,10 @@ type Shutdowner interface {
 	Shutdown(context.Context) error
 }
 
+// OperationalObserver receives committed operational facts. Implementations
+// are best-effort and must never participate in trading authority.
+type OperationalObserver interface{ Observe(notification.Event) }
+
 type ControlSnapshot struct {
 	GlobalBlocked    bool
 	Portfolios       map[portfoliomodel.PortfolioID]bool
@@ -135,6 +140,7 @@ type PipelineDependencies struct {
 	Checkpointer Checkpointer
 	Drainer      Drainer
 	Shutdowner   Shutdowner
+	Observer     OperationalObserver
 }
 
 type Config struct {

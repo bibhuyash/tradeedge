@@ -2,7 +2,8 @@
 
 ## Scope
 
-Telegram will provide alerts, trade notifications, status queries, and tightly controlled safety commands behind a notification interface. Phase 0 contains no Telegram code.
+Phase 7 M2 provides optional outbound operational alerts behind a provider-neutral
+notification interface. It has no inbound updates, queries, approvals, or commands.
 
 ## Assumptions
 
@@ -10,28 +11,33 @@ Delivery may be delayed, duplicated, reordered, or unavailable. Chat identity al
 
 ## Responsibilities
 
-The future adapter sends redacted notifications and authenticates approved operators for status, pause, paper-resume, and global kill-switch commands.
+The adapter sends concise redacted PAPER/SHADOW notifications. Internal events,
+CAS evidence, and EOD reports remain authoritative operational evidence when
+Telegram is delayed or unavailable.
 
 ## Invariants
 
 - Telegram cannot place orders, alter strategy policy, weaken risk, or enable live trading.
-- Commands use allowlists, replay protection, confirmation where appropriate, and audit.
 - Notification delivery does not determine trading state.
+- Bot tokens and destination identifiers never appear in logs, metrics, APIs, or evidence.
 
 ## Failure Modes
 
-Compromised accounts, replayed updates, webhook spoofing, rate limiting, and delivery failure can mislead operators or trigger unauthorized actions.
+Rate limiting, timeout, duplicate delivery, and outages can mislead operators;
+bounded internal evidence must therefore be inspected independently.
 
 ## Trade-offs
 
 Restricting commands reduces convenience but prevents a chat channel from becoming an uncontrolled trading API.
 
-## Unresolved Questions
+## Configuration
 
-Bot hosting mode, operator enrollment, confirmation windows, and escalation routing require a security review.
+Set `TRADEEDGE_TELEGRAM_ENABLED=true` with bot token and chat identifier supplied
+through secure runtime configuration. When disabled, neither value is required.
+Configuration errors are sanitized and never echo either secret.
 
 ## Acceptance Criteria
 
 - Notification contracts remain provider-neutral.
-- Safety commands are narrowly enumerated.
+- No inbound or command/control capability is reachable.
 - Missing Telegram delivery cannot bypass local risk or kill-switch state.

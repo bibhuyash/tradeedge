@@ -38,6 +38,7 @@ type Options struct {
 	ExecutionOperations   http.Handler
 	IntegrationOperations http.Handler
 	RuntimeOperations     http.Handler
+	OperationalOperations http.Handler
 	Metrics               http.Handler
 }
 
@@ -119,6 +120,10 @@ func NewHandlerWithOptions(process *Readiness, options Options) http.Handler {
 	}
 	if options.RuntimeOperations != nil {
 		mux.Handle("/api/v1/runtime/", options.RuntimeOperations)
+	}
+	if options.OperationalOperations != nil {
+		mux.Handle("/api/v1/notifications/", options.OperationalOperations)
+		mux.Handle("/api/v1/operations/", options.OperationalOperations)
 	}
 	return mux
 }
