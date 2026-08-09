@@ -25,6 +25,19 @@ var ErrInvalid = errors.New("invalid financial valuation")
 
 type Status string
 
+// PriceType preserves exchange price provenance. Only LastTradedPrice is an
+// eligible Phase 6 valuation input; CAS and official-close observations must
+// remain distinguishable evidence.
+type PriceType string
+
+const (
+	LastTradedPrice     PriceType = "LAST_TRADED_PRICE"
+	CASIndicativePrice  PriceType = "CAS_INDICATIVE_PRICE"
+	CASReferencePrice   PriceType = "CAS_REFERENCE_PRICE"
+	CASEquilibriumPrice PriceType = "CAS_EQUILIBRIUM_PRICE"
+	OfficialClosePrice  PriceType = "OFFICIAL_CLOSE_PRICE"
+)
+
 const (
 	StatusComplete    Status = "COMPLETE"
 	StatusPartial     Status = "PARTIAL"
@@ -54,7 +67,7 @@ func (s Status) valid() bool {
 type MarkPrice struct {
 	InstrumentID    domain.InstrumentID           `json:"instrument_id"`
 	Price           domain.Price                  `json:"-"`
-	PriceType       string                        `json:"price_type"`
+	PriceType       PriceType                     `json:"price_type"`
 	EventID         marketmodel.EventID           `json:"event_id"`
 	MarketRevision  string                        `json:"market_revision"`
 	MarketChecksum  accountingmodel.StateChecksum `json:"market_checksum"`
@@ -70,7 +83,7 @@ func NewMarkPrice(quote marketmodel.QuoteEvent, revision string, checksum accoun
 		revision == "" || checksum.IsZero() || quote.ExchangeTime().IsZero() || quote.IngestedAt().IsZero() || quote.IngestedAt().Before(quote.ExchangeTime()) {
 		return MarkPrice{}, ErrInvalid
 	}
-	return MarkPrice{InstrumentID: quote.InstrumentID(), Price: quote.LastPrice(), PriceType: "LAST_TRADED_PRICE", EventID: quote.ID(), MarketRevision: revision, MarketChecksum: checksum, ExchangeTime: quote.ExchangeTime().UTC(), IngestedAt: quote.IngestedAt().UTC(), Readiness: state, ReadinessReason: reason}, nil
+	return MarkPrice{InstrumentID: quote.InstrumentID(), Price: quote.LastPrice(), PriceType: LastTradedPrice, EventID: quote.ID(), MarketRevision: revision, MarketChecksum: checksum, ExchangeTime: quote.ExchangeTime().UTC(), IngestedAt: quote.IngestedAt().UTC(), Readiness: state, ReadinessReason: reason}, nil
 }
 
 type MoneyValue struct {
@@ -144,7 +157,7 @@ func finalizePosition(value PositionValuation) (PositionValuation, error) {
 		mark = struct {
 			InstrumentID, PriceType, EventID, Revision, Checksum, ExchangeTime, IngestedAt, Readiness, Reason string
 			Price                                                                                             moneyWire
-		}{value.Mark.InstrumentID.String(), value.Mark.PriceType, value.Mark.EventID.String(), value.Mark.MarketRevision, value.Mark.MarketChecksum.String(), value.Mark.ExchangeTime.UTC().Format(time.RFC3339Nano), value.Mark.IngestedAt.UTC().Format(time.RFC3339Nano), string(value.Mark.Readiness), string(value.Mark.ReadinessReason), moneyWire{value.Mark.Price.MinorUnits(), value.Mark.Price.Currency().String()}}
+		}{value.Mark.InstrumentID.String(), string(value.Mark.PriceType), value.Mark.EventID.String(), value.Mark.MarketRevision, value.Mark.MarketChecksum.String(), value.Mark.ExchangeTime.UTC().Format(time.RFC3339Nano), value.Mark.IngestedAt.UTC().Format(time.RFC3339Nano), string(value.Mark.Readiness), string(value.Mark.ReadinessReason), moneyWire{value.Mark.Price.MinorUnits(), value.Mark.Price.Currency().String()}}
 	}
 	raw, _ := json.Marshal(struct {
 		SchemaVersion, PolicyVersion, PositionID, PortfolioID, InstrumentID, PositionChecksum, Status, Reason, ValuedAt string

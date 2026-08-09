@@ -12,7 +12,8 @@ flowchart LR
     P3 --> P4["Phase 4: Execution & OMS"]
     P4 --> P5["Phase 5: Broker Adapter & Reliability Validation"]
     P5 --> P6["Phase 6: Positions, P&L, and Reconciliation"]
-    P6 --> G{"Explicit live approval?"}
+    P6 --> P7["Phase 7: PAPER/SHADOW Runtime Orchestration"]
+    P7 --> G{"Explicit live approval?"}
     G -->|No| PT["Continue paper trading"]
     G -->|Yes| LP["Separately scoped live pilot"]
 ```
@@ -42,6 +43,8 @@ Each phase has objective entry and exit criteria. Passing a technical milestone 
   ingestion, atomic progress, and non-mutating broker-position reconciliation.
   Milestone 3 adds deterministic canonical-LTP valuation, explicit incomplete
   financial state, provider-neutral risk input, and Phase 6 release evidence.
+- Phase 7 Milestone 1 composes Phases 1-6 into a calendar-driven, bounded,
+  restartable PAPER/SHADOW runtime with CAS regimes and no broker mutation.
 
 ## Invariants
 

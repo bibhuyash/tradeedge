@@ -30,6 +30,13 @@ type fixtureDay struct {
 	Date     string             `json:"date"`
 	Status   calendar.DayStatus `json:"status"`
 	Sessions []fixtureSession   `json:"sessions,omitempty"`
+	Regimes  []fixtureRegime    `json:"regimes,omitempty"`
+}
+
+type fixtureRegime struct {
+	Open   string          `json:"open"`
+	Close  string          `json:"close"`
+	Regime calendar.Regime `json:"regime"`
 }
 
 type fixtureSession struct {
@@ -81,7 +88,7 @@ func Decode(data []byte) (*calendar.Schedule, error) {
 	if err := decoder.Decode(&trailing); !errors.Is(err, io.EOF) {
 		return nil, calendar.ErrInvalidCalendar
 	}
-	if encoded.SchemaVersion != 1 || encoded.Timezone != "Asia/Kolkata" {
+	if (encoded.SchemaVersion != 1 && encoded.SchemaVersion != 2) || encoded.Timezone != "Asia/Kolkata" {
 		return nil, calendar.ErrInvalidCalendar
 	}
 	location, err := time.LoadLocation(encoded.Timezone)
@@ -116,8 +123,23 @@ func Decode(data []byte) (*calendar.Schedule, error) {
 				Open: open, Close: closeTime, Kind: value.Kind, Note: strings.TrimSpace(value.Note),
 			})
 		}
+		regimes := make([]calendar.RegimeWindow, 0, len(item.Regimes))
+		for _, value := range item.Regimes {
+			if encoded.SchemaVersion < 2 {
+				return nil, calendar.ErrInvalidCalendar
+			}
+			open, err := parseLocalTime(date, value.Open, location)
+			if err != nil {
+				return nil, err
+			}
+			closeTime, err := parseLocalTime(date, value.Close, location)
+			if err != nil {
+				return nil, err
+			}
+			regimes = append(regimes, calendar.RegimeWindow{Open: open, Close: closeTime, Regime: value.Regime})
+		}
 		days = append(days, calendar.TradingDay{
-			Exchange: item.Exchange, Date: date, Status: item.Status, Sessions: sessions,
+			Exchange: item.Exchange, Date: date, Status: item.Status, Sessions: sessions, Regimes: regimes,
 		})
 	}
 	return calendar.New(calendar.Spec{

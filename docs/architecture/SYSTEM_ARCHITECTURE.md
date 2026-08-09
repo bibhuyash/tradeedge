@@ -25,6 +25,12 @@ portfolio financial snapshot from stable accounting and canonical market-data
 revision sets. The financial module has no accounting-write or broker port;
 Phase 3 consumes it through a consumer-owned provider-neutral boundary.
 
+Phase 7 Milestone 1 adds one orchestration owner above these modules. It
+aggregates mode-specific readiness, derives session/CAS state from the
+versioned exchange calendar, restores a consistent set of subsystem heads
+before activation, and applies bounded synchronous backpressure. It does not
+replace any subsystem's atomic publication boundary.
+
 ```mermaid
 flowchart TB
     Z["Zerodha APIs"] --> A["Provider adapters"]
@@ -64,6 +70,10 @@ The monolith isolates domain modules, owns orchestration, applies timeouts and c
   The reconciliation package has no accounting-write or broker-mutation port.
 - M3 market prices are valuation inputs only. Incomplete or stale financial
   state is explicit and cannot satisfy valuation-dependent risk rules.
+- PAPER/SHADOW are the only pipeline-capable runtime modes. OFFLINE and
+  LIVE_DISABLED cannot become trading-ready, and no live-enabled route exists.
+- SHADOW has one hypothetical fill-derived TradeEdge book; real broker
+  positions remain non-comparable observation evidence.
 
 ## Failure Modes
 

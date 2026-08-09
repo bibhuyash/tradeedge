@@ -37,6 +37,7 @@ type Options struct {
 	RiskOperations        http.Handler
 	ExecutionOperations   http.Handler
 	IntegrationOperations http.Handler
+	RuntimeOperations     http.Handler
 	Metrics               http.Handler
 }
 
@@ -115,6 +116,9 @@ func NewHandlerWithOptions(process *Readiness, options Options) http.Handler {
 	}
 	if options.IntegrationOperations != nil {
 		mux.Handle("/api/v1/integrations/zerodha/", options.IntegrationOperations)
+	}
+	if options.RuntimeOperations != nil {
+		mux.Handle("/api/v1/runtime/", options.RuntimeOperations)
 	}
 	return mux
 }

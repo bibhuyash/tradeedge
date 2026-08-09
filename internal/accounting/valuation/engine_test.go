@@ -70,6 +70,19 @@ func TestLongShortProfitLossAndAtCost(t *testing.T) {
 		})
 	}
 }
+
+func TestCASAndOfficialClosePricesCannotMasqueradeAsLTP(t *testing.T) {
+	position := testPosition(t, domain.SideBuy, 10, 100)
+	at := accountingfixture.BaseTime.Add(time.Second)
+	for _, priceType := range []PriceType{CASIndicativePrice, CASReferencePrice, CASEquilibriumPrice, OfficialClosePrice} {
+		mark := testMark(t, position, 120, at, readiness.StateReady)
+		mark.PriceType = priceType
+		value, err := EvaluatePosition(position, &mark, at.Add(time.Millisecond), DefaultPolicy())
+		if err != nil || value.Status != StatusUnavailable || value.Reason != ReasonInvalidPrice || value.UnrealizedPnL.Known() {
+			t.Fatalf("price type %s became valuation authority: value=%+v err=%v", priceType, value, err)
+		}
+	}
+}
 func TestFlatMissingStaleFutureAndOverflow(t *testing.T) {
 	p := testPosition(t, domain.SideBuy, 10, 100)
 	at := accountingfixture.BaseTime.Add(time.Second)

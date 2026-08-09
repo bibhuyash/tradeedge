@@ -222,3 +222,24 @@ proposals, reserve capital, mutate portfolio state, publish checkpoints, or
 create execution artifacts. Identical proposal, snapshot, configuration,
 policy order, evidence, and injected timestamps produce identical canonical
 bytes and identities.
+
+## Phase 7 Milestone 1 Runtime Composition
+
+```mermaid
+flowchart LR
+    C["Calendar + readiness"] --> T["TradingRuntime admission"]
+    M["Canonical market event"] --> T
+    T --> S["Strategy evaluation"]
+    S --> R["Portfolio/risk decision"]
+    R --> O["Execution intent + OMS"]
+    O --> B["PAPER or SHADOW paper delegate"]
+    B --> F["Committed fills"]
+    F --> A["Position accounting"]
+    A --> V["LTP valuation"]
+    V --> FS["Financial snapshot"]
+    FS --> R
+```
+
+Admission and each released stage are bounded. A runtime manifest binds the
+committed subsystem heads and broker/fill cursors used for continuation.
+PRE_CAS, CAS_ACTIVE, and POST_CAS come only from the versioned calendar.
