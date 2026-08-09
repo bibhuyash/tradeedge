@@ -63,8 +63,22 @@ durable PostgreSQL storage, and automatic repair remain outside M1.
 M2 does not add market valuation, unrealized P&L, portfolio equity, durable
 PostgreSQL, automatic correction, compensating orders, or live execution.
 
+## Milestone 3: Deterministic Financial State
+
+- [x] Latest eligible canonical quote LTP is the only mark; provenance,
+  freshness, clock skew, and readiness are explicit with no silent fallback.
+- [x] Immutable position valuations use checked integer open-basis arithmetic
+  and cannot mutate quantity, cost basis, realized P&L, or fill history.
+- [x] Atomic revisioned portfolio financial snapshots expose realized,
+  unrealized, total P&L, directional exposure, and explicit completeness.
+- [x] Partial, stale, and unavailable financial state is risk-ineligible;
+  portfolio equity remains unavailable without authoritative capital.
+- [x] Optimistic publication, idempotency, checkpoints, replay, bounded
+  coordination, telemetry, GET-only operations, and release evidence close M3.
+
 ## Closure
 
 Each milestone closes only after format, unit, deterministic replay, race/stress, vet,
 build, dependency, secret, floating-point-authority, and live-capability gates
-pass for the reviewed commit. M2 closure does not authorize Phase 6 M3 or live trading.
+pass for the reviewed commit. Phase 6 closure does not authorize live trading
+or Phase 7 runtime orchestration.

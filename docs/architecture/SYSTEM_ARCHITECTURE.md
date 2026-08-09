@@ -20,6 +20,11 @@ portfolio/account binding before extending that transaction with ingestion
 progress. A separate reconciler compares stable position revisions with
 provider-neutral broker observations and can publish evidence only.
 
+Phase 6 Milestone 3 derives immutable position valuations and an atomic
+portfolio financial snapshot from stable accounting and canonical market-data
+revision sets. The financial module has no accounting-write or broker port;
+Phase 3 consumes it through a consumer-owned provider-neutral boundary.
+
 ```mermaid
 flowchart TB
     Z["Zerodha APIs"] --> A["Provider adapters"]
@@ -57,6 +62,8 @@ The monolith isolates domain modules, owns orchestration, applies timeouts and c
   cost basis, or realized P&L.
 - M2 ingestion progress is atomic with its application and position revision.
   The reconciliation package has no accounting-write or broker-mutation port.
+- M3 market prices are valuation inputs only. Incomplete or stale financial
+  state is explicit and cannot satisfy valuation-dependent risk rules.
 
 ## Failure Modes
 

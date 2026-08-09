@@ -34,8 +34,14 @@ jobs:
       - name: Run full race suite
         run: go test -race ./...
 
-      - name: Repeat accounting race and replay tests
-        run: go test -race ./internal/accounting/engine ./internal/accounting/coordinator ./internal/accounting/ingestion ./internal/accounting/reconciliation -count=10
+      - name: Repeat accounting, valuation, and replay race tests
+        run: go test -race ./internal/accounting/engine ./internal/accounting/coordinator ./internal/accounting/ingestion ./internal/accounting/reconciliation ./internal/accounting/valuation ./internal/accounting/valuation/replay ./internal/adapters/accounting/memory -count=10
+
+      - name: Produce and validate Phase 6 release evidence
+        run: |
+          go run ./cmd/tradeedge-phase6-gate > phase-6-release.json
+          python -m json.tool phase-6-release.json >/dev/null
+          grep -q '"passed": true' phase-6-release.json
 
       - name: Enforce accounting boundaries
         shell: bash

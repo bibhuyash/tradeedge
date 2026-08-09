@@ -40,7 +40,8 @@ Each phase has objective entry and exit criteria. Passing a technical milestone 
 - Phase 6 Milestone 1 establishes immutable-fill-driven weighted-average
   positions and gross realized P&L. Milestone 2 adds authoritative OMS fill
   ingestion, atomic progress, and non-mutating broker-position reconciliation.
-  Market valuation and Phase 6 release closure remain M3.
+  Milestone 3 adds deterministic canonical-LTP valuation, explicit incomplete
+  financial state, provider-neutral risk input, and Phase 6 release evidence.
 
 ## Invariants
 

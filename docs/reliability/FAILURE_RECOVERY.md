@@ -113,6 +113,12 @@ quarantined pending a separately approved rebuild. Reconciliation revalidates
 the local revision before publishing evidence, so concurrent ingestion yields
 a retryable conflict instead of stale evidence or an accounting mutation.
 
+Phase 6 Milestone 3 restores only a verified financial publication chain that
+binds its parent, stable position manifest, canonical mark manifest, policy,
+valuations, and snapshot. Restoration/replay recomputes canonical outputs.
+Source changes, overflow, cancellation, panic, or commit failure advance no
+financial revision; current degraded readiness remains operationally visible.
+
 ## Failure Modes
 
 Database loss, stale broker responses, split ownership, clock skew, repeated
