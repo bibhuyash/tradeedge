@@ -50,3 +50,20 @@ evidence pass. M1 closure alone does not authorize live trading or M2.
 
 M2 does not authorize live trading, Telegram commands, or a CAS strategy. M3
 trading-day closure and failure drills remain separate.
+
+## Milestone 3 Checklist
+
+- [x] Fail-closed Phase 7 closure schema and command.
+- [x] Deterministic PAPER/SHADOW full-day scenario inventory.
+- [x] Market-data, strategy, risk, OMS, accounting, valuation, broker,
+  Telegram, CAS, and runtime failure-drill inventory with blast radii.
+- [x] Restart-boundary, Telegram-isolation, CAS-safety, replay, and
+  non-mutation enforcement fields.
+- [x] Same-commit Phase 1-7 regression, race, stress, security, and artifact
+  workflow.
+- [x] PAPER/SHADOW operating and evidence-preservation runbook.
+- [ ] Reviewed-commit Ubuntu closure workflow and checksummed artifact pass.
+
+M3 is closed only by the final workflow artifact. Local harness output without
+workflow identity and every external gate fails closed. Closure authorizes
+continued PAPER/SHADOW validation only; it never authorizes live trading.
