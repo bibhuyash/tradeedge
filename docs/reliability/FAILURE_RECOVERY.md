@@ -119,6 +119,13 @@ valuations, and snapshot. Restoration/replay recomputes canonical outputs.
 Source changes, overflow, cancellation, panic, or commit failure advance no
 financial revision; current degraded readiness remains operationally visible.
 
+Phase 7 Milestone 1 restores every Phase 1-6 authority first, then verifies a
+checksummed runtime manifest binding their committed heads, cursors, calendar,
+mode, and configuration. Strategies remain inactive until mode-specific
+readiness is recomputed. An unclean drain, corrupt manifest, UNKNOWN order,
+canonical accounting predecessor, or reconciliation disagreement enters a
+halted continuation path and cannot be repaired by orchestration guesses.
+
 ## Failure Modes
 
 Database loss, stale broker responses, split ownership, clock skew, repeated

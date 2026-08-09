@@ -1,0 +1,54 @@
+name: Phase 7 Runtime Release
+
+on:
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: phase-7-runtime-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  runtime-evidence:
+    runs-on: ubuntu-latest
+    timeout-minutes: 25
+    steps:
+      - uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10 # v6
+      - uses: actions/setup-go@924ae3a1cded613372ab5595356fb5720e22ba16 # v6
+        with:
+          go-version-file: go.mod
+          cache: false
+      - name: Verify formatting, tests, vet, and build
+        run: |
+          test -z "$(gofmt -l .)"
+          go test ./...
+          go vet ./...
+          go build ./...
+      - name: Run full race suite
+        run: go test -race ./...
+      - name: Repeat runtime, calendar, replay, and Phase 2-6 boundaries
+        run: go test -race ./internal/tradingruntime/... ./internal/marketdata/calendar ./internal/strategy/runner ./internal/risk/runner ./internal/execution/coordinator ./internal/integration/zerodha ./internal/accounting/ingestion ./internal/accounting/valuation -count=10
+      - name: Produce Phase 7 M1 evidence
+        run: |
+          go run ./cmd/tradeedge-phase7-gate > phase-7-m1-release.json
+          python -m json.tool phase-7-m1-release.json >/dev/null
+          grep -q '"passed": true' phase-7-m1-release.json
+          sha256sum phase-7-m1-release.json > phase-7-m1-release.json.sha256
+      - name: Enforce runtime safety boundaries
+        shell: bash
+        run: |
+          set -euo pipefail
+          ! grep -RInE --include='*.go' --exclude='*_test.go' --exclude='gate.go' '\bLIVE_ENABLED\b|SubmitOrder|PlaceOrder' internal/tradingruntime cmd/tradeedge-phase7-gate
+          ! grep -RInEi --include='*.go' 'api[_-]?key|access[_-]?token|client[_-]?secret' internal/tradingruntime
+          ! grep -RInE --include='*.go' '\b(float32|float64)\b' internal/tradingruntime
+          ! grep -RInE --include='*.go' '^\s*"github.com/.*/internal/adapters/broker/' internal/tradingruntime
+      - uses: actions/upload-artifact@v4
+        with:
+          name: phase-7-m1-runtime-evidence
+          path: |
+            phase-7-m1-release.json
+            phase-7-m1-release.json.sha256
+          retention-days: 90

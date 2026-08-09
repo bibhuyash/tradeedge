@@ -51,6 +51,10 @@ func EvaluatePosition(position accountingmodel.PositionSnapshot, mark *MarkPrice
 		base.Reason = ReasonRevisionConflict
 		return finalizePosition(base)
 	}
+	if mark.PriceType != LastTradedPrice {
+		base.Status, base.Reason = StatusUnavailable, ReasonInvalidPrice
+		return finalizePosition(base)
+	}
 	if mark.Price.IsZeroValue() || mark.Price.MinorUnits() <= 0 {
 		base.Reason = ReasonInvalidPrice
 		return finalizePosition(base)

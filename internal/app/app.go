@@ -34,6 +34,8 @@ type Options struct {
 	IntegrationOperations http.Handler
 	IntegrationRuntime    interface{ Shutdown(context.Context) error }
 	StrategyRunner        interface{ Shutdown(context.Context) error }
+	RuntimeOperations     http.Handler
+	TradingRuntime        interface{ Shutdown(context.Context) error }
 }
 
 func RunWithMarketReadiness(
@@ -121,6 +123,7 @@ func RunWithOptions(
 		StrategyOperations:    strategyOperations,
 		ExecutionOperations:   options.ExecutionOperations,
 		IntegrationOperations: integrationOperations,
+		RuntimeOperations:     options.RuntimeOperations,
 	})
 	if err != nil {
 		return fmt.Errorf("create HTTP server: %w", err)
@@ -152,12 +155,16 @@ func RunWithOptions(
 	shutdownCtx, cancel := context.WithTimeout(context.Background(), cfg.ShutdownTimeout)
 	defer cancel()
 	var shutdownErrors []error
-	if strategyRuntime != nil {
+	if options.TradingRuntime != nil {
+		if err := options.TradingRuntime.Shutdown(shutdownCtx); err != nil {
+			shutdownErrors = append(shutdownErrors, fmt.Errorf("shutdown trading runtime: %w", err))
+		}
+	} else if strategyRuntime != nil {
 		if err := strategyRuntime.Shutdown(shutdownCtx); err != nil {
 			shutdownErrors = append(shutdownErrors, fmt.Errorf("shutdown strategy runner: %w", err))
 		}
 	}
-	if integrationRuntime != nil {
+	if options.TradingRuntime == nil && integrationRuntime != nil {
 		if err := integrationRuntime.Shutdown(shutdownCtx); err != nil {
 			shutdownErrors = append(shutdownErrors, fmt.Errorf("shutdown zerodha integration: %w", err))
 		}

@@ -49,11 +49,29 @@ type Session struct {
 	Note  string
 }
 
+// Regime identifies an exchange-defined market regime. It is calendar data,
+// not a strategy-owned wall-clock convention.
+type Regime string
+
+const (
+	RegimeNormal  Regime = "NORMAL"
+	RegimePreCAS  Regime = "PRE_CAS"
+	RegimeCAS     Regime = "CAS_ACTIVE"
+	RegimePostCAS Regime = "POST_CAS"
+)
+
+type RegimeWindow struct {
+	Open   time.Time
+	Close  time.Time
+	Regime Regime
+}
+
 type TradingDay struct {
 	Exchange domain.Exchange
 	Date     domain.CivilDate
 	Status   DayStatus
 	Sessions []Session
+	Regimes  []RegimeWindow
 }
 
 type Window struct {
@@ -82,6 +100,7 @@ type Calendar interface {
 		interval model.CandleInterval,
 	) ([]Window, error)
 	SessionAt(ctx context.Context, exchange domain.Exchange, at time.Time) (model.MarketSession, bool, error)
+	RegimeAt(ctx context.Context, exchange domain.Exchange, at time.Time) (Regime, bool, error)
 }
 
 type Schedule struct {
@@ -138,6 +157,34 @@ func New(spec Spec) (*Schedule, error) {
 				return nil, ErrInvalidCalendar
 			}
 		}
+		regimes := append([]RegimeWindow(nil), day.Regimes...)
+		sort.Slice(regimes, func(i, j int) bool { return regimes[i].Open.Before(regimes[j].Open) })
+		if len(regimes) != 0 && len(regimes) != 3 {
+			return nil, ErrInvalidCalendar
+		}
+		expectedRegimes := []Regime{RegimePreCAS, RegimeCAS, RegimePostCAS}
+		for index, regime := range regimes {
+			if !regime.Open.Before(regime.Close) || regime.Open.Location().String() != location.String() ||
+				regime.Close.Location().String() != location.String() || regime.Open.Year() != day.Date.Year() ||
+				regime.Open.Month() != day.Date.Month() || regime.Open.Day() != day.Date.Day() ||
+				(index > 0 && regime.Open.Before(regimes[index-1].Close)) {
+				return nil, ErrInvalidCalendar
+			}
+			if regime.Regime != expectedRegimes[index] {
+				return nil, ErrInvalidCalendar
+			}
+			contained := false
+			for _, session := range sessions {
+				if !regime.Open.Before(session.Open) && !regime.Close.After(session.Close) {
+					contained = true
+					break
+				}
+			}
+			if !contained {
+				return nil, ErrInvalidCalendar
+			}
+		}
+		day.Regimes = regimes
 		day.Sessions = sessions
 		days[key] = cloneDay(day)
 		exchanges[day.Exchange] = struct{}{}
@@ -149,6 +196,9 @@ func New(spec Spec) (*Schedule, error) {
 				string(session.Kind),
 				session.Note,
 			)
+		}
+		for _, regime := range regimes {
+			parts = append(parts, regime.Open.Format(time.RFC3339Nano), regime.Close.Format(time.RFC3339Nano), string(regime.Regime))
 		}
 		canonical = append(canonical, strings.Join(parts, "|"))
 	}
@@ -235,6 +285,37 @@ func (s *Schedule) SessionAt(
 	return model.MarketSession{}, false, nil
 }
 
+func (s *Schedule) RegimeAt(ctx context.Context, exchange domain.Exchange, at time.Time) (Regime, bool, error) {
+	local := at.In(s.location)
+	date, err := domain.NewCivilDate(local.Year(), local.Month(), local.Day())
+	if err != nil {
+		return "", false, err
+	}
+	day, err := s.Day(ctx, exchange, date)
+	if err != nil {
+		return "", false, err
+	}
+	if day.Status == DayHoliday {
+		return "", false, nil
+	}
+	inside := false
+	for _, session := range day.Sessions {
+		if !at.Before(session.Open) && at.Before(session.Close) {
+			inside = true
+			break
+		}
+	}
+	if !inside {
+		return "", false, nil
+	}
+	for _, window := range day.Regimes {
+		if !at.Before(window.Open) && at.Before(window.Close) {
+			return window.Regime, true, nil
+		}
+	}
+	return RegimeNormal, true, nil
+}
+
 func (s *Schedule) ExpectedWindows(
 	ctx context.Context,
 	exchange domain.Exchange,
@@ -270,6 +351,7 @@ func dayKey(exchange domain.Exchange, date domain.CivilDate) string {
 
 func cloneDay(day TradingDay) TradingDay {
 	day.Sessions = append([]Session(nil), day.Sessions...)
+	day.Regimes = append([]RegimeWindow(nil), day.Regimes...)
 	return day
 }
 
