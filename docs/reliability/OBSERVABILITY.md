@@ -1,5 +1,10 @@
 # Observability
 
+Phase 6 financial telemetry uses only bounded operation, outcome, readiness,
+and reason labels. Portfolio, instrument, account, order, and fill identities
+are forbidden Prometheus labels. Financial operations are bounded and GET-only;
+they cannot trigger valuation, reconciliation, restoration, or broker activity.
+
 ## Scope
 
 TradeEdge uses structured logs, metrics, traces, health probes, and append-only audit events to explain operation and decisions.
