@@ -45,6 +45,9 @@ Each phase has objective entry and exit criteria. Passing a technical milestone 
   financial state, provider-neutral risk input, and Phase 6 release evidence.
 - Phase 7 Milestone 1 composes Phases 1-6 into a calendar-driven, bounded,
   restartable PAPER/SHADOW runtime with CAS regimes and no broker mutation.
+- Phase 7 Milestone 3 supplies the fail-closed full-day, adversarial, restart,
+  replay, isolation, resource, regression, and operational evidence required
+  to close PAPER/SHADOW orchestration. It adds no live authority.
 
 ## Invariants
 
