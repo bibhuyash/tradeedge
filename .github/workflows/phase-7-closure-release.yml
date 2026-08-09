@@ -31,7 +31,7 @@ jobs:
         run: go test -race ./... -count=1 -timeout=20m
       - name: Focused failure, restart, replay, and notification stress
         run: |
-          go test -race ./internal/tradingruntime/... ./internal/notification/... ./internal/operations/... ./internal/releasegate/phase7closure -count=10 -timeout=15m
+          go test -race ./internal/tradingruntime/... ./internal/notification/... ./internal/operations/... ./internal/marketvalidation ./internal/releasegate/phase7closure -count=10 -timeout=15m
       - name: Phase 1-7 authoritative regressions
         run: |
           go test -race ./internal/marketdata/... ./internal/strategy/... ./internal/risk/... -count=2 -timeout=15m
@@ -63,10 +63,11 @@ jobs:
           set -euo pipefail
           ! grep -RInE --include='*.go' --exclude='*_test.go' --exclude='gate.go' '\bLIVE_ENABLED\b' internal cmd
           ! grep -RInE --include='*.go' --exclude='*_test.go' '(getUpdates|setWebhook|/buy|/sell)' internal/notification internal/operations
+          ! grep -RInE --include='*.go' --exclude='*_test.go' '(getUpdates|setWebhook|/buy|/sell|/stop)' internal/marketvalidation cmd/tradeedge-validation
           ! grep -RInE --include='*.go' '\b(float32|float64)\b' internal/accounting internal/risk internal/portfolio
           ! grep -RInE --include='*.go' '(TELEGRAM_BOT_TOKEN|TELEGRAM_CHAT_ID|access[_-]?token|api[_-]?secret).*(Info|Debug|Warn|Error|Printf)' internal
           ! grep -RInE --include='*.go' 'internal/adapters/broker/' internal/strategy internal/risk internal/accounting internal/notification internal/operations
-          go test ./internal/platform/httpserver ./internal/marketdata/opshttp ./internal/strategy/opshttp ./internal/risk/opshttp ./internal/execution/opshttp ./internal/accounting/valuation/opshttp ./internal/operations/opshttp
+          go test ./internal/platform/httpserver ./internal/marketdata/opshttp ./internal/strategy/opshttp ./internal/risk/opshttp ./internal/execution/opshttp ./internal/accounting/valuation/opshttp ./internal/operations/opshttp ./internal/marketvalidation
       - name: Produce fail-closed closure evidence
         env:
           TRADEEDGE_GATE_ORDINARY: passed

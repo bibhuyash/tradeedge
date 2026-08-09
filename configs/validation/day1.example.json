@@ -1,0 +1,20 @@
+{
+  "schema_version": "market-validation-readiness/v1",
+  "trading_date": "2099-01-01",
+  "expected_commit": "0000000000000000000000000000000000000000",
+  "mode": "PAPER",
+  "base_url": "http://127.0.0.1:8080",
+  "evidence_root": ".cache/market-validation/2099-01-01",
+  "portfolio_id": "0000000000000000000000000000000000000000000000000000000000000000",
+  "scope": "OPERATIONS_ONLY",
+  "telegram_required": true,
+  "files": {
+    "calendar": ".cache/market-validation/config/calendar.json",
+    "instrument_master": ".cache/market-validation/config/instrument-master.json",
+    "watchlist": ".cache/market-validation/config/watchlist.json",
+    "strategies": "configs/validation/strategies-disabled.json",
+    "portfolio": ".cache/market-validation/config/portfolio.json",
+    "risk": ".cache/market-validation/config/risk.json",
+    "telegram_check": ".cache/market-validation/2099-01-01/telegram-check.json"
+  }
+}

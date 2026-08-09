@@ -96,13 +96,27 @@ make format
 
 These run `go build ./...`, `go test ./...`, `go vet ./...`, and `gofmt` respectively.
 
+## Market-validation evidence tool
+
+`tradeedge-validation` performs fail-closed Day-1 checks and produces immutable
+daily records and 10-20 session scorecards. It does not start a runtime, enable
+live trading, or grant order authority. The checked-in Day-1 configuration is a
+placeholder and intentionally cannot pass. See
+`docs/runbooks/MARKET_VALIDATION_DAY_1.md` before using it.
+
+```sh
+go run ./cmd/tradeedge-validation readiness -config <approved-day1.json> -output <evidence>/readiness.json -repo .
+go run ./cmd/tradeedge-validation finalize-day -input <draft.json> -output <records>/YYYY-MM-DD.MODE.day.json
+go run ./cmd/tradeedge-validation scorecard -records <records> -output <evidence>/scorecard.json
+```
+
 ## GitHub Actions
 
 The repository has four safety-scoped workflows:
 
 - **CI** runs formatting verification, race-enabled tests, `go vet`, and a
   complete build for pull requests and pushes to `main`.
-- **Delivery** runs the same verification and packages the two Linux AMD64
+- **Delivery** runs the same verification and packages the three Linux AMD64
   commands with SHA-256 checksums for `v*` tags or an explicit manual run.
 - **Phase 1.1 market-data release gate** is manual and always runs ordinary
   verification, race-enabled tests, every classification/load profile, and a
@@ -112,9 +126,10 @@ The repository has four safety-scoped workflows:
   repository, fixture, and replay tests ten times. It uploads a machine-readable
   summary without repeating the 30-minute market-data soak.
 
-Delivery produces a short-lived GitHub Actions artifact. It does not create a
-GitHub Release, deploy an environment, access credentials, connect to Zerodha,
-or enable live trading. Production deployment remains blocked until hosting,
+Delivery packages the application, historical market-data tool, and
+market-validation evidence tool in a short-lived GitHub Actions artifact. It
+does not create a GitHub Release, deploy an environment, access credentials,
+connect to Zerodha, or enable live trading. Production deployment remains blocked until hosting,
 static outbound IP, secret storage, approval gates, rollback, and kill-switch
 requirements are approved.
 

@@ -45,13 +45,14 @@ jobs:
           mkdir -p dist
           go build -trimpath -o dist/tradeedge-linux-amd64 ./cmd/tradeedge
           go build -trimpath -o dist/tradeedge-marketdata-linux-amd64 ./cmd/tradeedge-marketdata
+          go build -trimpath -o dist/tradeedge-validation-linux-amd64 ./cmd/tradeedge-validation
 
       - name: Write checksums and build metadata
         shell: bash
         run: |
           (
             cd dist
-            sha256sum tradeedge-linux-amd64 tradeedge-marketdata-linux-amd64 > SHA256SUMS
+            sha256sum tradeedge-linux-amd64 tradeedge-marketdata-linux-amd64 tradeedge-validation-linux-amd64 > SHA256SUMS
           )
           {
             echo "repository=${GITHUB_REPOSITORY}"
