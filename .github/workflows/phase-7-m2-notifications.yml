@@ -1,0 +1,57 @@
+name: Phase 7 M2 Operational Notifications
+
+on:
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: phase-7-m2-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  notification-evidence:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10 # v6
+      - uses: actions/setup-go@924ae3a1cded613372ab5595356fb5720e22ba16 # v6
+        with:
+          go-version-file: go.mod
+          cache: false
+      - name: Format, test, vet, and build
+        run: |
+          test -z "$(gofmt -l .)"
+          go test ./...
+          go vet ./...
+          go build ./...
+      - name: Full race suite
+        run: go test -race ./... -count=1 -timeout=20m
+      - name: Repeated notification, CAS, reporting, runtime, and Phase 3-6 regressions
+        run: |
+          go test -race ./internal/notification/... ./internal/adapters/notification/... ./internal/operations/... ./internal/tradingruntime/... -count=10
+          go test -race ./internal/risk/... ./internal/execution/... ./internal/integration/zerodha/... ./internal/accounting/... -count=2
+      - name: Enforce safety and dependency boundaries
+        shell: bash
+        run: |
+          set -euo pipefail
+          ! grep -RInE --include='*.go' --exclude='*_test.go' '\b(LIVE_ENABLED|SubmitOrder|PlaceOrder)\b' internal/notification internal/operations internal/adapters/notification
+          ! grep -RInE --include='*.go' --exclude='*_test.go' '(getUpdates|setWebhook|/buy|/sell|/stop)' internal/notification internal/operations internal/adapters/notification
+          ! grep -RInE --include='*.go' '\b(float32|float64)\b' internal/notification internal/operations
+          ! grep -RInE --include='*.go' 'internal/adapters/broker/' internal/notification internal/operations
+          ! grep -RInE --include='*.go' '(TELEGRAM_BOT_TOKEN|TELEGRAM_CHAT_ID).*(Info|Debug|Warn|Error|Printf)' internal
+      - name: Produce checksummed M2 evidence
+        run: |
+          mkdir -p artifacts
+          go run ./cmd/tradeedge-phase7-m2-gate > artifacts/phase-7-m2-release.json
+          python -m json.tool artifacts/phase-7-m2-release.json >/dev/null
+          grep -q '"passed":true' artifacts/phase-7-m2-release.json
+          sha256sum artifacts/phase-7-m2-release.json > artifacts/phase-7-m2-release.json.sha256
+      - uses: actions/upload-artifact@v4
+        with:
+          name: phase-7-m2-operational-evidence
+          path: artifacts/
+          if-no-files-found: error
+          retention-days: 90

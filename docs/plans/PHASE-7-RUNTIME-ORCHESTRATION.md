@@ -37,5 +37,16 @@ exposure at the smallest safe scope.
 
 M1 closes only when formatting, full tests, full race, repeated runtime/replay
 and Phase 2-6 regressions, vet, build, capability scans, and checksummed release
-evidence pass. Closure does not authorize live trading or Phase 7 M2.
+evidence pass. M1 closure alone does not authorize live trading or M2.
 
+## Milestone 2 Checklist
+
+- [x] Provider-neutral immutable operational events and deterministic identities.
+- [x] Bounded asynchronous dispatcher, retries, rate limits, suppression, and failure evidence.
+- [x] Optional outbound-only Telegram adapter and redacted configuration.
+- [x] Independent structured CAS evidence and deterministic EOD reporting.
+- [x] Replay delivery suppression, bounded telemetry, and GET-only operational APIs.
+- [ ] Phase 7 M2 Ubuntu race/stress workflow and checksummed evidence pass.
+
+M2 does not authorize live trading, Telegram commands, or a CAS strategy. M3
+trading-day closure and failure drills remain separate.

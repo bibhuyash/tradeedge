@@ -108,6 +108,21 @@ func TestLoadWithLookupAcceptsEveryNonMutatingZerodhaMode(t *testing.T) {
 	}
 }
 
+func TestTelegramIsOptionalAndValidationRedactsSecrets(t *testing.T) {
+	if cfg, err := LoadWithLookup(mapLookup(nil)); err != nil || cfg.TelegramEnabled {
+		t.Fatalf("disabled default = %#v, %v", cfg, err)
+	}
+	secret := "very-secret/token"
+	_, err := LoadWithLookup(mapLookup(map[string]string{"TRADEEDGE_TELEGRAM_ENABLED": "true", "TRADEEDGE_TELEGRAM_BOT_TOKEN": secret, "TRADEEDGE_TELEGRAM_CHAT_ID": "chat"}))
+	if err == nil || strings.Contains(err.Error(), secret) {
+		t.Fatalf("unsafe validation error: %v", err)
+	}
+	cfg, err := LoadWithLookup(mapLookup(map[string]string{"TRADEEDGE_TELEGRAM_ENABLED": "true", "TRADEEDGE_TELEGRAM_BOT_TOKEN": "123:valid-token", "TRADEEDGE_TELEGRAM_CHAT_ID": "-123"}))
+	if err != nil || !cfg.TelegramEnabled {
+		t.Fatalf("enabled configuration rejected: %#v %v", cfg, err)
+	}
+}
+
 func mapLookup(values map[string]string) LookupEnv {
 	return func(key string) (string, bool) {
 		value, ok := values[key]

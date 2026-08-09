@@ -14,6 +14,7 @@ import (
 	executiontelemetry "github.com/bibhuyash/tradeedge/internal/execution/telemetry"
 	"github.com/bibhuyash/tradeedge/internal/marketdata/model"
 	"github.com/bibhuyash/tradeedge/internal/marketdata/telemetry"
+	"github.com/bibhuyash/tradeedge/internal/notification"
 	risktelemetry "github.com/bibhuyash/tradeedge/internal/risk/telemetry"
 	strategytelemetry "github.com/bibhuyash/tradeedge/internal/strategy/telemetry"
 )
@@ -69,6 +70,8 @@ type Recorder struct {
 	riskDuration        *prometheus.HistogramVec
 	riskPublish         prometheus.Histogram
 	riskInFlight        prometheus.Gauge
+	notificationEvents  *prometheus.CounterVec
+	notificationQueue   prometheus.Gauge
 
 	mu            sync.Mutex
 	readinessSeen map[string]string
@@ -119,6 +122,8 @@ func New() *Recorder {
 		riskDuration:        prometheus.NewHistogramVec(prometheus.HistogramOpts{Name: "tradeedge_risk_evaluation_duration_seconds", Help: "Portfolio-risk evaluation duration.", Buckets: processingBuckets}, []string{"outcome"}),
 		riskPublish:         prometheus.NewHistogram(prometheus.HistogramOpts{Name: "tradeedge_risk_publication_duration_seconds", Help: "Atomic portfolio-risk publication duration.", Buckets: processingBuckets}),
 		riskInFlight:        prometheus.NewGauge(prometheus.GaugeOpts{Name: "tradeedge_risk_in_flight", Help: "Current portfolio-risk evaluations in flight."}),
+		notificationEvents:  prometheus.NewCounterVec(prometheus.CounterOpts{Name: "tradeedge_operational_notifications_total", Help: "Bounded provider-neutral notification outcomes."}, []string{"operation", "outcome", "severity", "category", "kind", "reason"}),
+		notificationQueue:   prometheus.NewGauge(prometheus.GaugeOpts{Name: "tradeedge_operational_notification_queue_depth", Help: "Current bounded notification queue depth."}),
 		readinessSeen:       make(map[string]string),
 	}
 	r.registry.MustRegister(collectors.NewGoCollector(), collectors.NewProcessCollector(collectors.ProcessCollectorOpts{}))
@@ -132,7 +137,24 @@ func New() *Recorder {
 		r.executionDuration, r.executionInFlight, r.executionUnknown)
 	r.registry.MustRegister(r.brokerReads, r.brokerReadDuration, r.brokerReadInFlight)
 	r.registry.MustRegister(r.riskDecisions, r.riskRules, r.riskDuration, r.riskPublish, r.riskInFlight)
+	r.registry.MustRegister(r.notificationEvents, r.notificationQueue)
 	return r
+}
+
+// RecordNotification uses only fixed event vocabularies. Free-form identities
+// and provider errors are collapsed before becoming metric labels.
+func (r *Recorder) RecordNotification(event notification.MetricEvent) {
+	reason := boundedNotificationReason(event.Reason)
+	r.notificationEvents.WithLabelValues(event.Operation, event.Outcome, event.Severity, event.Category, event.Kind, reason).Inc()
+	r.notificationQueue.Set(float64(event.QueueDepth))
+}
+func boundedNotificationReason(value string) string {
+	switch value {
+	case "", "COALESCE_WINDOW", "QUEUE_FULL", "SHUTDOWN", "DUPLICATE", "IDENTITY_COLLISION", "REPLAY_POLICY", "PROVIDER_DISABLED", "PRESENTATION_POLICY", "EVICTED_BY_CRITICAL", "EVICTED_BY_WARNING", "RATE_LIMITED", "TRANSPORT", "SERVER_ERROR", "PERMANENT_REQUEST", "PERMANENT_FAILURE", "DISPATCHER_PANIC", "SHUTDOWN_TIMEOUT":
+		return value
+	default:
+		return "OTHER"
+	}
 }
 
 func streamLabels() []string {
