@@ -7,6 +7,9 @@ import (
 )
 
 func TestGateFailsClosedWithoutWorkflowEvidence(t *testing.T) {
+	for _, name := range []string{"GITHUB_SHA", "GITHUB_WORKFLOW", "GITHUB_RUN_ID", "GITHUB_RUN_ATTEMPT"} {
+		t.Setenv(name, "")
+	}
 	r := Run(context.Background())
 	if r.Passed || r.FinalResult != "FAILED" || len(r.FailureReasons) == 0 {
 		t.Fatalf("gate did not fail closed: %+v", r)
