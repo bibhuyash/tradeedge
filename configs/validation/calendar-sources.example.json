@@ -1,0 +1,12 @@
+{
+  "schema_version": "market-validation-calendar-sources/v1",
+  "sources": [
+    {
+      "circular_id": "REPLACE_WITH_NSE_CIRCULAR_ID",
+      "segment": "CAPITAL_MARKET",
+      "url": "https://www.nseindia.com/replace-with-current-source",
+      "path": "replace-with-downloaded-source.pdf",
+      "sha256": "0000000000000000000000000000000000000000000000000000000000000000"
+    }
+  ]
+}

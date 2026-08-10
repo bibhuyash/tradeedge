@@ -1,0 +1,35 @@
+{
+  "schema_version": "market-validation-authorization/v1",
+  "checksum": "",
+  "application_commit": "0000000000000000000000000000000000000000",
+  "mode": "PAPER",
+  "scope": "OPERATIONS_ONLY",
+  "trading_date": "2099-01-01",
+  "authorized_at": "2099-01-01T09:00:00+05:30",
+  "expires_at": "2099-01-01T16:30:00+05:30",
+  "approved_by": "REPLACE_WITH_APPROVER_ROLE",
+  "evidence_root": ".cache/market-validation/2099-01-01",
+  "telegram_configuration_identity": "outbound-telegram-configuration/v1",
+  "paper_capital_minor": 100000000,
+  "currency": "INR",
+  "portfolio_id": "REPLACE_WITH_DECODED_PORTFOLIO_IDENTITY",
+  "strategy": {
+    "name": "NONE",
+    "version": "strategies-disabled/v1",
+    "classification": "NONE",
+    "configuration_hash": "0000000000000000000000000000000000000000000000000000000000000000",
+    "cas_policy": "CAS_DISABLED",
+    "enabled": false
+  },
+  "artifacts": {
+    "runtime_bundle": {"path":"../config/runtime-bundle.json","sha256":"0000000000000000000000000000000000000000000000000000000000000000","identity":"REPLACE_WITH_BUNDLE_CHECKSUM"},
+    "calendar": {"path":"../config/calendar.json","sha256":"0000000000000000000000000000000000000000000000000000000000000000","identity":"REPLACE_WITH_CALENDAR_VERSION"},
+    "calendar_approval": {"path":"../config/calendar-approval.json","sha256":"0000000000000000000000000000000000000000000000000000000000000000","identity":"REPLACE_WITH_CALENDAR_SHA256"},
+    "instrument_master": {"path":"../config/instrument-master.json","sha256":"0000000000000000000000000000000000000000000000000000000000000000","identity":"REPLACE_WITH_MASTER_VERSION"},
+    "watchlist": {"path":"../config/watchlist.json","sha256":"0000000000000000000000000000000000000000000000000000000000000000","identity":"REPLACE_WITH_WATCHLIST_VERSION"},
+    "strategies": {"path":"../../../configs/validation/strategies-disabled.json","sha256":"0000000000000000000000000000000000000000000000000000000000000000","identity":"strategies-disabled/v1"},
+    "portfolio": {"path":"../../../configs/validation/portfolio.paper.json","sha256":"0000000000000000000000000000000000000000000000000000000000000000","identity":"REPLACE_WITH_PORTFOLIO_HASH"},
+    "risk": {"path":"../../../configs/validation/risk.paper.json","sha256":"0000000000000000000000000000000000000000000000000000000000000000","identity":"REPLACE_WITH_RISK_HASH"}
+  },
+  "live_trading_authorized": false
+}

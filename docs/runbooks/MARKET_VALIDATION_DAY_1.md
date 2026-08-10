@@ -12,8 +12,9 @@ fixtures, manual JSON, or Telegram state for runtime evidence.
 
 Current blockers are:
 
-1. No approved current calendar, Zerodha mapping, watchlist, paper-capital
-   amount, portfolio policy, or risk policy is present.
+1. The approved M2 PAPER capital/risk policy and minimal watchlist selection are
+   present, but a current-date calendar and dump-derived Zerodha mappings must
+   still be generated and authorized for each session.
 2. No production-candidate strategy exists. Full-pipeline validation is
    unavailable; do not enable the moving-average engineering fixture.
 3. Day-1 date, commit, capital/risk policy, and evidence directory are not approved.
@@ -137,6 +138,7 @@ $env:TRADEEDGE_TRADING_MODE='paper'
 $env:TRADEEDGE_ZERODHA_MODE='PAPER'
 $env:TRADEEDGE_ZERODHA_READ_ONLY='true'
 $env:TRADEEDGE_RUNTIME_BUNDLE='.cache\market-validation\config\runtime-bundle.json'
+$env:TRADEEDGE_AUTHORIZATION_MANIFEST='.cache\market-validation\YYYY-MM-DD\authorization.json'
 $env:TRADEEDGE_CHECKPOINT_ROOT='.cache\market-validation\runtime-checkpoint'
 $env:TRADEEDGE_OPERATOR_CONTROL_SOCKET='/run/tradeedge/operator.sock'
 go run ./cmd/tradeedge

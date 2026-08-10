@@ -19,25 +19,26 @@ const (
 )
 
 type Config struct {
-	Environment            string
-	HTTPAddress            string
-	LogLevel               string
-	ShutdownTimeout        time.Duration
-	TradingMode            string
-	MarketDataCalendarPath string
-	MarketDataDatasetRoot  string
-	RuntimeBundlePath      string
-	CheckpointRoot         string
-	OperatorControlSocket  string
-	StrategyMaxConcurrency int
-	StrategyTimeout        time.Duration
-	RiskMaxConcurrency     int
-	RiskTimeout            time.Duration
-	ZerodhaMode            string
-	ZerodhaReadOnly        bool
-	TelegramEnabled        bool
-	telegramBotToken       string
-	telegramChatID         string
+	Environment               string
+	HTTPAddress               string
+	LogLevel                  string
+	ShutdownTimeout           time.Duration
+	TradingMode               string
+	MarketDataCalendarPath    string
+	MarketDataDatasetRoot     string
+	RuntimeBundlePath         string
+	AuthorizationManifestPath string
+	CheckpointRoot            string
+	OperatorControlSocket     string
+	StrategyMaxConcurrency    int
+	StrategyTimeout           time.Duration
+	RiskMaxConcurrency        int
+	RiskTimeout               time.Duration
+	ZerodhaMode               string
+	ZerodhaReadOnly           bool
+	TelegramEnabled           bool
+	telegramBotToken          string
+	telegramChatID            string
 }
 
 type LookupEnv func(string) (string, bool)
@@ -48,21 +49,22 @@ func Load() (Config, error) {
 
 func LoadWithLookup(lookup LookupEnv) (Config, error) {
 	cfg := Config{
-		Environment:            envOrDefault(lookup, "TRADEEDGE_ENV", "development"),
-		HTTPAddress:            envOrDefault(lookup, "TRADEEDGE_HTTP_ADDR", ":8080"),
-		LogLevel:               strings.ToLower(envOrDefault(lookup, "TRADEEDGE_LOG_LEVEL", "info")),
-		ShutdownTimeout:        10 * time.Second,
-		TradingMode:            strings.ToLower(envOrDefault(lookup, "TRADEEDGE_TRADING_MODE", ModePaper)),
-		MarketDataCalendarPath: envOrDefault(lookup, "TRADEEDGE_MARKETDATA_CALENDAR", ""),
-		MarketDataDatasetRoot:  envOrDefault(lookup, "TRADEEDGE_MARKETDATA_DATASET_ROOT", ""),
-		RuntimeBundlePath:      envOrDefault(lookup, "TRADEEDGE_RUNTIME_BUNDLE", ""),
-		CheckpointRoot:         envOrDefault(lookup, "TRADEEDGE_CHECKPOINT_ROOT", ""),
-		OperatorControlSocket:  envOrDefault(lookup, "TRADEEDGE_OPERATOR_CONTROL_SOCKET", ""),
-		StrategyMaxConcurrency: 4,
-		StrategyTimeout:        100 * time.Millisecond,
-		RiskMaxConcurrency:     4,
-		RiskTimeout:            100 * time.Millisecond,
-		ZerodhaMode:            strings.ToUpper(envOrDefault(lookup, "TRADEEDGE_ZERODHA_MODE", ZerodhaModeOffline)),
+		Environment:               envOrDefault(lookup, "TRADEEDGE_ENV", "development"),
+		HTTPAddress:               envOrDefault(lookup, "TRADEEDGE_HTTP_ADDR", ":8080"),
+		LogLevel:                  strings.ToLower(envOrDefault(lookup, "TRADEEDGE_LOG_LEVEL", "info")),
+		ShutdownTimeout:           10 * time.Second,
+		TradingMode:               strings.ToLower(envOrDefault(lookup, "TRADEEDGE_TRADING_MODE", ModePaper)),
+		MarketDataCalendarPath:    envOrDefault(lookup, "TRADEEDGE_MARKETDATA_CALENDAR", ""),
+		MarketDataDatasetRoot:     envOrDefault(lookup, "TRADEEDGE_MARKETDATA_DATASET_ROOT", ""),
+		RuntimeBundlePath:         envOrDefault(lookup, "TRADEEDGE_RUNTIME_BUNDLE", ""),
+		AuthorizationManifestPath: envOrDefault(lookup, "TRADEEDGE_AUTHORIZATION_MANIFEST", ""),
+		CheckpointRoot:            envOrDefault(lookup, "TRADEEDGE_CHECKPOINT_ROOT", ""),
+		OperatorControlSocket:     envOrDefault(lookup, "TRADEEDGE_OPERATOR_CONTROL_SOCKET", ""),
+		StrategyMaxConcurrency:    4,
+		StrategyTimeout:           100 * time.Millisecond,
+		RiskMaxConcurrency:        4,
+		RiskTimeout:               100 * time.Millisecond,
+		ZerodhaMode:               strings.ToUpper(envOrDefault(lookup, "TRADEEDGE_ZERODHA_MODE", ZerodhaModeOffline)),
 	}
 
 	if raw, ok := lookup("TRADEEDGE_SHUTDOWN_TIMEOUT"); ok {
@@ -165,8 +167,8 @@ func (c Config) Validate() error {
 	if (c.ZerodhaMode == ZerodhaModePaper || c.ZerodhaMode == ZerodhaModeShadow) && !c.ZerodhaReadOnly {
 		return errors.New("TRADEEDGE_ZERODHA_READ_ONLY=true is required for PAPER or SHADOW")
 	}
-	if c.ZerodhaMode == ZerodhaModePaper && (strings.TrimSpace(c.RuntimeBundlePath) == "" || strings.TrimSpace(c.CheckpointRoot) == "" || strings.TrimSpace(c.OperatorControlSocket) == "") {
-		return errors.New("PAPER market observation requires runtime bundle, checkpoint root, and operator control socket")
+	if c.ZerodhaMode == ZerodhaModePaper && (strings.TrimSpace(c.RuntimeBundlePath) == "" || strings.TrimSpace(c.AuthorizationManifestPath) == "" || strings.TrimSpace(c.CheckpointRoot) == "" || strings.TrimSpace(c.OperatorControlSocket) == "") {
+		return errors.New("PAPER market observation requires authorization manifest, runtime bundle, checkpoint root, and operator control socket")
 	}
 	if c.TelegramEnabled && (c.telegramBotToken == "" || c.telegramChatID == "" || strings.ContainsAny(c.telegramBotToken, " \t\r\n/?#") || strings.ContainsAny(c.telegramChatID, " \t\r\n")) {
 		return errors.New("invalid Telegram configuration")

@@ -102,6 +102,7 @@ func TestLoadWithLookupAcceptsEveryNonMutatingZerodhaMode(t *testing.T) {
 			}
 			if mode == ZerodhaModePaper {
 				values["TRADEEDGE_RUNTIME_BUNDLE"] = "runtime-bundle.json"
+				values["TRADEEDGE_AUTHORIZATION_MANIFEST"] = "authorization.json"
 				values["TRADEEDGE_CHECKPOINT_ROOT"] = ".cache/checkpoints"
 				values["TRADEEDGE_OPERATOR_CONTROL_SOCKET"] = ".cache/control.sock"
 			}

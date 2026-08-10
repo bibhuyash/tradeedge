@@ -46,6 +46,7 @@ type ReadinessConfig struct {
 		Strategies       string `json:"strategies"`
 		Portfolio        string `json:"portfolio"`
 		Risk             string `json:"risk"`
+		Authorization    string `json:"authorization"`
 		TelegramCheck    string `json:"telegram_check,omitempty"`
 	} `json:"files"`
 }
@@ -126,7 +127,7 @@ func RunReadiness(ctx context.Context, cfg ReadinessConfig, repoRoot string, cli
 	} else {
 		report.add("evidence_root", true, nil, 0, "")
 	}
-	names := []string{"calendar", "instrument_master", "watchlist", "strategies", "portfolio", "risk"}
+	names := []string{"calendar", "instrument_master", "watchlist", "strategies", "portfolio", "risk", "authorization"}
 	validationErrors := validateConfigurationSet(ctx, cfg)
 	for index, path := range configPaths(cfg) {
 		hash, err := hashJSONFile(path)
@@ -139,6 +140,11 @@ func RunReadiness(ctx context.Context, cfg ReadinessConfig, repoRoot string, cli
 		}
 		report.add("configuration_"+names[index], passed, reason(err, false, ""), 0, hash)
 	}
+	authorization, authorizationErr := LoadAuthorization(cfg.Files.Authorization)
+	if authorizationErr == nil && (report.CheckedAt.Before(authorization.AuthorizedAt) || !report.CheckedAt.Before(authorization.ExpiresAt)) {
+		authorizationErr = ErrInvalidRecord
+	}
+	report.add("authorization_window", authorizationErr == nil, reason(authorizationErr, false, ""), 0, "")
 	if cfg.TelegramRequired {
 		hash, err := validateTelegramEvidence(cfg.Files.TelegramCheck, cfg.TradingDate, cfg.Mode)
 		if err == nil {
@@ -155,15 +161,37 @@ func RunReadiness(ctx context.Context, cfg ReadinessConfig, repoRoot string, cli
 		{"process_health", "/healthz", func(v map[string]any) []string { return requireString(v, "status", "ok") }},
 		{"global_readiness", "/readyz", validateReady},
 		{"runtime", "/api/v1/runtime/status", func(v map[string]any) []string { return validateRuntime(v, cfg) }},
-		{"zerodha", "/api/v1/integrations/zerodha/health", func(v map[string]any) []string { return validateZerodha(v, cfg.Mode) }},
+		{"zerodha", "/api/v1/integrations/zerodha/health", func(v map[string]any) []string { return validateZerodha(v, cfg) }},
 		{"market_data", "/api/v1/market-data/readiness", validateMarketData},
-		{"strategy", "/api/v1/strategy/instances", func(v map[string]any) []string { return validateStrategies(v, cfg.Scope) }},
-		{"risk_configuration", "/api/v1/risk/configuration?portfolio=" + portfolio, validateRiskConfiguration},
-		{"kill_switch", "/api/v1/risk/kill-switch?portfolio=" + portfolio, validateKillSwitch},
-		{"circuit_breaker", "/api/v1/risk/circuit-breaker?portfolio=" + portfolio, validateCircuitBreaker},
-		{"execution", "/api/v1/execution/health", validateExecution},
-		{"financial", "/api/v1/financial/readiness?portfolio_id=" + portfolio, validateFinancial},
 		{"notification_health", "/api/v1/notifications/health", validateNotificationHealth},
+	}
+	if cfg.Scope == ScopeFullPipeline {
+		checks = append(checks,
+			struct {
+				name, path string
+				validate   func(map[string]any) []string
+			}{"strategy", "/api/v1/strategy/instances", func(v map[string]any) []string { return validateStrategies(v, cfg.Scope) }},
+			struct {
+				name, path string
+				validate   func(map[string]any) []string
+			}{"risk_configuration", "/api/v1/risk/configuration?portfolio=" + portfolio, validateRiskConfiguration},
+			struct {
+				name, path string
+				validate   func(map[string]any) []string
+			}{"kill_switch", "/api/v1/risk/kill-switch?portfolio=" + portfolio, validateKillSwitch},
+			struct {
+				name, path string
+				validate   func(map[string]any) []string
+			}{"circuit_breaker", "/api/v1/risk/circuit-breaker?portfolio=" + portfolio, validateCircuitBreaker},
+			struct {
+				name, path string
+				validate   func(map[string]any) []string
+			}{"execution", "/api/v1/execution/health", validateExecution},
+			struct {
+				name, path string
+				validate   func(map[string]any) []string
+			}{"financial", "/api/v1/financial/readiness?portfolio_id=" + portfolio, validateFinancial},
+		)
 	}
 	if cfg.TelegramRequired {
 		checks = append(checks, struct {
@@ -202,7 +230,7 @@ func (r *ReadinessReport) add(name string, passed bool, reasons []string, status
 }
 
 func configPaths(c ReadinessConfig) []string {
-	return []string{c.Files.Calendar, c.Files.InstrumentMaster, c.Files.Watchlist, c.Files.Strategies, c.Files.Portfolio, c.Files.Risk}
+	return []string{c.Files.Calendar, c.Files.InstrumentMaster, c.Files.Watchlist, c.Files.Strategies, c.Files.Portfolio, c.Files.Risk, c.Files.Authorization}
 }
 
 func hashJSONFile(path string) (string, error) {
@@ -251,6 +279,14 @@ func validateConfigurationSet(ctx context.Context, cfg ReadinessConfig) map[stri
 		riskErr = decodeErr
 	}
 	result["risk"] = riskErr
+	authorization, authorizationErr := LoadAuthorization(cfg.Files.Authorization)
+	if authorizationErr == nil {
+		if authorization.ApplicationCommit != cfg.ExpectedCommit || authorization.Mode != cfg.Mode || authorization.Scope != cfg.Scope || authorization.TradingDate != cfg.TradingDate ||
+			authorization.PortfolioID != cfg.PortfolioID || filepath.Clean(authorization.EvidenceRoot) != filepath.Clean(cfg.EvidenceRoot) || authorization.LiveTradingAuthorized {
+			authorizationErr = ErrInvalidRecord
+		}
+	}
+	result["authorization"] = authorizationErr
 	return result
 }
 
@@ -417,12 +453,14 @@ func validateRuntime(v map[string]any, cfg ReadinessConfig) []string {
 		if !active {
 			reasons = append(reasons, "NO_ACTIVE_STRATEGY")
 		}
+	} else if strategies, ok := v["strategies"].([]any); !ok || len(strategies) != 0 {
+		reasons = append(reasons, "ZERO_STRATEGY_INVARIANT_FAILED")
 	}
 	return reasons
 }
 
-func validateZerodha(v map[string]any, mode string) []string {
-	reasons := requireString(v, "mode", mode)
+func validateZerodha(v map[string]any, cfg ReadinessConfig) []string {
+	reasons := requireString(v, "mode", cfg.Mode)
 	reasons = append(reasons, requireString(v, "state", "READY")...)
 	reasons = append(reasons, requireString(v, "session_state", "AUTHENTICATED")...)
 	if mutation, _ := v["mutation_permitted"].(bool); mutation {
@@ -438,6 +476,10 @@ func validateZerodha(v map[string]any, mode string) []string {
 	}
 	if count, _ := v["unknown_orders"].(float64); count != 0 {
 		reasons = append(reasons, "UNKNOWN_ORDERS")
+	}
+	authorization, err := LoadAuthorization(cfg.Files.Authorization)
+	if err != nil || v["authorization_checksum"] != authorization.Checksum {
+		reasons = append(reasons, "AUTHORIZATION_CHECKSUM_MISMATCH")
 	}
 	return reasons
 }
@@ -539,11 +581,12 @@ func validateTelegramEvidence(path, date, mode string) (string, error) {
 		SchemaVersion string `json:"schema_version"`
 		TradingDate   string `json:"trading_date"`
 		Mode          string `json:"mode"`
+		Kind          string `json:"kind"`
 		Delivered     bool   `json:"delivered"`
 	}
 	decoder := json.NewDecoder(bytes.NewReader(raw))
 	decoder.DisallowUnknownFields()
-	if decoder.Decode(&value) != nil || value.SchemaVersion != "market-validation-telegram-check/v1" || value.TradingDate != date || value.Mode != mode || !value.Delivered {
+	if decoder.Decode(&value) != nil || value.SchemaVersion != "market-validation-telegram-check/v1" || value.TradingDate != date || value.Mode != mode || value.Kind != "test" || !value.Delivered {
 		return "", ErrInvalidRecord
 	}
 	sum := sha256.Sum256(raw)

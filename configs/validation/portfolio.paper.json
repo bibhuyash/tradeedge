@@ -1,0 +1,17 @@
+{
+  "schema_version": "portfolio-configuration/v1",
+  "version": 1,
+  "enabled": true,
+  "base_currency": "INR",
+  "effective_from": "2026-08-10T00:00:00Z",
+  "effective_until": "2027-08-10T00:00:00Z",
+  "total_capital_minor": 100000000,
+  "reserve_bps": 8000,
+  "emergency_reserve_bps": 1000,
+  "maximum_strategy_capital_minor": 10000000,
+  "maximum_instrument_capital_minor": 5000000,
+  "maximum_underlying_capital_minor": 10000000,
+  "maximum_exposure_group_capital_minor": 10000000,
+  "maximum_strategies": 1,
+  "exposure_groups": ["INDEX_OPTIONS_VALIDATION"]
+}

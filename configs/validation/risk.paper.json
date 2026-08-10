@@ -1,0 +1,21 @@
+{
+  "schema_version": "risk-configuration/v1",
+  "version": 1,
+  "lifecycle": "ACTIVE",
+  "effective_from": "2026-08-10T00:00:00Z",
+  "effective_until": "2027-08-10T00:00:00Z",
+  "rules": [
+    {"id":"PORTFOLIO_CAPITAL_LIMIT","version":1,"order":1,"severity":"BLOCKING","effect":"REJECT","config":{"limit_minor":10000000,"currency":"INR"}},
+    {"id":"STRATEGY_ALLOCATION_LIMIT","version":1,"order":2,"severity":"BLOCKING","effect":"REJECT","config":{"limit_minor":10000000,"currency":"INR"}},
+    {"id":"DAILY_LOSS_LIMIT","version":1,"order":3,"severity":"CRITICAL","effect":"ACTIVATE_KILL_SWITCH","config":{"loss_limit_minor":500000,"currency":"INR"}},
+    {"id":"DRAWDOWN_LIMIT","version":1,"order":4,"severity":"CRITICAL","effect":"TRIP_CIRCUIT_BREAKER","config":{"limit_bps":100}},
+    {"id":"INSTRUMENT_EXPOSURE_LIMIT","version":1,"order":5,"severity":"BLOCKING","effect":"REJECT","config":{"limit_minor":5000000,"currency":"INR"}},
+    {"id":"UNDERLYING_EXPOSURE_LIMIT","version":1,"order":6,"severity":"BLOCKING","effect":"REJECT","config":{"limit_minor":10000000,"currency":"INR"}},
+    {"id":"MAXIMUM_OPEN_EXPOSURE","version":1,"order":7,"severity":"BLOCKING","effect":"REJECT","config":{"limit_minor":10000000,"currency":"INR"}},
+    {"id":"RESERVE_CAPITAL","version":1,"order":8,"severity":"BLOCKING","effect":"REJECT","config":{"limit_bps":9000}},
+    {"id":"KILL_SWITCH","version":1,"order":9,"severity":"CRITICAL","effect":"ACTIVATE_KILL_SWITCH","config":{"threshold":1,"reset_threshold":0}},
+    {"id":"CIRCUIT_BREAKER","version":1,"order":10,"severity":"CRITICAL","effect":"TRIP_CIRCUIT_BREAKER","config":{"threshold":1,"reset_threshold":0}}
+  ],
+  "kill_switch": {"enabled":true,"allowed_scopes":["GLOBAL","PORTFOLIO"]},
+  "circuit_breaker": {"enabled":true,"threshold":1,"reset_threshold":0}
+}
