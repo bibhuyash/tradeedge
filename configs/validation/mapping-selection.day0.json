@@ -1,0 +1,26 @@
+{
+  "schema_version": "market-validation-mapping-selection/v1",
+  "watchlist_id": "day0-index-observation/v1",
+  "instruments": [
+    {
+      "key": "NSE:INDEX:NIFTY",
+      "provider_exchange": "NSE",
+      "provider_segment": "INDICES",
+      "provider_instrument_type": "",
+      "trading_symbol": "NIFTY 50",
+      "canonical_segment": "INDEX",
+      "underlying": "NIFTY",
+      "type": "INDEX"
+    },
+    {
+      "key": "NSE:INDEX:BANKNIFTY",
+      "provider_exchange": "NSE",
+      "provider_segment": "INDICES",
+      "provider_instrument_type": "",
+      "trading_symbol": "NIFTY BANK",
+      "canonical_segment": "INDEX",
+      "underlying": "BANKNIFTY",
+      "type": "INDEX"
+    }
+  ]
+}

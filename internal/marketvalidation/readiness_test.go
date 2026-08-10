@@ -18,7 +18,7 @@ func TestDecodeReadinessConfigFailsClosed(t *testing.T) {
   "portfolio_id":"` + digest + `",
   "scope":"OPERATIONS_ONLY",
   "telegram_required":true,
-  "files":{"calendar":"calendar.json","instrument_master":"master.json","watchlist":"watchlist.json","strategies":"strategies.json","portfolio":"portfolio.json","risk":"risk.json","telegram_check":"telegram-check.json"}
+  "files":{"calendar":"calendar.json","instrument_master":"master.json","watchlist":"watchlist.json","strategies":"strategies.json","portfolio":"portfolio.json","risk":"risk.json","authorization":"authorization.json","telegram_check":"telegram-check.json"}
 }`)
 	if _, err := DecodeReadinessConfig(raw); err != nil {
 		t.Fatal(err)
@@ -43,7 +43,7 @@ func TestReadinessValidatorsRejectDisabledOrMutableRuntime(t *testing.T) {
 		t.Fatal("disabled market data passed")
 	}
 	zerodha := map[string]any{"mode": "PAPER", "state": "READY", "session_state": "AUTHENTICATED", "mutation_permitted": true, "mapping_version": "v1", "stream": map[string]any{"state": "CONNECTED"}, "unknown_orders": float64(0)}
-	if !contains(validateZerodha(zerodha, "PAPER"), "BROKER_MUTATION_PERMITTED") {
+	if !contains(validateZerodha(zerodha, ReadinessConfig{Mode: "PAPER"}), "BROKER_MUTATION_PERMITTED") {
 		t.Fatal("mutable broker runtime passed")
 	}
 }

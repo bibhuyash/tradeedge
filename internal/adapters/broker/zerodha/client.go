@@ -148,6 +148,13 @@ func parseInstruments(body []byte) ([]InstrumentRecord, error) {
 	return result, nil
 }
 
+// ParseInstrumentDump validates and decodes the read-only daily Zerodha
+// instrument CSV. It exists for operator tooling; it performs no network or
+// broker mutation operation.
+func ParseInstrumentDump(body []byte) ([]InstrumentRecord, error) {
+	return parseInstruments(body)
+}
+
 func boundedStrings(values []string) []string {
 	if len(values) > 32 {
 		values = values[:32]

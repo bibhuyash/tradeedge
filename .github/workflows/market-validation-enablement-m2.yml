@@ -1,0 +1,71 @@
+name: Market Validation Enablement M2
+
+on:
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  enablement:
+    runs-on: ubuntu-latest
+    timeout-minutes: 75
+    steps:
+      - uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10
+      - uses: actions/setup-go@924ae3a1cded613372ab5595356fb5720e22ba16
+        with:
+          go-version-file: go.mod
+          cache: false
+      - name: Format, test, vet, build and lint
+        run: |
+          test -z "$(gofmt -l .)"
+          go test ./... -timeout=15m
+          go vet ./...
+          go build ./...
+          make lint
+      - name: Full Ubuntu race suite
+        run: go test -race ./... -count=1 -timeout=30m
+      - name: M1 and Phase 1-7 regressions
+        run: go test -race ./internal/releasegate/marketvalidationm1 ./internal/marketdata/... ./internal/strategy/... ./internal/risk/... ./internal/execution/... ./internal/integration/zerodha/... ./internal/accounting/... ./internal/tradingruntime/... -count=2 -timeout=25m
+      - name: M2 mapping, manifest, zero-strategy, Day-0 and risk gates
+        run: go test -race ./internal/marketvalidation ./internal/config ./internal/app ./internal/releasegate/marketvalidationm2 -count=10 -timeout=20m
+      - name: Authority, credential, log and Telegram-control scans
+        shell: bash
+        run: |
+          set -euo pipefail
+          ! grep -RInE --include='*.go' --exclude='*_test.go' --exclude-dir='releasegate' '\bLIVE_ENABLED\b' cmd internal
+          ! grep -RInE --include='*.go' --exclude='*_test.go' '(PlaceOrder|SubmitOrder|ModifyOrder)' internal/app internal/adapters/broker/zerodha
+          ! grep -RInE --include='*.go' --exclude='*_test.go' '(getUpdates|setWebhook|/buy|/sell)' internal/notification internal/operations
+          ! grep -RInE --include='*.go' '(logger\.|slog\.|log\.|Printf).*(access[_-]?token|api[_-]?secret|bot[_-]?token|chat[_-]?id)' internal
+          ! grep -RInE --include='*.json' '(bot_token|chat_id|api_secret|access_token)' configs
+      - name: Machine-readable M2 enablement evidence
+        env:
+          TRADEEDGE_M2_GATE_FORMAT: passed
+          TRADEEDGE_M2_GATE_TEST: passed
+          TRADEEDGE_M2_GATE_VET: passed
+          TRADEEDGE_M2_GATE_BUILD: passed
+          TRADEEDGE_M2_GATE_LINT: passed
+          TRADEEDGE_M2_GATE_RACE: passed
+          TRADEEDGE_M2_GATE_M1_REGRESSION: passed
+          TRADEEDGE_M2_GATE_PHASE_REGRESSION: passed
+          TRADEEDGE_M2_GATE_MAPPING: passed
+          TRADEEDGE_M2_GATE_EXPIRED_CONTRACT: passed
+          TRADEEDGE_M2_GATE_MANIFEST_MISMATCH: passed
+          TRADEEDGE_M2_GATE_ZERO_STRATEGY: passed
+          TRADEEDGE_M2_GATE_DAY0_GATE: passed
+          TRADEEDGE_M2_GATE_RISK_CONFIGURATION: passed
+          TRADEEDGE_M2_GATE_AUTHORITY_SCANS: passed
+        run: |
+          mkdir -p artifacts
+          go run ./cmd/tradeedge-market-validation-m2-gate -output artifacts/market-validation-enablement-m2.json
+          grep -q '"passed": true' artifacts/market-validation-enablement-m2.json
+          grep -q '"day0_ready": false' artifacts/market-validation-enablement-m2.json
+          grep -q '"day1_ready": false' artifacts/market-validation-enablement-m2.json
+          sha256sum artifacts/market-validation-enablement-m2.json > artifacts/market-validation-enablement-m2.json.sha256
+      - uses: actions/upload-artifact@v4
+        with:
+          name: market-validation-enablement-m2-${{ github.run_id }}-${{ github.run_attempt }}
+          path: artifacts/
+          if-no-files-found: error
+          retention-days: 90

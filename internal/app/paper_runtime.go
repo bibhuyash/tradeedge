@@ -8,6 +8,7 @@ import (
 	"log/slog"
 	"net/http"
 	"os"
+	"runtime/debug"
 	"strconv"
 	"strings"
 	"sync"
@@ -19,6 +20,7 @@ import (
 	brokerzerodha "github.com/bibhuyash/tradeedge/internal/adapters/broker/zerodha"
 	executionmemory "github.com/bibhuyash/tradeedge/internal/adapters/execution/memory"
 	"github.com/bibhuyash/tradeedge/internal/adapters/marketdata/calendarfile"
+	telegramadapter "github.com/bibhuyash/tradeedge/internal/adapters/notification/telegram"
 	"github.com/bibhuyash/tradeedge/internal/config"
 	"github.com/bibhuyash/tradeedge/internal/domain"
 	"github.com/bibhuyash/tradeedge/internal/instrumentmaster"
@@ -26,6 +28,9 @@ import (
 	"github.com/bibhuyash/tradeedge/internal/marketdata/ingest"
 	marketmodel "github.com/bibhuyash/tradeedge/internal/marketdata/model"
 	marketreadiness "github.com/bibhuyash/tradeedge/internal/marketdata/readiness"
+	"github.com/bibhuyash/tradeedge/internal/marketvalidation"
+	"github.com/bibhuyash/tradeedge/internal/notification"
+	"github.com/bibhuyash/tradeedge/internal/operations"
 	"github.com/bibhuyash/tradeedge/internal/operations/control"
 	"github.com/bibhuyash/tradeedge/internal/platform/checkpointfile"
 	portfolioconfig "github.com/bibhuyash/tradeedge/internal/portfolio/config"
@@ -40,18 +45,19 @@ import (
 // read-only market connection and a deterministic in-process PAPER broker; no
 // live broker port exists in this object graph.
 type productionPaper struct {
-	bundle     config.RuntimeBundle
-	stream     *brokerzerodha.MarketStream
-	session    *brokerzerodha.SessionManager
-	evaluator  *marketreadiness.Evaluator
-	runtime    *tradingruntime.Runtime
-	controls   *control.Controller
-	local      *control.LocalServer
-	paper      *paper.ObservedBroker
-	checkpoint *runtimeCheckpoint
-	mu         sync.Mutex
-	streamErr  error
-	sink       marketdata.ObservationSink
+	bundle        config.RuntimeBundle
+	authorization marketvalidation.AuthorizationManifest
+	stream        *brokerzerodha.MarketStream
+	session       *brokerzerodha.SessionManager
+	evaluator     *marketreadiness.Evaluator
+	runtime       *tradingruntime.Runtime
+	controls      *control.Controller
+	local         *control.LocalServer
+	paper         *paper.ObservedBroker
+	checkpoint    *runtimeCheckpoint
+	mu            sync.Mutex
+	streamErr     error
+	sink          marketdata.ObservationSink
 }
 
 type eodProxy struct{ target *productionPaper }
@@ -90,6 +96,13 @@ func composeProductionPaper(ctx context.Context, cfg config.Config) (*production
 		return nil, Options{}, err
 	}
 	if err := validateAuthorityConfiguration(bundle); err != nil {
+		return nil, Options{}, err
+	}
+	authorization, err := marketvalidation.LoadAuthorization(cfg.AuthorizationManifestPath)
+	if err != nil {
+		return nil, Options{}, err
+	}
+	if err := validateRuntimeAuthorization(authorization, bundle.Checksum, time.Now()); err != nil {
 		return nil, Options{}, err
 	}
 	schedule, err := calendarfile.Load(bundle.CalendarPath)
@@ -133,7 +146,18 @@ func composeProductionPaper(ctx context.Context, cfg config.Config) (*production
 	if err != nil {
 		return nil, Options{}, err
 	}
-	value := &productionPaper{bundle: bundle, stream: stream, session: session, evaluator: evaluator, paper: paper.NewObserved(), checkpoint: checkpoint}
+	var sender notification.Sender = telegramadapter.Disabled{}
+	if enabled, botToken, chatID := cfg.Telegram(); enabled {
+		sender, err = telegramadapter.New(telegramadapter.Config{Enabled: true, Token: botToken, ChatID: chatID}, &http.Client{}, time.Now)
+		if err != nil {
+			return nil, Options{}, err
+		}
+	}
+	operational, err := operations.NewSubsystem(sender, nil)
+	if err != nil {
+		return nil, Options{}, err
+	}
+	value := &productionPaper{bundle: bundle, authorization: authorization, stream: stream, session: session, evaluator: evaluator, paper: paper.NewObserved(), checkpoint: checkpoint}
 	controls, err := control.New(cfg.CheckpointRoot+string(os.PathSeparator)+"operator-controls.json", &eodProxy{target: value}, nil)
 	if err != nil {
 		return nil, Options{}, err
@@ -148,7 +172,7 @@ func composeProductionPaper(ctx context.Context, cfg config.Config) (*production
 	if err != nil {
 		return nil, Options{}, err
 	}
-	deps := tradingruntime.PipelineDependencies{Strategy: zeroStrategyStage{}, Risk: sealedRiskStage{}, Execution: &sealedExecutionStage{store: executionmemory.NewStore(), broker: value.paper}, Accounting: &sealedAccountingStage{store: accountingmemory.NewDefault()}, Controls: controls, Restorer: checkpoint, Checkpointer: checkpoint}
+	deps := tradingruntime.PipelineDependencies{Strategy: zeroStrategyStage{}, Risk: sealedRiskStage{}, Execution: &sealedExecutionStage{store: executionmemory.NewStore(), broker: value.paper}, Accounting: &sealedAccountingStage{store: accountingmemory.NewDefault()}, Controls: controls, Restorer: checkpoint, Checkpointer: checkpoint, Observer: operational}
 	runtimeConfig := tradingruntime.DefaultConfig()
 	runtimeConfig.Mode = tradingruntime.ModePaper
 	runtimeConfig.OperationTimeout = cfg.StrategyTimeout + cfg.RiskTimeout
@@ -167,7 +191,31 @@ func composeProductionPaper(ctx context.Context, cfg config.Config) (*production
 		return nil, Options{}, err
 	}
 	value.sink = live.Accept
-	return value, Options{MarketReadiness: evaluator, RuntimeReadiness: runtime, RuntimeOperations: runtimeops.New(runtime), TradingRuntime: runtime, IntegrationOperations: value, IntegrationRuntime: value}, nil
+	return value, Options{MarketReadiness: evaluator, RuntimeReadiness: runtime, RuntimeOperations: runtimeops.New(runtime), TradingRuntime: runtime, IntegrationOperations: value, IntegrationRuntime: value, OperationalOperations: operational.Handler(), NotificationRuntime: operational}, nil
+}
+
+func validateRuntimeAuthorization(value marketvalidation.AuthorizationManifest, runtimeBundleChecksum string, now time.Time) error {
+	commit, ok := runtimeCommit()
+	location := time.FixedZone("IST", 5*60*60+30*60)
+	if !ok || value.ApplicationCommit != commit || value.Mode != "PAPER" || value.Scope != marketvalidation.ScopeOperationsOnly ||
+		value.Artifacts.RuntimeBundle.Identity != runtimeBundleChecksum ||
+		now.Before(value.AuthorizedAt) || !now.Before(value.ExpiresAt) || now.In(location).Format("2006-01-02") != value.TradingDate {
+		return errors.New("runtime authorization mismatch")
+	}
+	return nil
+}
+
+func runtimeCommit() (string, bool) {
+	info, ok := debug.ReadBuildInfo()
+	if !ok {
+		return "", false
+	}
+	for _, setting := range info.Settings {
+		if setting.Key == "vcs.revision" && (len(setting.Value) == 40 || len(setting.Value) == 64) {
+			return setting.Value, true
+		}
+	}
+	return "", false
 }
 
 func validateAuthorityConfiguration(bundle config.RuntimeBundle) error {
@@ -217,7 +265,7 @@ func (p *productionPaper) dependencies() []tradingruntime.Dependency {
 		return tradingruntime.Dependency{Name: name, Requirement: tradingruntime.Required, State: tradingruntime.HealthReady, Version: version, ObservedAt: now}
 	}
 	values := []tradingruntime.Dependency{
-		ready("configuration", p.bundle.Checksum), ready("calendar", string(p.bundle.Master.Version())),
+		ready("configuration", p.authorization.Checksum), ready("calendar", string(p.bundle.Master.Version())),
 		ready("instrument_mappings", string(p.bundle.Master.Version())), ready("strategy", "zero-strategy/v1"),
 		ready("risk", "phase-4-sealed/v1"), ready("paper_broker", "observed-paper/v1"),
 		ready("reconciliation", "empty-authoritative/v1"), ready("valuation", "phase-6/v1"),
@@ -267,7 +315,13 @@ func (p *productionPaper) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	w.Header().Set("Content-Type", "application/json")
-	_ = json.NewEncoder(w).Encode(map[string]any{"mode": "PAPER", "read_only": true, "session": p.session.Snapshot(), "market_stream": p.stream.Snapshot()})
+	session, stream := p.session.Snapshot(), p.stream.Snapshot()
+	state := "NOT_READY"
+	now := time.Now()
+	if session.State == brokerzerodha.SessionAuthenticated && stream.State == brokerzerodha.StreamConnected && !now.Before(p.authorization.AuthorizedAt) && now.Before(p.authorization.ExpiresAt) {
+		state = "READY"
+	}
+	_ = json.NewEncoder(w).Encode(map[string]any{"mode": "PAPER", "state": state, "read_only": true, "session_state": session.State, "mutation_permitted": false, "mapping_version": string(p.bundle.Master.Version()), "stream": stream, "unknown_orders": 0, "reconciliation_blocked": false, "authorization_checksum": p.authorization.Checksum})
 }
 func (p *productionPaper) shutdown(ctx context.Context) error {
 	p.stream.Shutdown()

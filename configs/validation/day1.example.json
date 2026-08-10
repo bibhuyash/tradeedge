@@ -15,6 +15,7 @@
     "strategies": "configs/validation/strategies-disabled.json",
     "portfolio": ".cache/market-validation/config/portfolio.json",
     "risk": ".cache/market-validation/config/risk.json",
+    "authorization": ".cache/market-validation/2099-01-01/day1-authorization.json",
     "telegram_check": ".cache/market-validation/2099-01-01/telegram-check.json"
   }
 }
