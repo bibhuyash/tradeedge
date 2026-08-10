@@ -2,6 +2,8 @@ package marketvalidation
 
 import (
 	"encoding/json"
+	"os"
+	"path/filepath"
 	"strings"
 	"testing"
 )
@@ -53,5 +55,24 @@ func TestReadinessReportNeverAuthorizesLiveTrading(t *testing.T) {
 	raw, err := json.Marshal(report)
 	if err != nil || strings.Contains(string(raw), `"live_trading_authorized":true`) {
 		t.Fatal("readiness report authorized live trading")
+	}
+}
+
+func TestValidateTelegramEvidenceAcceptsWriterSchema(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "telegram-test.json")
+	raw := []byte(`{"schema_version":"market-validation-telegram-check/v1","trading_date":"2026-08-11","mode":"PAPER","kind":"test","delivered":true,"checked_at":"2026-08-10T15:30:00Z"}`)
+	if err := os.WriteFile(path, raw, 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if hash, err := validateTelegramEvidence(path, "2026-08-11", "PAPER"); err != nil || hash == "" {
+		t.Fatalf("validateTelegramEvidence() = %q, %v", hash, err)
+	}
+
+	withoutTimestamp := []byte(`{"schema_version":"market-validation-telegram-check/v1","trading_date":"2026-08-11","mode":"PAPER","kind":"test","delivered":true}`)
+	if err := os.WriteFile(path, withoutTimestamp, 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := validateTelegramEvidence(path, "2026-08-11", "PAPER"); err == nil {
+		t.Fatal("Telegram evidence without checked_at accepted")
 	}
 }
