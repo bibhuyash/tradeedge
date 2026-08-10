@@ -29,6 +29,7 @@ type RuntimeSnapshot struct {
 }
 
 type ControlSummary struct {
+	NewExposureBlocked  bool   `json:"new_exposure_blocked"`
 	GlobalBlocked       bool   `json:"global_blocked"`
 	BlockedPortfolios   int    `json:"blocked_portfolios"`
 	BlockedStrategies   int    `json:"blocked_strategies"`
@@ -210,7 +211,7 @@ func (r *Runtime) Process(ctx context.Context, event marketmodel.Event) (EventRe
 			r.emit(notification.EventSpec{SourceID: proposal.Value.ID().String() + "|restricted", OccurredAt: r.clock(), Category: notification.CategoryStrategy, Kind: notification.KindStrategyRestricted, Severity: notification.SeverityWarning, Details: notification.Details{StrategyID: string(proposal.StrategyID), Reason: "SESSION_OR_CAS_RESTRICTED"}}, event)
 			continue
 		}
-		if proposal.Effect == ExposureIncrease && r.controls.GlobalBlocked {
+		if proposal.Effect == ExposureIncrease && (r.controls.GlobalBlocked || r.controls.NewExposureBlocked) {
 			return receipt, ErrExposureBlocked
 		}
 		decision, decideErr := r.deps.Risk.Decide(opctx, proposal)
@@ -231,7 +232,7 @@ func (r *Runtime) Process(ctx context.Context, event marketmodel.Event) (EventRe
 			receipt.Outcome = OutcomeRiskRejected
 			continue
 		}
-		if proposal.Effect == ExposureIncrease && r.controls.Portfolios[decision.Spec().PortfolioID] {
+		if proposal.Effect == ExposureIncrease && (r.controls.NewExposureBlocked || r.controls.Portfolios[decision.Spec().PortfolioID]) {
 			return receipt, ErrExposureBlocked
 		}
 		execution, executeErr := r.deps.Execution.Execute(opctx, decision)
@@ -398,7 +399,7 @@ func (r *Runtime) Snapshot() RuntimeSnapshot {
 }
 
 func summarizeControls(value ControlSnapshot) ControlSummary {
-	result := ControlSummary{GlobalBlocked: value.GlobalBlocked, EvidenceRevision: value.EvidenceRevision}
+	result := ControlSummary{NewExposureBlocked: value.NewExposureBlocked, GlobalBlocked: value.GlobalBlocked, EvidenceRevision: value.EvidenceRevision}
 	for _, blocked := range value.Portfolios {
 		if blocked {
 			result.BlockedPortfolios++

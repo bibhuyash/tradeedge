@@ -11,6 +11,7 @@ import (
 	"time"
 
 	"github.com/bibhuyash/tradeedge/internal/marketdata/readiness"
+	"github.com/bibhuyash/tradeedge/internal/tradingruntime"
 )
 
 type Readiness struct {
@@ -30,8 +31,13 @@ type MarketReadinessSource interface {
 	Snapshot(context.Context) readiness.Snapshot
 }
 
+type RuntimeReadinessSource interface {
+	Snapshot() tradingruntime.RuntimeSnapshot
+}
+
 type Options struct {
 	MarketReadiness       MarketReadinessSource
+	RuntimeReadiness      RuntimeReadinessSource
 	Operations            http.Handler
 	StrategyOperations    http.Handler
 	RiskOperations        http.Handler
@@ -94,11 +100,20 @@ func NewHandlerWithOptions(process *Readiness, options Options) http.Handler {
 			status = http.StatusServiceUnavailable
 			text = "not_ready"
 		}
-		writeJSON(w, status, map[string]any{
+		body := map[string]any{
 			"status": text, "trading_permitted": snapshot.TradingPermitted,
 			"market_data_state": snapshot.State, "reason_codes": snapshot.Reasons,
 			"evaluated_at": snapshot.EvaluatedAt, "calendar_version": snapshot.CalendarVersion,
-		})
+		}
+		if options.RuntimeReadiness != nil {
+			runtime := options.RuntimeReadiness.Snapshot()
+			body["runtime_state"], body["runtime_ready"], body["restored"] = runtime.State, runtime.Readiness.Ready, runtime.Restored
+			body["runtime_reasons"], body["runtime_dependencies"] = runtime.Readiness.Reasons, runtime.Readiness.Dependencies
+			if !runtime.Restored || !runtime.Readiness.Ready {
+				status, text, body["status"] = http.StatusServiceUnavailable, "not_ready", "not_ready"
+			}
+		}
+		writeJSON(w, status, body)
 	}))
 	if options.Metrics != nil {
 		mux.Handle("/metrics", methodGETHandler(options.Metrics))

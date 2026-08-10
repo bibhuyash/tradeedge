@@ -100,6 +100,11 @@ func TestLoadWithLookupAcceptsEveryNonMutatingZerodhaMode(t *testing.T) {
 			if mode == ZerodhaModePaper || mode == ZerodhaModeShadow {
 				values["TRADEEDGE_ZERODHA_READ_ONLY"] = "true"
 			}
+			if mode == ZerodhaModePaper {
+				values["TRADEEDGE_RUNTIME_BUNDLE"] = "runtime-bundle.json"
+				values["TRADEEDGE_CHECKPOINT_ROOT"] = ".cache/checkpoints"
+				values["TRADEEDGE_OPERATOR_CONTROL_SOCKET"] = ".cache/control.sock"
+			}
 			cfg, err := LoadWithLookup(mapLookup(values))
 			if err != nil || cfg.ZerodhaMode != mode {
 				t.Fatalf("LoadWithLookup() = %#v, %v", cfg, err)

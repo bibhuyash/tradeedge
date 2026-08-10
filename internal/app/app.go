@@ -25,11 +25,18 @@ import (
 )
 
 func Run(ctx context.Context, cfg config.Config, logger *slog.Logger) error {
+	if cfg.ZerodhaMode == config.ZerodhaModePaper {
+		if err := cfg.Validate(); err != nil {
+			return fmt.Errorf("validate configuration: %w", err)
+		}
+		return runProductionPaper(ctx, cfg, logger)
+	}
 	return RunWithOptions(ctx, cfg, logger, Options{})
 }
 
 type Options struct {
 	MarketReadiness       httpserver.MarketReadinessSource
+	RuntimeReadiness      httpserver.RuntimeReadinessSource
 	Metrics               *prometheusmetrics.Recorder
 	Quality               opshttp.QualitySource
 	StrategyOperations    http.Handler
@@ -141,6 +148,7 @@ func RunWithOptions(
 	}
 	server, err := httpserver.NewWithOptions(cfg.HTTPAddress, logger, readiness, httpserver.Options{
 		MarketReadiness:       options.MarketReadiness,
+		RuntimeReadiness:      options.RuntimeReadiness,
 		Metrics:               metrics.Handler(),
 		Operations:            opshttp.New(operations),
 		StrategyOperations:    strategyOperations,
