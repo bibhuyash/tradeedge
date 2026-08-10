@@ -26,6 +26,9 @@ type Config struct {
 	TradingMode            string
 	MarketDataCalendarPath string
 	MarketDataDatasetRoot  string
+	RuntimeBundlePath      string
+	CheckpointRoot         string
+	OperatorControlSocket  string
 	StrategyMaxConcurrency int
 	StrategyTimeout        time.Duration
 	RiskMaxConcurrency     int
@@ -52,6 +55,9 @@ func LoadWithLookup(lookup LookupEnv) (Config, error) {
 		TradingMode:            strings.ToLower(envOrDefault(lookup, "TRADEEDGE_TRADING_MODE", ModePaper)),
 		MarketDataCalendarPath: envOrDefault(lookup, "TRADEEDGE_MARKETDATA_CALENDAR", ""),
 		MarketDataDatasetRoot:  envOrDefault(lookup, "TRADEEDGE_MARKETDATA_DATASET_ROOT", ""),
+		RuntimeBundlePath:      envOrDefault(lookup, "TRADEEDGE_RUNTIME_BUNDLE", ""),
+		CheckpointRoot:         envOrDefault(lookup, "TRADEEDGE_CHECKPOINT_ROOT", ""),
+		OperatorControlSocket:  envOrDefault(lookup, "TRADEEDGE_OPERATOR_CONTROL_SOCKET", ""),
 		StrategyMaxConcurrency: 4,
 		StrategyTimeout:        100 * time.Millisecond,
 		RiskMaxConcurrency:     4,
@@ -158,6 +164,9 @@ func (c Config) Validate() error {
 	}
 	if (c.ZerodhaMode == ZerodhaModePaper || c.ZerodhaMode == ZerodhaModeShadow) && !c.ZerodhaReadOnly {
 		return errors.New("TRADEEDGE_ZERODHA_READ_ONLY=true is required for PAPER or SHADOW")
+	}
+	if c.ZerodhaMode == ZerodhaModePaper && (strings.TrimSpace(c.RuntimeBundlePath) == "" || strings.TrimSpace(c.CheckpointRoot) == "" || strings.TrimSpace(c.OperatorControlSocket) == "") {
+		return errors.New("PAPER market observation requires runtime bundle, checkpoint root, and operator control socket")
 	}
 	if c.TelegramEnabled && (c.telegramBotToken == "" || c.telegramChatID == "" || strings.ContainsAny(c.telegramBotToken, " \t\r\n/?#") || strings.ContainsAny(c.telegramChatID, " \t\r\n")) {
 		return errors.New("invalid Telegram configuration")

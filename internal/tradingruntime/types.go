@@ -119,11 +119,12 @@ type Shutdowner interface {
 type OperationalObserver interface{ Observe(notification.Event) }
 
 type ControlSnapshot struct {
-	GlobalBlocked    bool
-	Portfolios       map[portfoliomodel.PortfolioID]bool
-	Strategies       map[domain.StrategyID]bool
-	CircuitOpen      map[string]bool
-	EvidenceRevision string
+	NewExposureBlocked bool
+	GlobalBlocked      bool
+	Portfolios         map[portfoliomodel.PortfolioID]bool
+	Strategies         map[domain.StrategyID]bool
+	CircuitOpen        map[string]bool
+	EvidenceRevision   string
 }
 
 type ControlSource interface {

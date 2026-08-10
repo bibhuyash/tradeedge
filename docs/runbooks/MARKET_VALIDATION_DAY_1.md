@@ -5,27 +5,19 @@
 This runbook is for read-only real-market observations through PAPER/SHADOW.
 It is not Phase 8 and never authorizes live trading.
 
-The repository is currently **NOT READY** for Day 1. The default application
-does not compose the Phase 7 runtime or real Zerodha connectivity/stream
-dependencies. PAPER/SHADOW startup therefore cannot pass the readiness command.
-Do not substitute OFFLINE, disabled market data, fixtures, manual JSON, or a
-Telegram `READY` state for the missing runtime evidence.
+Market Validation Enablement M1 composes the PAPER observation runtime, but the
+repository remains **NOT READY** for Day 1 until M2 approves a current market
+configuration and production validation strategy. Do not substitute OFFLINE,
+fixtures, manual JSON, or Telegram state for runtime evidence.
 
 Current blockers are:
 
-1. `cmd/tradeedge` does not compose the released Phase 1-7 pipeline.
-2. PAPER/SHADOW Zerodha integration is constructed with empty dependencies.
-3. No production Zerodha WebSocket connector is present.
-4. No approved current calendar, Zerodha mapping, watchlist, paper-capital
+1. No approved current calendar, Zerodha mapping, watchlist, paper-capital
    amount, portfolio policy, or risk policy is present.
-5. No production-candidate strategy exists. Full-pipeline validation is
+2. No production-candidate strategy exists. Full-pipeline validation is
    unavailable; do not enable the moving-average engineering fixture.
-6. Risk, execution, financial, and Phase 7 runtime operations are not mounted
-   by the default command.
-7. Authoritative subsystem restoration/checkpoint evidence is not durable in
-   the default in-memory composition.
-8. No operator control exists to stop new exposure or explicitly close an EOD
-   session. `Ctrl+C` performs bounded process shutdown only.
+3. Day-1 date, commit, capital/risk policy, and evidence directory are not approved.
+4. Telegram delivery evidence is not established for a market session.
 
 ## Approved modes and secrets
 
@@ -144,7 +136,9 @@ and start the existing application in a dedicated terminal:
 $env:TRADEEDGE_TRADING_MODE='paper'
 $env:TRADEEDGE_ZERODHA_MODE='PAPER'
 $env:TRADEEDGE_ZERODHA_READ_ONLY='true'
-$env:TRADEEDGE_MARKETDATA_CALENDAR='.cache\market-validation\config\calendar.json'
+$env:TRADEEDGE_RUNTIME_BUNDLE='.cache\market-validation\config\runtime-bundle.json'
+$env:TRADEEDGE_CHECKPOINT_ROOT='.cache\market-validation\runtime-checkpoint'
+$env:TRADEEDGE_OPERATOR_CONTROL_SOCKET='/run/tradeedge/operator.sock'
 go run ./cmd/tradeedge
 ```
 
@@ -205,11 +199,20 @@ add CAS trading logic or substitute them for canonical-LTP valuation.
 
 ## End of day
 
-The absence of an operator stop-new-exposure/EOD command is a current blocker.
-Do not claim a complete session until that existing-domain control is composed.
-Once available, the order is: stop new exposure, resolve UNKNOWN, reconcile,
+Use the local Unix-socket control boundary; it exposes only
+`STOP_NEW_EXPOSURE`, `EOD_CLOSE`, and status. The order is: stop new exposure,
+resolve UNKNOWN, reconcile,
 final valuation, CAS evidence, EOD report, incident review, drain, checkpoint,
 then clean shutdown.
+
+```bash
+curl --unix-socket /run/tradeedge/operator.sock -H 'Content-Type: application/json' \
+  -d '{"request_id":"DAY1-STOP-001","reason":"EOD_POLICY"}' \
+  http://localhost/v1/stop-new-exposure
+curl --unix-socket /run/tradeedge/operator.sock -H 'Content-Type: application/json' \
+  -d '{"request_id":"DAY1-EOD-001","reason":"EOD_POLICY"}' \
+  http://localhost/v1/eod-close
+```
 
 Before shutdown, capture:
 

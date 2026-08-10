@@ -121,6 +121,24 @@ func TestRuntimeRestoreBeforeActivateEndToEndAndShutdown(t *testing.T) {
 	}
 }
 
+func TestStopNewExposureBlocksBeforeRiskAndExecution(t *testing.T) {
+	runtime, stages, now, manifest := testRuntime(t, nil)
+	stages.controls = ControlSnapshot{NewExposureBlocked: true, EvidenceRevision: "stop-1"}
+	if err := runtime.Start(context.Background(), manifest, healthyDependencies(*now)); err != nil {
+		t.Fatal(err)
+	}
+	runtime.Refresh(context.Background(), healthyDependencies(*now))
+	_, err := runtime.Process(context.Background(), testQuote(t, *now))
+	if !errors.Is(err, ErrExposureBlocked) {
+		t.Fatalf("expected exposure block, got %v", err)
+	}
+	stages.mu.Lock()
+	defer stages.mu.Unlock()
+	if stages.feedback != 0 || stages.accountingCalls != 0 {
+		t.Fatal("blocked exposure reached financial pipeline")
+	}
+}
+
 type panicObserver struct{}
 
 func (panicObserver) Observe(notification.Event) { panic("notification failure") }
@@ -236,6 +254,7 @@ type fakeStages struct {
 	feedback        int
 	accountingCalls int
 	observed        func() time.Time
+	controls        ControlSnapshot
 }
 
 func (f *fakeStages) Evaluate(ctx context.Context, _ marketmodel.Event, strategies []StrategySnapshot) ([]Proposal, error) {
@@ -268,7 +287,7 @@ func (f *fakeStages) Ingest(context.Context, ExecutionResult) (valuation.Portfol
 	return valuation.PortfolioFinancialSnapshot{Revision: 1}, nil
 }
 func (f *fakeStages) Controls(context.Context) (ControlSnapshot, error) {
-	return ControlSnapshot{}, nil
+	return f.controls, nil
 }
 func (f *fakeStages) Restore(context.Context, CheckpointManifest) error { return nil }
 func (f *fakeStages) Checkpoint(context.Context) (CheckpointManifest, error) {
