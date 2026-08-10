@@ -117,7 +117,7 @@ func DecodeMappingSelection(raw []byte) (MappingSelection, error) {
 func validCanonicalKind(item MappingSelectionItem) bool {
 	switch item.Type {
 	case domain.InstrumentIndex:
-		return item.CanonicalSegment == domain.SegmentIndex && item.ProviderExchange == "NSE" && item.ProviderSegment == "INDICES" && item.ProviderInstrumentType == ""
+		return item.CanonicalSegment == domain.SegmentIndex && item.ProviderExchange == "NSE" && item.ProviderSegment == "INDICES" && item.ProviderInstrumentType == "EQ"
 	case domain.InstrumentEquity:
 		return item.CanonicalSegment == domain.SegmentCash && item.ProviderExchange == "NSE" && item.ProviderSegment == "NSE" && item.ProviderInstrumentType == "EQ"
 	case domain.InstrumentFuture:
@@ -185,12 +185,16 @@ func GenerateMappings(dumpRaw []byte, selection MappingSelection, asOf, validFro
 
 func buildGeneratedInstrument(selected MappingSelectionItem, record brokerzerodha.InstrumentRecord, at time.Time) (generatedInstrument, domain.Instrument, error) {
 	tick, err := decimalMinor(record.TickSize)
-	if err != nil || tick <= 0 || record.LotSize <= 0 {
+	observationOnlyIndex := selected.Type == domain.InstrumentIndex && tick == 0 && record.LotSize == 0
+	if err != nil || (!observationOnlyIndex && (tick <= 0 || record.LotSize <= 0)) {
 		return generatedInstrument{}, domain.Instrument{}, ErrInvalidMappingSelection
 	}
 	doc := generatedInstrument{Key: selected.Key, Exchange: domain.ExchangeNSE, Segment: selected.CanonicalSegment, Underlying: selected.Underlying, Type: selected.Type, Symbol: selected.TradingSymbol, LotSize: record.LotSize, TickSizeMinor: tick, Currency: "INR"}
 	underlying, _ := domain.NewUnderlyingID(selected.Underlying)
 	quantity, _ := domain.NewQuantity(record.LotSize)
+	if observationOnlyIndex {
+		quantity = 0
+	}
 	tickPrice, _ := domain.NewPrice(tick, "INR")
 	spec := domain.InstrumentSpec{Exchange: domain.ExchangeNSE, Segment: selected.CanonicalSegment, UnderlyingID: underlying, Type: selected.Type, ExchangeSymbol: selected.TradingSymbol, LotSize: quantity, TickSize: tickPrice, Currency: "INR"}
 	if selected.Type == domain.InstrumentFuture || selected.Type == domain.InstrumentOption {

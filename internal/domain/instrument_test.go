@@ -67,6 +67,21 @@ func TestInvalidInstrumentCombinations(t *testing.T) {
 	}
 }
 
+func TestObservationOnlyIndexAllowsZeroTradingMetadata(t *testing.T) {
+	spec := validIndexSpec(t)
+	spec.LotSize = 0
+	spec.TickSize, _ = NewPrice(0, "INR")
+	if _, err := NewInstrument(spec); err != nil {
+		t.Fatalf("NewInstrument() observation-only index error = %v", err)
+	}
+
+	spec.Type = InstrumentEquity
+	spec.Segment = SegmentCash
+	if _, err := NewInstrument(spec); !errors.Is(err, ErrInvalidInstrument) {
+		t.Fatalf("NewInstrument() accepted zero trading metadata for an equity: %v", err)
+	}
+}
+
 func validIndexSpec(t *testing.T) InstrumentSpec {
 	t.Helper()
 	underlying, _ := NewUnderlyingID("NIFTY")
