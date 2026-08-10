@@ -41,6 +41,60 @@ The application requires `TRADEEDGE_AUTHORIZATION_MANIFEST` in PAPER mode and
 fails before broker authentication when the manifest, commit, date, mode,
 bundle checksum, portfolio capital, risk policy, or strategy identity differs.
 
+## Pre-session Zerodha authentication
+
+Use `tradeedge-zerodha-auth` before runtime startup. The utility composes only
+the existing read-only session, profile client, and market stream. It does not
+start `cmd/tradeedge`, Phase 7, a strategy, a broker mutation adapter, or Day 0.
+
+Register the operator-controlled redirect URL in the Zerodha developer console
+for the API key before using the utility. Zerodha selects that registered URL;
+it is not a login-URL parameter and TradeEdge does not host a redirect handler.
+Securely inject `TRADEEDGE_ZERODHA_API_KEY` and set the read-only boundary:
+
+```powershell
+$env:TRADEEDGE_ZERODHA_READ_ONLY='true'
+go run ./cmd/tradeedge-zerodha-auth login-url
+```
+
+Open the printed URL manually. After successful login, copy the one-time
+`request_token` from the registered redirect URL into the approved secret
+injection mechanism as `TRADEEDGE_ZERODHA_REQUEST_TOKEN`. Also inject
+`TRADEEDGE_ZERODHA_API_SECRET`; never place either value in a command argument,
+tracked file, evidence, log, or ticket. The bounded exchange check is:
+
+```powershell
+go run ./cmd/tradeedge-zerodha-auth exchange-token -timeout 10s
+```
+
+It prints only `AUTHENTICATED` and the calculated expiry. The access token is
+held in memory, cleared on shutdown, and never printed or persisted. Because a
+request token is one-time, obtain a fresh login/request token for each later
+command that must perform its own in-memory exchange. Alternatively, inject an
+already exchanged `TRADEEDGE_ZERODHA_ACCESS_TOKEN` and its mandatory RFC3339
+`TRADEEDGE_ZERODHA_ACCESS_TOKEN_EXPIRES_AT` through the approved secret
+mechanism.
+
+Verify only the fixed read-only profile endpoint:
+
+```powershell
+go run ./cmd/tradeedge-zerodha-auth verify-rest -timeout 10s
+```
+
+Require `REST_AUTH=PASS`. Then verify the checksum-pinned Day-0 NIFTY 50 and
+NIFTY BANK quote mappings. The utility rejects every other watchlist, waits for
+a fresh observation from both provider tokens, and disconnects cleanly within
+the bound:
+
+```powershell
+go run ./cmd/tradeedge-zerodha-auth verify-websocket -runtime-bundle '.cache\market-validation\config\runtime-bundle.json' -timeout 15s -max-age 5s
+```
+
+Require `WEBSOCKET_AUTH=PASS`, `OBSERVATIONS_RECEIVED=2`, and `SHUTDOWN=PASS`.
+Any missing credential, exchange failure, expired session, changed bundle,
+unexpected token, stale observation, timeout, or disconnect fails closed. None
+of these checks authorizes or starts Day 0.
+
 ## Telegram acceptance
 
 With credentials injected only into environment variables, generate create-once
