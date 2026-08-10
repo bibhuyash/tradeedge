@@ -25,6 +25,10 @@ For market data, it must also report provider availability, preserve exact provi
 ## Invariants
 
 - No Zerodha SDK type crosses an adapter boundary.
+- Zerodha `INDICES` rows are observation-only canonical `INDEX` instruments.
+  Their current provider discriminator is `EQ`; zero lot and tick metadata are
+  preserved as non-tradable observation metadata and are never accepted for
+  equity or derivative instruments.
 - Strategies never receive the adapter.
 - A submission timeout is reconciled before retry.
 - Broker orders and positions are authoritative for actual external state.

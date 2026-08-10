@@ -139,8 +139,11 @@ type Instrument struct {
 func NewInstrument(spec InstrumentSpec) (Instrument, error) {
 	spec.ExchangeSymbol = strings.ToUpper(strings.TrimSpace(spec.ExchangeSymbol))
 	if spec.Exchange != ExchangeNSE || spec.UnderlyingID == "" || spec.ExchangeSymbol == "" ||
-		!spec.LotSize.IsValid() || spec.TickSize.IsZeroValue() || spec.Currency == "" ||
-		spec.TickSize.Currency() != spec.Currency || spec.TickSize.MinorUnits() <= 0 {
+		spec.TickSize.IsZeroValue() || spec.Currency == "" || spec.TickSize.Currency() != spec.Currency {
+		return Instrument{}, ErrInvalidInstrument
+	}
+	observationOnlyIndex := spec.Type == InstrumentIndex && spec.LotSize.Int64() == 0 && spec.TickSize.MinorUnits() == 0
+	if !observationOnlyIndex && (!spec.LotSize.IsValid() || spec.TickSize.MinorUnits() <= 0) {
 		return Instrument{}, ErrInvalidInstrument
 	}
 

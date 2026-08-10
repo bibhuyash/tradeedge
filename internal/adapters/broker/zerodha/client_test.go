@@ -11,6 +11,14 @@ import (
 const validProfile = `{"status":"success","data":{"exchanges":["NFO"],"products":["NRML"],"order_types":["LIMIT"]}}`
 const validInstruments = "instrument_token,exchange_token,tradingsymbol,name,last_price,expiry,strike,tick_size,lot_size,instrument_type,segment,exchange\n123,45,NIFTY26AUG25000CE,,0,2026-08-27,25000,0.05,65,CE,NFO-OPT,NFO\n"
 
+func TestParseInstrumentDumpAllowsObservationOnlyIndexMetadata(t *testing.T) {
+	dump := "instrument_token,exchange_token,tradingsymbol,name,last_price,expiry,strike,tick_size,lot_size,instrument_type,segment,exchange\n256265,1001,NIFTY 50,NIFTY 50,0,,0,0,0,EQ,INDICES,NSE\n"
+	records, err := ParseInstrumentDump([]byte(dump))
+	if err != nil || len(records) != 1 || records[0].LotSize != 0 || records[0].TickSize != "0" {
+		t.Fatalf("ParseInstrumentDump() = %#v, %v", records, err)
+	}
+}
+
 func authenticatedSession(now time.Time) (*SessionManager, *fixedClock) {
 	clock := &fixedClock{now: now}
 	return NewSessionManager(CredentialMaterial{apiKey: "key", apiSecret: "secret", accessToken: "access", expiresAt: now.Add(time.Hour)}, nil, clock, nil), clock

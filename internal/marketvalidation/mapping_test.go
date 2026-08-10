@@ -9,11 +9,11 @@ import (
 const mappingDumpHeader = "instrument_token,exchange_token,tradingsymbol,name,last_price,expiry,strike,tick_size,lot_size,instrument_type,segment,exchange\n"
 
 func indexSelection() MappingSelection {
-	return MappingSelection{SchemaVersion: MappingSelectionSchemaVersion, WatchlistID: "day0-index-observation/v1", Instruments: []MappingSelectionItem{{Key: "NSE:INDEX:NIFTY", ProviderExchange: "NSE", ProviderSegment: "INDICES", TradingSymbol: "NIFTY 50", CanonicalSegment: "INDEX", Underlying: "NIFTY", Type: "INDEX"}}}
+	return MappingSelection{SchemaVersion: MappingSelectionSchemaVersion, WatchlistID: "day0-index-observation/v1", Instruments: []MappingSelectionItem{{Key: "NSE:INDEX:NIFTY", ProviderExchange: "NSE", ProviderSegment: "INDICES", ProviderInstrumentType: "EQ", TradingSymbol: "NIFTY 50", CanonicalSegment: "INDEX", Underlying: "NIFTY", Type: "INDEX"}}}
 }
 
 func TestGenerateMappingsBuildsCurrentFailClosedArtifacts(t *testing.T) {
-	dump := mappingDumpHeader + "256265,1001,NIFTY 50,NIFTY,0,,0,0.05,1,,INDICES,NSE\n"
+	dump := mappingDumpHeader + "256265,1001,NIFTY 50,NIFTY,0,,0,0,0,EQ,INDICES,NSE\n"
 	from := time.Date(2026, 8, 10, 3, 30, 0, 0, time.UTC)
 	got, err := GenerateMappings([]byte(dump), indexSelection(), from, from, from.Add(12*time.Hour))
 	if err != nil {
@@ -26,7 +26,7 @@ func TestGenerateMappingsBuildsCurrentFailClosedArtifacts(t *testing.T) {
 
 func TestGenerateMappingsRejectsDuplicateAndExpiredContracts(t *testing.T) {
 	from := time.Date(2026, 8, 10, 3, 30, 0, 0, time.UTC)
-	duplicate := mappingDumpHeader + "1,1,NIFTY 50,NIFTY,0,,0,0.05,1,,INDICES,NSE\n2,2,NIFTY 50,NIFTY,0,,0,0.05,1,,INDICES,NSE\n"
+	duplicate := mappingDumpHeader + "1,1,NIFTY 50,NIFTY,0,,0,0.05,1,EQ,INDICES,NSE\n2,2,NIFTY 50,NIFTY,0,,0,0.05,1,EQ,INDICES,NSE\n"
 	if _, err := GenerateMappings([]byte(duplicate), indexSelection(), from, from, from.Add(time.Hour)); err == nil {
 		t.Fatal("duplicate mapping accepted")
 	}
@@ -44,7 +44,7 @@ func TestGenerateMappingsRejectsWrongSegmentAndInvalidMetadata(t *testing.T) {
 	if _, err := GenerateMappings([]byte(mappingDumpHeader), selection, from, from, from.Add(time.Hour)); err == nil {
 		t.Fatal("incorrect provider segment accepted")
 	}
-	badMetadata := mappingDumpHeader + "1,1,NIFTY 50,NIFTY,0,,0,0,0,,INDICES,NSE\n"
+	badMetadata := mappingDumpHeader + "1,1,NIFTY 50,NIFTY,0,,0,0.05,0,EQ,INDICES,NSE\n"
 	if _, err := GenerateMappings([]byte(badMetadata), indexSelection(), from, from, from.Add(time.Hour)); err == nil {
 		t.Fatal("invalid lot/tick metadata accepted")
 	}

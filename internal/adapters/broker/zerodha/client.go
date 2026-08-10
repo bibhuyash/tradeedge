@@ -139,7 +139,7 @@ func parseInstruments(body []byte) ([]InstrumentRecord, error) {
 		}
 		lot, parseErr := strconv.ParseInt(strings.TrimSpace(record[8]), 10, 64)
 		token := strings.TrimSpace(record[0])
-		if parseErr != nil || lot <= 0 || token == "" || seen[token] {
+		if parseErr != nil || lot < 0 || token == "" || seen[token] {
 			return nil, ErrMalformedResponse
 		}
 		seen[token] = true

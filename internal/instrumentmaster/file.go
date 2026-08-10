@@ -58,6 +58,9 @@ func LoadFile(path string) (Master, map[string]domain.InstrumentID, error) {
 		key := strings.TrimSpace(item.Key)
 		underlying, underlyingErr := domain.NewUnderlyingID(item.Underlying)
 		quantity, quantityErr := domain.NewQuantity(item.LotSize)
+		if item.Type == domain.InstrumentIndex && item.LotSize == 0 {
+			quantity, quantityErr = 0, nil
+		}
 		tick, tickErr := domain.NewPrice(item.TickSizeMinor, item.Currency)
 		currency, currencyErr := domain.NewCurrency(item.Currency)
 		if key == "" || underlyingErr != nil || quantityErr != nil || tickErr != nil || currencyErr != nil || keys[key] != (domain.InstrumentID{}) {
