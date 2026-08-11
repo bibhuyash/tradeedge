@@ -1,0 +1,70 @@
+{
+  "schema_version": "phase-8-m1-evidence/v1",
+  "phase": "8 M1",
+  "baseline_commit": "9b672977882fd6944497d72cea49d14904987a9f",
+  "strategy": {
+    "id": "nifty-ema-crossover-paper",
+    "version": "1",
+    "classification": "PRODUCTION_CANDIDATE",
+    "enabled_by_default": false,
+    "signal_instrument": "NIFTY 50",
+    "execution_instrument_policy": "EXPLICIT_CONFIGURED_TRADABLE_PAPER_INSTRUMENT",
+    "calculation_policy": "fixed-point-ema-half-away-from-zero/v1"
+  },
+  "configuration_sha256": "dda0b220d5e50b50d4efe645887d68821c52647d3c992be4abf6d73841f1b4c3",
+  "replay_dataset_sha256": "18698dd4bccb550a7b138f1ba8875b886a4f0920793ff12ac95d193c787eba8d",
+  "evidence": {
+    "signal_determinism": "PASS",
+    "proposal_id_determinism": "PASS",
+    "edge_triggered_entry_exit": "PASS",
+    "duplicate_replay_containment": "PASS_PHASE_2_BOUNDARY",
+    "reorder_and_late_containment": "PASS",
+    "restart_equivalence": "PASS_PHASE_2_BOUNDARY",
+    "cas_session_containment": "PASS",
+    "authoritative_position_gate": "PASS_CONTRACT",
+    "risk_path": "PASS_PHASE_3_REGRESSION_NOT_CONNECTED",
+    "paper_execution": "PASS_PHASE_4_REGRESSION_NOT_CONNECTED",
+    "fill_position_pnl": "PASS_PHASE_6_REGRESSION_NOT_CONNECTED",
+    "telegram_events": "PASS_PHASE_7_REGRESSION_NOT_CONNECTED",
+    "zero_real_broker_mutation": "PASS_UNREACHABLE",
+    "telemetry_cardinality": "PASS_SINGLE_BOUNDED_SNAPSHOT"
+  },
+  "scenarios": {
+    "no_crossover": "PASS",
+    "bullish_crossover": "PASS",
+    "duplicate_bullish_samples": "PASS",
+    "bearish_exit_crossover": "PASS",
+    "stale_input": "PASS",
+    "insufficient_warmup": "PASS",
+    "out_of_order_event": "PASS",
+    "late_event": "PASS",
+    "cas_restricted": "PASS",
+    "session_closed": "PASS",
+    "restart_from_checkpoint": "PASS_PHASE_2_BOUNDARY",
+    "duplicate_replay": "PASS_PHASE_2_BOUNDARY",
+    "position_already_exists": "PASS",
+    "risk_rejection": "PASS_PHASE_3_REGRESSION_NOT_CONNECTED",
+    "execution_timeout_failure": "PASS_PHASE_4_REGRESSION_NOT_CONNECTED",
+    "paper_fill": "PASS_PHASE_4_REGRESSION_NOT_CONNECTED",
+    "position_creation": "PASS_PHASE_6_REGRESSION_NOT_CONNECTED",
+    "valuation_pnl_update": "PASS_PHASE_6_REGRESSION_NOT_CONNECTED",
+    "eod_drain": "PASS_PHASE_7_REGRESSION_NOT_CONNECTED",
+    "deterministic_second_replay": "PASS"
+  },
+  "activation": {
+    "full_pipeline": "BLOCKED_EXPECTED",
+    "reason": "No checksum-authorized tradable execution mapping or canonical execution price series exists in the current real-market bundle",
+    "unsafe_fallback_used": false,
+    "live_enabled": false
+  },
+  "local_verification": {
+    "go_test_all": "PASS",
+    "focused_replay_count_20": "PASS",
+    "race": "UNAVAILABLE_ON_WINDOWS_WITHOUT_CGO; REQUIRED_BY_UBUNTU_CI",
+    "vet": "PASS",
+    "build": "PASS",
+    "lint": "PASS",
+    "git_diff_check": "PASS"
+  },
+  "result": "M1_DEFINITION_PASS_FULL_PIPELINE_ACTIVATION_BLOCKED"
+}

@@ -1,0 +1,9 @@
+{
+  "schema_version": "phase-8-ema-replay/v1",
+  "steps": [
+    {"name":"bearish-baseline","start_minor":1000,"step_minor":-10,"count":50,"offset_seconds":0},
+    {"name":"bullish-crossover","start_minor":100,"step_minor":10,"count":50,"offset_seconds":3000},
+    {"name":"bullish-no-repeat","start_minor":110,"step_minor":10,"count":50,"offset_seconds":6000},
+    {"name":"bearish-exit","start_minor":1000,"step_minor":-10,"count":50,"offset_seconds":9000}
+  ]
+}

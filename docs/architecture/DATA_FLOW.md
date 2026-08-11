@@ -243,3 +243,22 @@ flowchart LR
 Admission and each released stage are bounded. A runtime manifest binds the
 committed subsystem heads and broker/fill cursors used for continuation.
 PRE_CAS, CAS_ACTIVE, and POST_CAS come only from the versioned calendar.
+
+## Phase 8 M1 Candidate Signal Boundary
+
+```mermaid
+flowchart LR
+    N["Canonical NIFTY 50 completed 1m candles"] --> E["Fixed-point EMA20 / EMA50"]
+    X["Configured tradable PAPER candle"] --> P["Provider-neutral proposal"]
+    E --> C{"Edge crossover?"}
+    C -->|No| A["Explicit NO_ACTION"]
+    C -->|Bullish / bearish| G["Session, CAS, freshness, position gates"]
+    G -->|Allowed| P
+    G -->|Blocked| A
+    P --> R["Existing Phase 3 central risk"]
+```
+
+The signal index and execution instrument are different identities. A missing
+execution mapping or price cannot fall back to the index. EMA input order is
+the canonical completed-candle order already enforced by the Phase 1 and
+Phase 2 frame boundaries; WebSocket arrival order is not an input.

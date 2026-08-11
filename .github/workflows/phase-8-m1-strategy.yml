@@ -1,0 +1,46 @@
+name: Phase 8 M1 strategy
+
+on:
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  deterministic-paper-candidate:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+          cache: true
+      - name: Formatting and diff hygiene
+        run: |
+          test -z "$(gofmt -l cmd internal)"
+          git diff --check
+      - name: Full Phase 1-7 and Day-0 regressions
+        run: go test ./...
+      - name: Candidate deterministic replay 20x
+        run: go test ./internal/strategy/ema -count=20
+      - name: Full race suite
+        run: go test -race ./...
+      - name: Repeated candidate race suite
+        run: go test -race ./internal/strategy/ema -count=20
+      - name: Static checks and build
+        run: |
+          go vet ./...
+          go build ./...
+      - name: Focused boundary regressions
+        run: |
+          go test ./internal/marketdata/... ./internal/strategy/... ./internal/risk/... ./internal/execution/... ./internal/accounting/... ./internal/tradingruntime/...
+          go test ./internal/marketvalidation/... ./internal/releasegate/phase7closure/...
+      - name: Safety scans
+        shell: bash
+        run: |
+          if grep -RInE --include='*.go' --exclude='*_test.go' 'float32|float64' internal/strategy/ema; then exit 1; fi
+          if grep -RInE --include='*.go' 'zerodha|PlaceOrder|ModifyOrder|CancelOrder' internal/strategy/ema; then exit 1; fi
+          if grep -RInE --include='*.go' 'LIVE_ENABLED' internal/strategy/ema internal/app/paper_runtime.go; then exit 1; fi
+          if grep -RInE --include='*.go' 'api[_-]?secret|access[_-]?token|bot[_-]?token' internal/strategy/ema; then exit 1; fi
