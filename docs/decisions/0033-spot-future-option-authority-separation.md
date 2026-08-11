@@ -24,4 +24,3 @@ instrument master. Missing, stale, ambiguous, expired, illiquid, or excessively
 wide data fails closed. An open option is never migrated during rollover.
 SHADOW emits decisions and notifications but no fill; PAPER alone may use the
 deterministic simulator. LIVE remains unavailable.
-

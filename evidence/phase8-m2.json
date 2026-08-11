@@ -1,0 +1,93 @@
+{
+  "schema_version": "phase8-m2-nifty-derivatives-evidence/v1",
+  "phase": "8 M2",
+  "baseline_commit": "1d207d48c943fa5acb9d72cd41c5b6cf560539e3",
+  "implementation_commit": "4a3f4fb38076b6cf9ededb47f560d6c5ab6a1e89",
+  "architecture": "NIFTY_SPOT_TO_NIFTY_FUTURE_TO_NIFTY_OPTION",
+  "strategy": {
+    "id": "nifty-ema-crossover-paper",
+    "role": "REFERENCE_CANDIDATE",
+    "enabled_by_default": false,
+    "alpha_qualification": "NOT_QUALIFIED",
+    "configuration_sha256": "a9ae94ac9490530f1d20214f7bf39f724696d56572b1678509c6a59fae4e50dc"
+  },
+  "provider_metadata": {
+    "provider": "zerodha",
+    "downloaded_at": "2026-08-11T14:30:41Z",
+    "source_sha256": "1403cde24dae6626f7977018dcc9c601ab2c28d222c248d4b12a192957c0a15a",
+    "instrument_master_sha256": "fad195607a1a949d9642c79dbaef1990f266e92acd95abfca4630b5067d22bb6",
+    "watchlist_sha256": "6cfccdbd83dc9def3a41060e8ee7ea1e639f6f8b99d3df370c68b1ffdc65d869",
+    "selection_sha256": "24c6fc9b8710ee352e5a334ff7a97b6dfd1f85f83508e8f917327ee3dda7be42"
+  },
+  "mappings": {
+    "spot": {"token":"256265","symbol":"NIFTY 50","role":"SIGNAL_ONLY","result":"PASS"},
+    "future": {"token":"14866434","symbol":"NIFTY26AUGFUT","canonical_id":"13cabe60e56feb01d00e8338edbcca7f35d536b92796eb172d722833454fce5a","expiry":"2026-08-25","lot_size":65,"tick_size_minor":10,"result":"PASS"},
+    "option": {"token":"11555842","symbol":"NIFTY2681824800CE","canonical_id":"c5d5514dce35685e231ae2e5ac445a87f5f3031aa3377dfdeb99192994a7a87b","expiry":"2026-08-18","strike_minor":2480000,"option_type":"CALL","lot_size":65,"tick_size_minor":5,"result":"PASS"}
+  },
+  "policies": {
+    "mapping": "nifty-bounded-derivative-mapping/v1",
+    "future": "nearest-eligible-nifty-future/v1",
+    "expiry": "nearest-option-expiry-min-one-day/v1",
+    "strike": "forward-atm-nearest-strike-half-up/v1",
+    "universe": "bounded-atm-neighborhood/v1",
+    "execution_price": "option-touch-or-ltp-conservative/v1",
+    "greeks": "UNAVAILABLE",
+    "iv": "UNAVAILABLE"
+  },
+  "replay": {
+    "dataset_sha256": "d5901f6142a209e0463911256812d15809ab29d5187568776ae7de1fd1781847",
+    "entry_fill_id": "e98fcb6a28defdd9e8a683c050e2026a0935e74a738e9264c04d43b878f7c99f",
+    "exit_fill_id": "59a7c180181a0d4353ac80854176f73a9b8c24b86f0ac98127cd72770295d7c2",
+    "final_checkpoint": "36b2986b91cdc6e0ca0989ded988e2b762123f4aaaf615555c4e570600982993",
+    "repeat_exact": true,
+    "restart_exact": true
+  },
+  "connected_flow": {
+    "signal_execution_separation": "PASS",
+    "option_price_execution_authority": "PASS_BEST_ASK_ENTRY_BEST_BID_EXIT",
+    "shadow": "PASS_NO_FILL_NO_POSITION",
+    "risk": "PASS_REQUIRED_CENTRAL_RISK_PORT",
+    "paper_fill": {"entry_minor":10100,"quantity":65,"price_source":"BEST_ASK"},
+    "position": {"cost_basis_minor":656500,"mark_minor":10500,"unrealized_pnl_minor":26000},
+    "exit": {"price_minor":10400,"price_source":"BEST_BID","realized_pnl_minor":19500,"position_open":false},
+    "telegram": "PASS_LABELLED_OUTBOUND_AND_FAILURE_CONTAINED"
+  },
+  "adversarial": {
+    "missing_future": "PASS",
+    "stale_future": "PASS",
+    "missing_option_mapping": "PASS",
+    "missing_or_stale_option_quote": "PASS",
+    "wide_spread_or_low_liquidity": "PASS",
+    "off_tick_price": "PASS",
+    "duplicate_signal": "PASS",
+    "late_quote": "PASS",
+    "cas_restricted": "PASS",
+    "session_closed": "PASS",
+    "stop_new_exposure": "PASS_ENTRY_BLOCKED_EXIT_ALLOWED",
+    "risk_rejected": "PASS",
+    "rollover": "PASS_NO_OPEN_POSITION_MIGRATION",
+    "eod_close": "PASS",
+    "checkpoint_corruption": "PASS",
+    "telegram_unavailable": "PASS_NON_AUTHORITATIVE",
+    "execution_timeout_unknown_duplicate_fill": "PASS_EXISTING_PHASE4_REGRESSION"
+  },
+  "safety": {
+    "real_broker_mutation": "UNREACHABLE",
+    "niftybees_implementation": "ABSENT",
+    "floating_point_authority": "ABSENT",
+    "credentials": "ABSENT",
+    "live_enabled": "ABSENT"
+  },
+  "local_ci": {
+    "gofmt": "PASS",
+    "go_test_all": "PASS",
+    "focused_derivatives_20x": "PASS",
+    "go_vet": "PASS",
+    "go_build": "PASS",
+    "module_verify": "PASS",
+    "git_diff_check": "PASS",
+    "race": "REQUIRED_ON_UBUNTU_CI_WINDOWS_CGO_UNAVAILABLE"
+  },
+  "authorization": "REQUIRED_BEFORE_REAL_MARKET_SHADOW_VALIDATION",
+  "result": "M2_LOCAL_PASS_CANDIDATE_DISABLED"
+}

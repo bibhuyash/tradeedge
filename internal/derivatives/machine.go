@@ -45,8 +45,8 @@ type RiskInput struct {
 	Increasing   bool
 }
 type RiskResult struct {
-	Outcome string `json:"outcome"`
-	Reason string `json:"reason"`
+	Outcome    string `json:"outcome"`
+	Reason     string `json:"reason"`
 	DecisionID string `json:"decision_id"`
 }
 type RiskGate interface{ Decide(RiskInput) RiskResult }
@@ -60,6 +60,7 @@ type Signal struct {
 	SlowEMAScaled int64        `json:"slow_ema_scaled"`
 	Direction     string       `json:"direction"`
 }
+
 func (s Signal) MarshalJSON() ([]byte, error) {
 	return json.Marshal(struct {
 		ID            string    `json:"id"`
@@ -113,17 +114,17 @@ type Snapshot struct {
 	Checkpoint    string        `json:"checkpoint"`
 }
 type SelectionView struct {
-	FutureID      string `json:"future_id"`
-	FutureSymbol  string `json:"future_symbol"`
-	OptionID      string `json:"option_id"`
-	OptionSymbol  string `json:"option_symbol"`
-	Expiry        string `json:"expiry"`
-	OptionType    string `json:"option_type"`
-	Policy        string `json:"policy"`
-	StrikeMinor   int64  `json:"strike_minor"`
-	ReferenceMinor int64 `json:"reference_minor"`
-	LotSize       int64  `json:"lot_size"`
-	TickSizeMinor int64  `json:"tick_size_minor"`
+	FutureID       string `json:"future_id"`
+	FutureSymbol   string `json:"future_symbol"`
+	OptionID       string `json:"option_id"`
+	OptionSymbol   string `json:"option_symbol"`
+	Expiry         string `json:"expiry"`
+	OptionType     string `json:"option_type"`
+	Policy         string `json:"policy"`
+	StrikeMinor    int64  `json:"strike_minor"`
+	ReferenceMinor int64  `json:"reference_minor"`
+	LotSize        int64  `json:"lot_size"`
+	TickSizeMinor  int64  `json:"tick_size_minor"`
 }
 
 type Machine struct {
