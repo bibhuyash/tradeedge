@@ -14,6 +14,7 @@ import (
 	"time"
 
 	brokerzerodha "github.com/bibhuyash/tradeedge/internal/adapters/broker/zerodha"
+	"github.com/bibhuyash/tradeedge/internal/marketdata"
 )
 
 type fixedClock struct{ now time.Time }
@@ -340,6 +341,48 @@ func TestPreflightReusesOneAuthenticatedSession(t *testing.T) {
 	assertNoCredentialMaterial(t, output.String(), merge(values, map[string]string{accessTokenEnvironment: "generated-access-token"}), "")
 }
 
+func TestPreflightIgnoresTimestampLessIndexQuoteUntilFreshFullPackets(t *testing.T) {
+	now := time.Date(2026, 8, 10, 10, 0, 0, 0, time.UTC)
+	connection := &fakeMarketConnection{frames: []brokerzerodha.MarketFrame{
+		{Binary: true, Data: indexQuoteFrame(256265)},
+		{Binary: true, Data: quoteFrame(256265, now)},
+		{Binary: true, Data: quoteFrame(260105, now)},
+	}}
+	dependencies := websocketDependencies(now, &fakeMarketDialer{connection: connection})
+	dependencies.roundTripper = preflightRoundTripper(t)
+
+	var output bytes.Buffer
+	if err := run([]string{"preflight", "-runtime-bundle", "pinned.json", "-timeout", "1s", "-max-age", "5s"}, mapLookup(credentialValues()), &output, dependencies); err != nil {
+		t.Fatal(err)
+	}
+	want := "AUTHENTICATION=PASS\nREST_AUTH=PASS\nWEBSOCKET_AUTH=PASS\nOBSERVATIONS_RECEIVED=2\nSHUTDOWN=PASS\nACCESS_TOKEN_EXPIRES_AT=2026-08-11T00:30:00Z\n"
+	if output.String() != want {
+		t.Fatalf("output=%q", output.String())
+	}
+}
+
+func TestPreflightReportsTimestampLessIndexPacketAtFreshnessStage(t *testing.T) {
+	now := time.Date(2026, 8, 10, 10, 0, 0, 0, time.UTC)
+	connection := &fakeMarketConnection{frames: []brokerzerodha.MarketFrame{{Binary: true, Data: indexQuoteFrame(256265)}}}
+	dependencies := websocketDependencies(now, &fakeMarketDialer{connection: connection})
+	dependencies.roundTripper = preflightRoundTripper(t)
+
+	var output bytes.Buffer
+	err := run([]string{"preflight", "-runtime-bundle", "pinned.json", "-timeout", "20ms", "-max-age", "5s"}, mapLookup(credentialValues()), &output, dependencies)
+	if err == nil {
+		t.Fatal("expected preflight failure")
+	}
+	for _, line := range []string{
+		"BINARY_FRAMES_RECEIVED=1", "PACKETS_RECEIVED=1", "INDEX_PACKETS_RECEIVED=1",
+		"PACKETS_DECODED=1", "PACKETS_REJECTED=0", "TOKEN_MATCHES=1",
+		"FRESH_OBSERVATIONS=0", "LAST_FAILURE_STAGE=FRESHNESS",
+	} {
+		if !strings.Contains(output.String(), line+"\n") {
+			t.Fatalf("missing %q in output %q", line, output.String())
+		}
+	}
+}
+
 func TestPreflightSurfacesAuthenticationFailureSafely(t *testing.T) {
 	values := credentialValues()
 	values[apiSecretEnvironment] = "recognizable-secret"
@@ -416,7 +459,8 @@ func TestPreflightContainsWebSocketTimeoutAndShutsDown(t *testing.T) {
 	if exitCode != 1 {
 		t.Fatalf("execute() = %d", exitCode)
 	}
-	want := "AUTHENTICATION=PASS\nREST_AUTH=PASS\nWEBSOCKET_AUTH=FAIL\nOBSERVATIONS_RECEIVED=0\nSHUTDOWN=PASS\nERROR_TYPE=WebSocketTimeout\nMESSAGE=Timed out waiting for fresh market observations\nHTTP_STATUS=0\n"
+	want := "AUTHENTICATION=PASS\nREST_AUTH=PASS\nWEBSOCKET_AUTH=FAIL\nOBSERVATIONS_RECEIVED=0\nSHUTDOWN=PASS\nERROR_TYPE=WebSocketTimeout\nMESSAGE=Timed out waiting for fresh market observations\nHTTP_STATUS=0\n" +
+		"WEBSOCKET_HANDSHAKE=PASS\nSUBSCRIBE_SENT=PASS\nEXPECTED_TOKEN_COUNT=2\nEXPECTED_TOKENS_VALID=PASS\nBINARY_FRAMES_RECEIVED=0\nHEARTBEATS_RECEIVED=0\nPACKETS_RECEIVED=0\nINDEX_PACKETS_RECEIVED=0\nPACKETS_DECODED=0\nPACKETS_REJECTED=0\nTOKEN_MATCHES=0\nFRESH_OBSERVATIONS=0\nLAST_FAILURE_STAGE=FRAME_RECEIVE\n"
 	if output.String() != want || errorOutput.Len() != 0 {
 		t.Fatalf("stdout=%q stderr=%q", output.String(), errorOutput.String())
 	}
@@ -441,11 +485,28 @@ func TestPreflightReportsMalformedMarketFrameSafely(t *testing.T) {
 	if exitCode != 1 {
 		t.Fatalf("execute() = %d", exitCode)
 	}
-	want := "AUTHENTICATION=PASS\nREST_AUTH=PASS\nWEBSOCKET_AUTH=FAIL\nOBSERVATIONS_RECEIVED=0\nSHUTDOWN=PASS\nERROR_TYPE=WebSocketProtocolError\nMESSAGE=Received a malformed market-data frame\nHTTP_STATUS=0\n"
+	want := "AUTHENTICATION=PASS\nREST_AUTH=PASS\nWEBSOCKET_AUTH=FAIL\nOBSERVATIONS_RECEIVED=0\nSHUTDOWN=PASS\nERROR_TYPE=WebSocketProtocolError\nMESSAGE=Received a malformed market-data frame\nHTTP_STATUS=0\n" +
+		"WEBSOCKET_HANDSHAKE=PASS\nSUBSCRIBE_SENT=PASS\nEXPECTED_TOKEN_COUNT=2\nEXPECTED_TOKENS_VALID=PASS\nBINARY_FRAMES_RECEIVED=1\nHEARTBEATS_RECEIVED=0\nPACKETS_RECEIVED=1\nINDEX_PACKETS_RECEIVED=0\nPACKETS_DECODED=0\nPACKETS_REJECTED=1\nTOKEN_MATCHES=0\nFRESH_OBSERVATIONS=0\nLAST_FAILURE_STAGE=PACKET_DECODE\n"
 	if output.String() != want || errorOutput.Len() != 0 {
 		t.Fatalf("stdout=%q stderr=%q", output.String(), errorOutput.String())
 	}
 	assertNoCredentialMaterial(t, output.String()+errorOutput.String(), merge(values, map[string]string{accessTokenEnvironment: "generated-access-token"}), "")
+}
+
+func TestFreshObservationEnforcesFiveSecondPolicy(t *testing.T) {
+	now := time.Date(2026, 8, 10, 10, 0, 5, 0, time.UTC)
+	base := marketdata.Observation{ExchangeTime: now.Add(-5 * time.Second), IngestedAt: now.Add(-time.Second)}
+	if !freshObservation(base, now, 5*time.Second) {
+		t.Fatal("five-second boundary should be fresh")
+	}
+	base.ExchangeTime = now.Add(-5*time.Second - time.Nanosecond)
+	if freshObservation(base, now, 5*time.Second) {
+		t.Fatal("observation older than five seconds was accepted")
+	}
+	base.ExchangeTime = time.Time{}
+	if freshObservation(base, now, 5*time.Second) {
+		t.Fatal("timestamp-less observation was accepted")
+	}
 }
 
 func TestCommandSurfaceHasNoMutationCapability(t *testing.T) {
@@ -528,6 +589,21 @@ func quoteFrame(token uint32, at time.Time) []byte {
 	binary.BigEndian.PutUint32(packet[16:20], 9950)
 	binary.BigEndian.PutUint32(packet[20:24], 9980)
 	binary.BigEndian.PutUint32(packet[28:32], uint32(at.Unix()))
+	frame := make([]byte, 4+len(packet))
+	binary.BigEndian.PutUint16(frame[0:2], 1)
+	binary.BigEndian.PutUint16(frame[2:4], uint16(len(packet)))
+	copy(frame[4:], packet)
+	return frame
+}
+
+func indexQuoteFrame(token uint32) []byte {
+	packet := make([]byte, 28)
+	binary.BigEndian.PutUint32(packet[0:4], token)
+	binary.BigEndian.PutUint32(packet[4:8], 10000)
+	binary.BigEndian.PutUint32(packet[8:12], 10100)
+	binary.BigEndian.PutUint32(packet[12:16], 9900)
+	binary.BigEndian.PutUint32(packet[16:20], 9950)
+	binary.BigEndian.PutUint32(packet[20:24], 9980)
 	frame := make([]byte, 4+len(packet))
 	binary.BigEndian.PutUint16(frame[0:2], 1)
 	binary.BigEndian.PutUint16(frame[2:4], uint16(len(packet)))

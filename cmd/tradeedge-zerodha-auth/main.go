@@ -13,6 +13,7 @@ import (
 	"os"
 	"regexp"
 	"sort"
+	"strconv"
 	"strings"
 	"time"
 
@@ -211,11 +212,24 @@ type streamOptions struct {
 }
 
 type webSocketResult struct {
-	passed       bool
-	observations int
-	shutdown     bool
-	errorType    string
-	message      string
+	passed              bool
+	observations        int
+	shutdown            bool
+	errorType           string
+	message             string
+	handshake           bool
+	subscribeSent       bool
+	expectedTokenCount  int
+	expectedTokensValid bool
+	binaryFrames        uint64
+	heartbeats          uint64
+	packets             uint64
+	indexPackets        uint64
+	packetsDecoded      uint64
+	packetsRejected     uint64
+	tokenMatches        uint64
+	freshObservations   uint64
+	lastFailureStage    string
 }
 
 func parseStreamOptions(name string, args []string, lookup lookupEnv) (streamOptions, error) {
@@ -234,6 +248,11 @@ func parseStreamOptions(name string, args []string, lookup lookupEnv) (streamOpt
 }
 
 func verifyWebSocketSession(ctx context.Context, tokens []string, maxAge time.Duration, session *brokerzerodha.SessionManager, dependencies commandDependencies) webSocketResult {
+	result := webSocketResult{expectedTokenCount: len(tokens), expectedTokensValid: validExpectedTokens(tokens)}
+	if !result.expectedTokensValid {
+		result.errorType, result.message, result.lastFailureStage = "WebSocketConfigurationError", "Invalid expected provider tokens", "EXPECTED_TOKENS"
+		return result
+	}
 	dialer := dependencies.dialer
 	if dialer == nil {
 		dialer = brokerzerodha.NewWebSocketMarketDialer()
@@ -244,7 +263,8 @@ func verifyWebSocketSession(ctx context.Context, tokens []string, maxAge time.Du
 	}
 	stream, err := brokerzerodha.NewMarketStream(streamConfig, dialer, session, operatorClock(dependencies), nil)
 	if err != nil {
-		return webSocketResult{errorType: "WebSocketConfigurationError", message: "Invalid read-only WebSocket configuration"}
+		result.errorType, result.message, result.lastFailureStage = "WebSocketConfigurationError", "Invalid read-only WebSocket configuration", "HANDSHAKE"
+		return result
 	}
 	seen := make(map[string]struct{}, len(tokens))
 	expected := make(map[string]struct{}, len(tokens))
@@ -253,8 +273,11 @@ func verifyWebSocketSession(ctx context.Context, tokens []string, maxAge time.Du
 	}
 	streamCtx, stopStream := context.WithCancel(ctx)
 	err = stream.Stream(streamCtx, tokens, func(_ context.Context, observation marketdata.Observation) error {
-		if _, ok := expected[observation.ProviderToken]; !ok || !freshObservation(observation, operatorClock(dependencies).Now(), maxAge) {
+		if _, ok := expected[observation.ProviderToken]; !ok {
 			return errWebSocketVerification
+		}
+		if !freshObservation(observation, operatorClock(dependencies).Now(), maxAge) {
+			return nil
 		}
 		seen[observation.ProviderToken] = struct{}{}
 		if len(seen) == len(expected) {
@@ -264,10 +287,63 @@ func verifyWebSocketSession(ctx context.Context, tokens []string, maxAge time.Du
 	})
 	stopStream()
 	stream.Shutdown()
-	shutdown := stream.Snapshot().State == brokerzerodha.StreamStopped
-	passed := len(seen) == len(expected) && shutdown && (err == nil || errors.Is(err, context.Canceled))
-	errorType, message := classifyWebSocketFailure(err)
-	return webSocketResult{passed: passed, observations: len(seen), shutdown: shutdown, errorType: errorType, message: message}
+	snapshot := stream.Snapshot()
+	result.handshake = snapshot.HandshakeEstablished
+	result.subscribeSent = snapshot.SubscribeSent
+	result.binaryFrames = snapshot.BinaryFrames
+	result.heartbeats = snapshot.Heartbeats
+	result.packets = snapshot.Packets
+	result.indexPackets = snapshot.IndexPackets
+	result.packetsDecoded = snapshot.PacketsDecoded
+	result.packetsRejected = snapshot.PacketsRejected
+	result.tokenMatches = snapshot.TokenMatches
+	result.freshObservations = uint64(len(seen))
+	result.observations = len(seen)
+	result.shutdown = snapshot.State == brokerzerodha.StreamStopped
+	result.passed = len(seen) == len(expected) && result.shutdown && (err == nil || errors.Is(err, context.Canceled))
+	result.errorType, result.message = classifyWebSocketFailure(err)
+	result.lastFailureStage = webSocketFailureStage(result)
+	return result
+}
+
+func validExpectedTokens(tokens []string) bool {
+	if len(tokens) != 2 {
+		return false
+	}
+	seen := make(map[uint64]struct{}, len(tokens))
+	for _, token := range tokens {
+		value, err := strconv.ParseUint(strings.TrimSpace(token), 10, 32)
+		if err != nil || value == 0 {
+			return false
+		}
+		seen[value] = struct{}{}
+	}
+	return len(seen) == len(tokens)
+}
+
+func webSocketFailureStage(result webSocketResult) string {
+	switch {
+	case result.passed:
+		return "NONE"
+	case !result.expectedTokensValid:
+		return "EXPECTED_TOKENS"
+	case !result.handshake:
+		return "HANDSHAKE"
+	case !result.subscribeSent:
+		return "SUBSCRIPTION"
+	case result.binaryFrames == 0:
+		return "FRAME_RECEIVE"
+	case result.packets == 0:
+		return "BINARY_ENVELOPE"
+	case result.packetsDecoded == 0 && result.packetsRejected > 0:
+		return "PACKET_DECODE"
+	case result.tokenMatches == 0:
+		return "TOKEN_MATCH"
+	case result.freshObservations < uint64(result.expectedTokenCount):
+		return "FRESHNESS"
+	default:
+		return "UNKNOWN"
+	}
 }
 
 func classifyWebSocketFailure(err error) (string, string) {
@@ -346,7 +422,9 @@ func preflight(args []string, lookup lookupEnv, output io.Writer, dependencies c
 	client.Shutdown()
 	shutdown := streamResult.shutdown && session.Snapshot().State == brokerzerodha.SessionStopped
 	if !streamResult.passed {
-		return writePreflightFailure(output, "WEBSOCKET_AUTH", streamResult.errorType, streamResult.message, 0, streamResult.observations, shutdown)
+		failure := writePreflightFailure(output, "WEBSOCKET_AUTH", streamResult.errorType, streamResult.message, 0, streamResult.observations, shutdown)
+		writeWebSocketDiagnostics(output, streamResult)
+		return failure
 	}
 	_, err = fmt.Fprintf(output, "AUTHENTICATION=PASS\nREST_AUTH=PASS\nWEBSOCKET_AUTH=PASS\nOBSERVATIONS_RECEIVED=%d\nSHUTDOWN=PASS\nACCESS_TOKEN_EXPIRES_AT=%s\n", streamResult.observations, snapshot.ExpiresAt.UTC().Format(time.RFC3339))
 	return err
@@ -385,6 +463,11 @@ func passFail(value bool) string {
 		return "PASS"
 	}
 	return "FAIL"
+}
+
+func writeWebSocketDiagnostics(output io.Writer, result webSocketResult) {
+	_, _ = fmt.Fprintf(output, "WEBSOCKET_HANDSHAKE=%s\nSUBSCRIBE_SENT=%s\nEXPECTED_TOKEN_COUNT=%d\nEXPECTED_TOKENS_VALID=%s\nBINARY_FRAMES_RECEIVED=%d\nHEARTBEATS_RECEIVED=%d\nPACKETS_RECEIVED=%d\nINDEX_PACKETS_RECEIVED=%d\nPACKETS_DECODED=%d\nPACKETS_REJECTED=%d\nTOKEN_MATCHES=%d\nFRESH_OBSERVATIONS=%d\nLAST_FAILURE_STAGE=%s\n",
+		passFail(result.handshake), passFail(result.subscribeSent), result.expectedTokenCount, passFail(result.expectedTokensValid), result.binaryFrames, result.heartbeats, result.packets, result.indexPackets, result.packetsDecoded, result.packetsRejected, result.tokenMatches, result.freshObservations, result.lastFailureStage)
 }
 
 func authenticatedSession(ctx context.Context, lookup lookupEnv, dependencies commandDependencies) (*brokerzerodha.SessionManager, error) {

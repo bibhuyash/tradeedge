@@ -90,6 +90,14 @@ commands below remain diagnostics for an access token and expiry injected
 through the approved secret mechanism; they do not reuse an earlier CLI
 process's session.
 
+On WebSocket failure, preflight also prints bounded, credential-free stage
+counters for handshake, subscription, binary frames, heartbeats, packet decode,
+index packets, token matches, and fresh observations. `LAST_FAILURE_STAGE` is a
+safe enum and never includes the authenticated endpoint. Zerodha may deliver an
+initial timestamp-less 28-byte index quote before the requested full mode takes
+effect. The parser accepts the documented 8-, 28-, 32-, 44-, and 184-byte
+formats, but only timestamped packets can satisfy the unchanged freshness gate.
+
 Verify only the fixed read-only profile endpoint:
 
 ```powershell

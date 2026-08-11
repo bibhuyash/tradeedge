@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/binary"
 	"errors"
+	"reflect"
 	"sync"
 	"testing"
 	"time"
@@ -83,6 +84,45 @@ func TestDecodeMarketFrameFullQuoteUsesIntegerMinorUnits(t *testing.T) {
 	}
 }
 
+func TestDecodeMarketFrameSupportsOfficialPacketLengths(t *testing.T) {
+	ingested := time.Date(2026, 8, 10, 4, 0, 1, 0, time.UTC)
+	exchange := ingested.Add(-time.Second)
+	for name, testCase := range map[string]struct {
+		packet       []byte
+		index        uint64
+		exchangeTime time.Time
+		open         int64
+		high         int64
+		low          int64
+		close        int64
+	}{
+		"8 byte ltp":    {packet: ltpPacket(256265, 2450125)},
+		"28 byte index": {packet: indexPacket(256265, 2450125, 2460000, 2440000, 2445000, 2455000, time.Time{}), index: 1, open: 2445000, high: 2460000, low: 2440000, close: 2455000},
+		"32 byte index": {packet: indexPacket(256265, 2450125, 2460000, 2440000, 2445000, 2455000, exchange), index: 1, exchangeTime: exchange, open: 2445000, high: 2460000, low: 2440000, close: 2455000},
+		"44 byte quote": {packet: quotePacket(408065, 150025, 149000, 151000, 148500, 149500), open: 149000, high: 151000, low: 148500, close: 149500},
+	} {
+		t.Run(name, func(t *testing.T) {
+			observations, stats, err := decodeMarketFrame(wrapPackets(testCase.packet), ingested)
+			if err != nil || len(observations) != 1 {
+				t.Fatalf("decode = %#v, stats=%#v, err=%v", observations, stats, err)
+			}
+			value := observations[0]
+			if value.LastMinor != 2450125 && name != "44 byte quote" {
+				t.Fatalf("last minor = %d", value.LastMinor)
+			}
+			if name == "44 byte quote" && value.LastMinor != 150025 {
+				t.Fatalf("last minor = %d", value.LastMinor)
+			}
+			if value.OpenMinor != testCase.open || value.HighMinor != testCase.high || value.LowMinor != testCase.low || value.CloseMinor != testCase.close || !value.ExchangeTime.Equal(testCase.exchangeTime) {
+				t.Fatalf("observation = %#v", value)
+			}
+			if stats.packets != 1 || stats.indexPackets != testCase.index || stats.decoded != 1 || stats.rejected != 0 {
+				t.Fatalf("stats = %#v", stats)
+			}
+		})
+	}
+}
+
 func TestDecodeMarketFrameRejectsTruncationAndTrailingBytes(t *testing.T) {
 	if _, err := DecodeMarketFrame([]byte{0, 1, 0, 32, 1}, time.Now()); !errors.Is(err, ErrMarketStreamMalformed) {
 		t.Fatalf("truncated error = %v", err)
@@ -144,6 +184,15 @@ func TestMarketStreamReconnectsAndResubscribes(t *testing.T) {
 	if dialer.calls != 2 || len(first.writes) != 2 || len(second.writes) != 2 {
 		t.Fatalf("calls=%d writes=%d/%d", dialer.calls, len(first.writes), len(second.writes))
 	}
+	wantSubscribe := map[string]any{"a": "subscribe", "v": []uint32{256265}}
+	wantMode := map[string]any{"a": "mode", "v": []any{"full", []uint32{256265}}}
+	if !reflect.DeepEqual(second.writes[0], wantSubscribe) || !reflect.DeepEqual(second.writes[1], wantMode) {
+		t.Fatalf("subscription messages = %#v", second.writes)
+	}
+	snapshot := stream.Snapshot()
+	if !snapshot.HandshakeEstablished || !snapshot.SubscribeSent || snapshot.Heartbeats != 1 || snapshot.BinaryFrames != 2 || snapshot.Packets != 1 || snapshot.IndexPackets != 1 || snapshot.PacketsDecoded != 1 || snapshot.PacketsRejected != 1 || snapshot.TokenMatches != 1 {
+		t.Fatalf("snapshot = %#v", snapshot)
+	}
 }
 
 func TestMarketStreamBlocksUnexpectedOrderFrame(t *testing.T) {
@@ -171,4 +220,40 @@ func wrapPackets(packets ...[]byte) []byte {
 		offset += len(packet)
 	}
 	return raw
+}
+
+func ltpPacket(token uint32, last int32) []byte {
+	packet := make([]byte, 8)
+	binary.BigEndian.PutUint32(packet[0:4], token)
+	binary.BigEndian.PutUint32(packet[4:8], uint32(last))
+	return packet
+}
+
+func indexPacket(token uint32, last, high, low, open, close int32, exchange time.Time) []byte {
+	length := 28
+	if !exchange.IsZero() {
+		length = 32
+	}
+	packet := make([]byte, length)
+	binary.BigEndian.PutUint32(packet[0:4], token)
+	binary.BigEndian.PutUint32(packet[4:8], uint32(last))
+	binary.BigEndian.PutUint32(packet[8:12], uint32(high))
+	binary.BigEndian.PutUint32(packet[12:16], uint32(low))
+	binary.BigEndian.PutUint32(packet[16:20], uint32(open))
+	binary.BigEndian.PutUint32(packet[20:24], uint32(close))
+	if length == 32 {
+		binary.BigEndian.PutUint32(packet[28:32], uint32(exchange.Unix()))
+	}
+	return packet
+}
+
+func quotePacket(token uint32, last, open, high, low, close int32) []byte {
+	packet := make([]byte, 44)
+	binary.BigEndian.PutUint32(packet[0:4], token)
+	binary.BigEndian.PutUint32(packet[4:8], uint32(last))
+	binary.BigEndian.PutUint32(packet[28:32], uint32(open))
+	binary.BigEndian.PutUint32(packet[32:36], uint32(high))
+	binary.BigEndian.PutUint32(packet[36:40], uint32(low))
+	binary.BigEndian.PutUint32(packet[40:44], uint32(close))
+	return packet
 }

@@ -51,10 +51,18 @@ func (c MarketStreamConfig) Validate() error {
 
 type MarketStreamSnapshot struct {
 	State                 StreamState `json:"state"`
+	HandshakeEstablished  bool        `json:"handshake_established"`
+	SubscribeSent         bool        `json:"subscribe_sent"`
 	Subscriptions         int         `json:"subscriptions"`
 	ReconnectAttempts     int         `json:"reconnect_attempts"`
 	Frames                uint64      `json:"frames"`
+	BinaryFrames          uint64      `json:"binary_frames"`
 	Heartbeats            uint64      `json:"heartbeats"`
+	Packets               uint64      `json:"packets"`
+	IndexPackets          uint64      `json:"index_packets"`
+	PacketsDecoded        uint64      `json:"packets_decoded"`
+	PacketsRejected       uint64      `json:"packets_rejected"`
+	TokenMatches          uint64      `json:"token_matches"`
 	Observations          uint64      `json:"observations"`
 	UnexpectedOrderFrames uint64      `json:"unexpected_order_frames"`
 	LastFrameAt           time.Time   `json:"last_frame_at,omitempty"`
@@ -173,6 +181,10 @@ func (s *MarketStream) Stream(ctx context.Context, tokens []string, sink marketd
 	s.running, s.cancel = true, cancel
 	s.snapshot.Subscriptions = len(tokens)
 	s.mu.Unlock()
+	expectedTokens := make(map[string]struct{}, len(tokens))
+	for _, token := range tokens {
+		expectedTokens[token] = struct{}{}
+	}
 	defer func() {
 		cancel()
 		s.mu.Lock()
@@ -194,11 +206,21 @@ func (s *MarketStream) Stream(ctx context.Context, tokens []string, sink marketd
 		s.setState(state, attempt)
 		connection, connectErr := s.dialer.Dial(runCtx, endpoint)
 		if connectErr == nil {
+			s.mu.Lock()
+			s.snapshot.HandshakeEstablished = true
+			s.mu.Unlock()
+		}
+		if connectErr == nil {
 			connectErr = subscribe(runCtx, connection, numeric)
+			if connectErr == nil {
+				s.mu.Lock()
+				s.snapshot.SubscribeSent = true
+				s.mu.Unlock()
+			}
 		}
 		if connectErr == nil {
 			s.setState(StreamConnected, attempt)
-			connectErr = s.consume(runCtx, connection, sink)
+			connectErr = s.consume(runCtx, connection, expectedTokens, sink)
 		}
 		if connection != nil {
 			_ = connection.Close()
@@ -248,7 +270,7 @@ func subscribe(ctx context.Context, connection MarketConnection, tokens []uint32
 	return connection.WriteJSON(ctx, map[string]any{"a": "mode", "v": []any{"full", tokens}})
 }
 
-func (s *MarketStream) consume(ctx context.Context, connection MarketConnection, sink marketdata.ObservationSink) error {
+func (s *MarketStream) consume(ctx context.Context, connection MarketConnection, expectedTokens map[string]struct{}, sink marketdata.ObservationSink) error {
 	frames := make(chan MarketFrame, s.config.BufferCapacity)
 	errorsCh := make(chan error, 1)
 	readCtx, cancel := context.WithCancel(ctx)
@@ -294,11 +316,28 @@ func (s *MarketStream) consume(ctx context.Context, connection MarketConnection,
 				}
 				continue
 			}
-			observations, err := DecodeMarketFrame(frame.Data, now)
+			s.mu.Lock()
+			s.snapshot.BinaryFrames++
+			s.mu.Unlock()
+			observations, stats, err := decodeMarketFrame(frame.Data, now)
+			s.mu.Lock()
+			s.snapshot.Packets += stats.packets
+			s.snapshot.IndexPackets += stats.indexPackets
+			s.snapshot.PacketsDecoded += stats.decoded
+			s.snapshot.PacketsRejected += stats.rejected
+			s.mu.Unlock()
 			if err != nil {
 				return err
 			}
 			for _, observation := range observations {
+				if _, matched := expectedTokens[observation.ProviderToken]; matched {
+					s.mu.Lock()
+					s.snapshot.TokenMatches++
+					s.mu.Unlock()
+				}
+				if observation.ExchangeTime.IsZero() {
+					continue
+				}
 				s.mu.Lock()
 				s.position++
 				observation.SourcePosition = s.position
@@ -347,40 +386,65 @@ func (s *MarketStream) observeText(raw []byte) error {
 	return nil
 }
 
+type marketFrameDecodeStats struct {
+	packets      uint64
+	indexPackets uint64
+	decoded      uint64
+	rejected     uint64
+}
+
 func DecodeMarketFrame(raw []byte, ingestedAt time.Time) ([]marketdata.Observation, error) {
+	observations, _, err := decodeMarketFrame(raw, ingestedAt)
+	return observations, err
+}
+
+func decodeMarketFrame(raw []byte, ingestedAt time.Time) ([]marketdata.Observation, marketFrameDecodeStats, error) {
+	stats := marketFrameDecodeStats{}
 	if len(raw) < 2 || ingestedAt.IsZero() {
-		return nil, ErrMarketStreamMalformed
+		stats.rejected = 1
+		return nil, stats, ErrMarketStreamMalformed
 	}
 	count := int(binary.BigEndian.Uint16(raw[:2]))
 	if count < 1 || count > 3000 {
-		return nil, ErrMarketStreamMalformed
+		stats.rejected = 1
+		return nil, stats, ErrMarketStreamMalformed
 	}
+	stats.packets = uint64(count)
 	offset := 2
 	result := make([]marketdata.Observation, 0, count)
 	for index := 0; index < count; index++ {
 		if offset+2 > len(raw) {
-			return nil, ErrMarketStreamMalformed
+			stats.rejected++
+			return nil, stats, ErrMarketStreamMalformed
 		}
 		length := int(binary.BigEndian.Uint16(raw[offset : offset+2]))
 		offset += 2
 		if offset+length > len(raw) {
-			return nil, ErrMarketStreamMalformed
+			stats.rejected++
+			return nil, stats, ErrMarketStreamMalformed
 		}
-		observation, err := decodeMarketPacket(raw[offset:offset+length], ingestedAt.UTC())
+		packet := raw[offset : offset+length]
+		if length == 28 || length == 32 {
+			stats.indexPackets++
+		}
+		observation, err := decodeMarketPacket(packet, ingestedAt.UTC())
 		if err != nil {
-			return nil, err
+			stats.rejected++
+			return nil, stats, err
 		}
+		stats.decoded++
 		result = append(result, observation)
 		offset += length
 	}
 	if offset != len(raw) {
-		return nil, ErrMarketStreamMalformed
+		stats.rejected++
+		return nil, stats, ErrMarketStreamMalformed
 	}
-	return result, nil
+	return result, stats, nil
 }
 
 func decodeMarketPacket(packet []byte, ingestedAt time.Time) (marketdata.Observation, error) {
-	if len(packet) != 32 && len(packet) != 184 {
+	if len(packet) != 8 && len(packet) != 28 && len(packet) != 32 && len(packet) != 44 && len(packet) != 184 {
 		return marketdata.Observation{}, ErrMarketStreamMalformed
 	}
 	token := binary.BigEndian.Uint32(packet[0:4])
@@ -388,31 +452,42 @@ func decodeMarketPacket(packet []byte, ingestedAt time.Time) (marketdata.Observa
 		return marketdata.Observation{}, ErrMarketStreamMalformed
 	}
 	observation := marketdata.Observation{Kind: marketdata.ObservationQuote, Provider: Provider, ProviderToken: strconv.FormatUint(uint64(token), 10), IngestedAt: ingestedAt, Currency: "INR"}
-	if len(packet) == 32 {
+	switch len(packet) {
+	case 28, 32:
 		observation.LastMinor = int64(int32(binary.BigEndian.Uint32(packet[4:8])))
 		observation.HighMinor = int64(int32(binary.BigEndian.Uint32(packet[8:12])))
 		observation.LowMinor = int64(int32(binary.BigEndian.Uint32(packet[12:16])))
 		observation.OpenMinor = int64(int32(binary.BigEndian.Uint32(packet[16:20])))
 		observation.CloseMinor = int64(int32(binary.BigEndian.Uint32(packet[20:24])))
-		observation.ExchangeTime = unixTime(packet[28:32])
-	} else {
-		observation.LastMinor = int64(int32(binary.BigEndian.Uint32(packet[4:8])))
-		observation.Volume = int64(int32(binary.BigEndian.Uint32(packet[16:20])))
-		oi := int64(int32(binary.BigEndian.Uint32(packet[48:52])))
-		observation.OpenInterest = &oi
-		observation.ExchangeTime = unixTime(packet[60:64])
-		bidPrice := int64(int32(binary.BigEndian.Uint32(packet[68:72])))
-		bidQuantity := int64(int32(binary.BigEndian.Uint32(packet[64:68])))
-		askPrice := int64(int32(binary.BigEndian.Uint32(packet[128:132])))
-		askQuantity := int64(int32(binary.BigEndian.Uint32(packet[124:128])))
-		if bidPrice > 0 && bidQuantity > 0 {
-			observation.BidMinor, observation.BidQuantity = &bidPrice, bidQuantity
+		if len(packet) == 32 {
+			observation.ExchangeTime = unixTime(packet[28:32])
 		}
-		if askPrice > 0 && askQuantity > 0 {
-			observation.AskMinor, observation.AskQuantity = &askPrice, askQuantity
+	case 8:
+		observation.LastMinor = int64(int32(binary.BigEndian.Uint32(packet[4:8])))
+	case 44, 184:
+		observation.LastMinor = int64(int32(binary.BigEndian.Uint32(packet[4:8])))
+		observation.OpenMinor = int64(int32(binary.BigEndian.Uint32(packet[28:32])))
+		observation.HighMinor = int64(int32(binary.BigEndian.Uint32(packet[32:36])))
+		observation.LowMinor = int64(int32(binary.BigEndian.Uint32(packet[36:40])))
+		observation.CloseMinor = int64(int32(binary.BigEndian.Uint32(packet[40:44])))
+		observation.Volume = int64(int32(binary.BigEndian.Uint32(packet[16:20])))
+		if len(packet) == 184 {
+			oi := int64(int32(binary.BigEndian.Uint32(packet[48:52])))
+			observation.OpenInterest = &oi
+			observation.ExchangeTime = unixTime(packet[60:64])
+			bidPrice := int64(int32(binary.BigEndian.Uint32(packet[68:72])))
+			bidQuantity := int64(int32(binary.BigEndian.Uint32(packet[64:68])))
+			askPrice := int64(int32(binary.BigEndian.Uint32(packet[128:132])))
+			askQuantity := int64(int32(binary.BigEndian.Uint32(packet[124:128])))
+			if bidPrice > 0 && bidQuantity > 0 {
+				observation.BidMinor, observation.BidQuantity = &bidPrice, bidQuantity
+			}
+			if askPrice > 0 && askQuantity > 0 {
+				observation.AskMinor, observation.AskQuantity = &askPrice, askQuantity
+			}
 		}
 	}
-	if observation.LastMinor <= 0 || observation.ExchangeTime.IsZero() {
+	if observation.LastMinor <= 0 {
 		return marketdata.Observation{}, ErrMarketStreamMalformed
 	}
 	return observation, nil
