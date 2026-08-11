@@ -21,7 +21,7 @@ import (
 	"github.com/bibhuyash/tradeedge/internal/risk/rules"
 )
 
-const AuthorizationSchemaVersion = "market-validation-authorization/v1"
+const AuthorizationSchemaVersion = "market-validation-authorization/v2"
 
 var ErrStrategyBlocked = errors.New("STRATEGY_BLOCKED")
 
@@ -40,6 +40,8 @@ type AuthorizationArtifacts struct {
 	Strategies           AuthorizedArtifact  `json:"strategies"`
 	Portfolio            AuthorizedArtifact  `json:"portfolio"`
 	Risk                 AuthorizedArtifact  `json:"risk"`
+	TelegramEvidence     AuthorizedArtifact  `json:"telegram_evidence"`
+	ZerodhaPreflight     AuthorizedArtifact  `json:"zerodha_preflight"`
 	PrerequisiteDay0Gate *AuthorizedArtifact `json:"prerequisite_day0_gate,omitempty"`
 }
 
@@ -53,23 +55,22 @@ type AuthorizedStrategy struct {
 }
 
 type AuthorizationManifest struct {
-	SchemaVersion                 string                 `json:"schema_version"`
-	Checksum                      string                 `json:"checksum"`
-	ApplicationCommit             string                 `json:"application_commit"`
-	Mode                          string                 `json:"mode"`
-	Scope                         Scope                  `json:"scope"`
-	TradingDate                   string                 `json:"trading_date"`
-	AuthorizedAt                  time.Time              `json:"authorized_at"`
-	ExpiresAt                     time.Time              `json:"expires_at"`
-	ApprovedBy                    string                 `json:"approved_by"`
-	EvidenceRoot                  string                 `json:"evidence_root"`
-	TelegramConfigurationIdentity string                 `json:"telegram_configuration_identity"`
-	PaperCapitalMinor             int64                  `json:"paper_capital_minor"`
-	Currency                      string                 `json:"currency"`
-	PortfolioID                   string                 `json:"portfolio_id"`
-	Strategy                      AuthorizedStrategy     `json:"strategy"`
-	Artifacts                     AuthorizationArtifacts `json:"artifacts"`
-	LiveTradingAuthorized         bool                   `json:"live_trading_authorized"`
+	SchemaVersion         string                 `json:"schema_version"`
+	Checksum              string                 `json:"checksum"`
+	ApplicationCommit     string                 `json:"application_commit"`
+	Mode                  string                 `json:"mode"`
+	Scope                 Scope                  `json:"scope"`
+	TradingDate           string                 `json:"trading_date"`
+	AuthorizedAt          time.Time              `json:"authorized_at"`
+	ExpiresAt             time.Time              `json:"expires_at"`
+	ApprovedBy            string                 `json:"approved_by"`
+	EvidenceRoot          string                 `json:"evidence_root"`
+	PaperCapitalMinor     int64                  `json:"paper_capital_minor"`
+	Currency              string                 `json:"currency"`
+	PortfolioID           string                 `json:"portfolio_id"`
+	Strategy              AuthorizedStrategy     `json:"strategy"`
+	Artifacts             AuthorizationArtifacts `json:"artifacts"`
+	LiveTradingAuthorized bool                   `json:"live_trading_authorized"`
 }
 
 func DecodeAuthorization(raw []byte) (AuthorizationManifest, error) {
@@ -132,7 +133,6 @@ func validateAuthorizationShape(value AuthorizationManifest) error {
 		(value.Scope != ScopeOperationsOnly && value.Scope != ScopeFullPipeline) || value.LiveTradingAuthorized ||
 		value.AuthorizedAt.IsZero() || !value.ExpiresAt.After(value.AuthorizedAt) || value.ExpiresAt.Sub(value.AuthorizedAt) > 24*time.Hour ||
 		strings.TrimSpace(value.ApprovedBy) == "" || strings.TrimSpace(value.EvidenceRoot) == "" || unsafeIdentity(value.EvidenceRoot) ||
-		strings.TrimSpace(value.TelegramConfigurationIdentity) == "" || unsafeIdentity(value.TelegramConfigurationIdentity) ||
 		value.PaperCapitalMinor != 100000000 || value.Currency != "INR" || value.PortfolioID == "" {
 		return ErrInvalidRecord
 	}
@@ -232,6 +232,9 @@ func validateAuthorizationFiles(manifestPath string, value AuthorizationManifest
 	if err != nil || rules.ValidateProductionPolicy(risk.Policy()) != nil || risk.Hash().String() != value.Artifacts.Risk.Identity {
 		return ErrInvalidRecord
 	}
+	if err := validateAuthorizationExternalEvidence(base, value); err != nil {
+		return err
+	}
 	if value.Artifacts.PrerequisiteDay0Gate != nil {
 		var day0 GateReport
 		if err := decodeStrictPath(resolveAuthorizationPath(base, value.Artifacts.PrerequisiteDay0Gate.Path), &day0); err != nil ||
@@ -242,8 +245,26 @@ func validateAuthorizationFiles(manifestPath string, value AuthorizationManifest
 	return nil
 }
 
+func validateAuthorizationExternalEvidence(base string, value AuthorizationManifest) error {
+	for _, artifact := range []AuthorizedArtifact{value.Artifacts.TelegramEvidence, value.Artifacts.ZerodhaPreflight} {
+		if err := verifyArtifact(base, artifact); err != nil {
+			return ErrInvalidRecord
+		}
+	}
+	telegramRaw, err := os.ReadFile(resolveAuthorizationPath(base, value.Artifacts.TelegramEvidence.Path))
+	if err != nil || value.Artifacts.TelegramEvidence.Identity != strings.ToLower(value.Artifacts.TelegramEvidence.SHA256) || validateTelegramEvidenceRaw(telegramRaw, value.TradingDate, value.Mode) != nil {
+		return ErrInvalidRecord
+	}
+	preflightRaw, err := os.ReadFile(resolveAuthorizationPath(base, value.Artifacts.ZerodhaPreflight.Path))
+	preflight, preflightErr := decodeZerodhaPreflightEvidence(preflightRaw)
+	if err != nil || preflightErr != nil || value.Artifacts.ZerodhaPreflight.Identity != strings.ToLower(value.Artifacts.ZerodhaPreflight.SHA256) || preflight.ApplicationCommit != value.ApplicationCommit || preflight.TradingDate != value.TradingDate || preflight.Mode != value.Mode || preflight.RuntimeBundleChecksum != strings.ToLower(value.Artifacts.RuntimeBundle.SHA256) {
+		return ErrInvalidRecord
+	}
+	return nil
+}
+
 func authorizationArtifacts(value AuthorizationManifest) []AuthorizedArtifact {
-	result := []AuthorizedArtifact{value.Artifacts.RuntimeBundle, value.Artifacts.Calendar, value.Artifacts.CalendarApproval, value.Artifacts.InstrumentMaster, value.Artifacts.Watchlist, value.Artifacts.Strategies, value.Artifacts.Portfolio, value.Artifacts.Risk}
+	result := []AuthorizedArtifact{value.Artifacts.RuntimeBundle, value.Artifacts.Calendar, value.Artifacts.CalendarApproval, value.Artifacts.InstrumentMaster, value.Artifacts.Watchlist, value.Artifacts.Strategies, value.Artifacts.Portfolio, value.Artifacts.Risk, value.Artifacts.TelegramEvidence, value.Artifacts.ZerodhaPreflight}
 	if value.Artifacts.PrerequisiteDay0Gate != nil {
 		result = append(result, *value.Artifacts.PrerequisiteDay0Gate)
 	}

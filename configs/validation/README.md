@@ -7,7 +7,8 @@ Day-0 evidence example deliberately contain placeholders and must not pass
 unchanged.
 
 Keep the current calendar, source approval, Zerodha dump-derived instrument
-master/watchlist, runtime bundle, finalized authorization manifest, and
+master/watchlist, runtime bundle, checksum-bound Telegram and Zerodha preflight
+evidence, finalized authorization manifest, and
 Telegram/session evidence under `.cache/market-validation`; this tree is
 git-ignored. Never put credentials there.
 

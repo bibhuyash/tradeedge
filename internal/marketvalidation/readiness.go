@@ -577,17 +577,7 @@ func validateTelegramEvidence(path, date, mode string) (string, error) {
 	if err != nil {
 		return "", err
 	}
-	var value struct {
-		SchemaVersion string    `json:"schema_version"`
-		TradingDate   string    `json:"trading_date"`
-		Mode          string    `json:"mode"`
-		Kind          string    `json:"kind"`
-		Delivered     bool      `json:"delivered"`
-		CheckedAt     time.Time `json:"checked_at"`
-	}
-	decoder := json.NewDecoder(bytes.NewReader(raw))
-	decoder.DisallowUnknownFields()
-	if decoder.Decode(&value) != nil || value.SchemaVersion != "market-validation-telegram-check/v1" || value.TradingDate != date || value.Mode != mode || value.Kind != "test" || !value.Delivered || value.CheckedAt.IsZero() {
+	if validateTelegramEvidenceRaw(raw, date, mode) != nil {
 		return "", ErrInvalidRecord
 	}
 	sum := sha256.Sum256(raw)

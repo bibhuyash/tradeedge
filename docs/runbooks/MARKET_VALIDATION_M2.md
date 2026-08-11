@@ -31,7 +31,10 @@ inside M2.
    master, watchlist and `strategies-disabled.json`, plus the checked-in PAPER
    portfolio/risk files. All artifact hashes are pinned.
 4. Prepare an `OPERATIONS_ONLY` authorization draft for the exact commit,
-   trading date, evidence root, bundle and artifact identities. The strategy
+   trading date, evidence root, bundle and artifact identities. Bind the
+   create-once Telegram delivery and Zerodha preflight artifacts by their
+   SHA-256 checksums. The preflight commit, date, mode, and runtime-bundle
+   checksum must match the draft. The strategy
    must be `NONE`, `strategies-disabled/v1`, `NONE`, `CAS_DISABLED`, disabled.
    Run `authorize`; it recalculates every artifact identity and creates the
    checksummed manifest once. No secret or sensitive Telegram identifier is
@@ -80,12 +83,17 @@ bundle before consuming the token, exchanges exactly once, and retains the
 same in-memory session for the read-only profile and market-stream checks:
 
 ```powershell
-go run ./cmd/tradeedge-zerodha-auth preflight -runtime-bundle '.cache\market-validation\config\runtime-bundle.json' -timeout 15s -max-age 5s
+go run ./cmd/tradeedge-zerodha-auth preflight -runtime-bundle '.cache\market-validation\config\runtime-bundle.json' -timeout 15s -max-age 5s -date 'YYYY-MM-DD' -output '.cache\market-validation\YYYY-MM-DD\zerodha-preflight-<commit>.json'
 ```
 
 Require `AUTHENTICATION=PASS`, `REST_AUTH=PASS`, `WEBSOCKET_AUTH=PASS`,
 `OBSERVATIONS_RECEIVED=2`, and `SHUTDOWN=PASS`. The expiry is safe to record,
-but the access token is never output or persisted. The separate verification
+but the access token is never output or persisted. With `-date` and `-output`,
+the command atomically publishes a create-once, SHA-256-addressed JSON artifact
+bound to the current application commit, target date, PAPER mode, and loaded
+runtime-bundle checksum. It contains only bounded pass/fail, expiry, and stream
+counters. It contains no credential, authenticated URL, raw HTTP body, or raw
+WebSocket payload. Both flags are required together. The separate verification
 commands below remain diagnostics for an access token and expiry injected
 through the approved secret mechanism; they do not reuse an earlier CLI
 process's session.
