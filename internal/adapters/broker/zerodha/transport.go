@@ -118,10 +118,25 @@ func (transport *HTTPTransport) CloseIdleConnections() {
 }
 
 type HTTPTokenExchanger struct {
-	baseURL string
-	client  *http.Client
-	clock   Clock
+	baseURL   string
+	client    *http.Client
+	clock     Clock
+	failure   AuthenticationFailure
+	failureMu sync.RWMutex
 }
+
+// AuthenticationFailure contains only bounded, sanitized provider diagnostics.
+// Error deliberately remains generic so accidental formatting cannot reveal
+// response contents or credential material.
+type AuthenticationFailure struct {
+	ErrorType  string
+	Message    string
+	HTTPStatus int
+}
+
+func (AuthenticationFailure) Error() string { return ErrAuthentication.Error() }
+
+func (AuthenticationFailure) Unwrap() error { return ErrAuthentication }
 
 func NewHTTPTokenExchanger(config Config, roundTripper http.RoundTripper, clock Clock) (*HTTPTokenExchanger, error) {
 	if err := config.Validate(); err != nil {
@@ -137,8 +152,10 @@ func NewHTTPTokenExchanger(config Config, roundTripper http.RoundTripper, clock 
 }
 
 func (exchanger *HTTPTokenExchanger) Exchange(ctx context.Context, apiKey, apiSecret, requestToken string) (TokenExchangeResult, error) {
+	exchanger.clearFailure()
 	digest := sha256.Sum256([]byte(apiKey + requestToken + apiSecret))
-	form := url.Values{"api_key": {apiKey}, "request_token": {requestToken}, "checksum": {hex.EncodeToString(digest[:])}}
+	checksum := hex.EncodeToString(digest[:])
+	form := url.Values{"api_key": {apiKey}, "request_token": {requestToken}, "checksum": {checksum}}
 	request, err := http.NewRequestWithContext(ctx, http.MethodPost, exchanger.baseURL+"/session/token", bytes.NewBufferString(form.Encode()))
 	if err != nil {
 		return TokenExchangeResult{}, ErrAuthentication
@@ -150,20 +167,122 @@ func (exchanger *HTTPTokenExchanger) Exchange(ctx context.Context, apiKey, apiSe
 		return TokenExchangeResult{}, ErrAuthentication
 	}
 	defer response.Body.Close()
-	if response.StatusCode < 200 || response.StatusCode >= 300 {
-		return TokenExchangeResult{}, ErrAuthentication
-	}
 	var payload struct {
-		Status string `json:"status"`
-		Data   struct {
+		Status    string `json:"status"`
+		Message   string `json:"message"`
+		ErrorType string `json:"error_type"`
+		Data      struct {
 			AccessToken string `json:"access_token"`
 		} `json:"data"`
 	}
 	decoder := json.NewDecoder(io.LimitReader(response.Body, 1<<20))
-	if decoder.Decode(&payload) != nil || payload.Status != "success" || strings.TrimSpace(payload.Data.AccessToken) == "" {
+	decodeErr := decoder.Decode(&payload)
+	if response.StatusCode < 200 || response.StatusCode >= 300 || decodeErr != nil || payload.Status != "success" || strings.TrimSpace(payload.Data.AccessToken) == "" {
+		if decodeErr == nil && strings.EqualFold(strings.TrimSpace(payload.Status), "error") {
+			if failure, ok := newAuthenticationFailure(payload.ErrorType, payload.Message, response.StatusCode, apiKey, apiSecret, requestToken, checksum); ok {
+				exchanger.setFailure(failure)
+				return TokenExchangeResult{}, failure
+			}
+		}
 		return TokenExchangeResult{}, ErrAuthentication
 	}
 	return TokenExchangeResult{accessToken: payload.Data.AccessToken, expiresAt: nextSessionExpiry(exchanger.clock.Now())}, nil
+}
+
+// LastAuthenticationFailure returns the latest classified provider failure.
+// It never returns raw response data or credential values.
+func (exchanger *HTTPTokenExchanger) LastAuthenticationFailure() (AuthenticationFailure, bool) {
+	exchanger.failureMu.RLock()
+	defer exchanger.failureMu.RUnlock()
+	return exchanger.failure, exchanger.failure.HTTPStatus != 0
+}
+
+func (exchanger *HTTPTokenExchanger) clearFailure() {
+	exchanger.failureMu.Lock()
+	exchanger.failure = AuthenticationFailure{}
+	exchanger.failureMu.Unlock()
+}
+
+func (exchanger *HTTPTokenExchanger) setFailure(value AuthenticationFailure) {
+	exchanger.failureMu.Lock()
+	exchanger.failure = value
+	exchanger.failureMu.Unlock()
+}
+
+func newAuthenticationFailure(errorType, message string, status int, sensitive ...string) (AuthenticationFailure, bool) {
+	errorType = strings.TrimSpace(errorType)
+	if status < 100 || status > 599 || !safeErrorType(errorType, sensitive...) {
+		return AuthenticationFailure{}, false
+	}
+	message = sanitizeAuthenticationMessage(message, sensitive...)
+	if message == "" {
+		return AuthenticationFailure{}, false
+	}
+	return AuthenticationFailure{ErrorType: errorType, Message: message, HTTPStatus: status}, true
+}
+
+func safeErrorType(value string, sensitive ...string) bool {
+	if len(value) == 0 || len(value) > 64 {
+		return false
+	}
+	for index, character := range value {
+		if (character >= 'a' && character <= 'z') || (character >= 'A' && character <= 'Z') || (index > 0 && character >= '0' && character <= '9') || (index > 0 && (character == '_' || character == '-' || character == '.')) {
+			continue
+		}
+		return false
+	}
+	lower := strings.ToLower(value)
+	for _, secret := range sensitive {
+		if secret != "" && strings.Contains(value, secret) {
+			return false
+		}
+	}
+	for _, forbidden := range []string{"api_key", "api-secret", "api_secret", "request_token", "access_token", "checksum", "authorization"} {
+		if strings.Contains(lower, forbidden) {
+			return false
+		}
+	}
+	return true
+}
+
+func sanitizeAuthenticationMessage(value string, sensitive ...string) string {
+	value = strings.Map(func(character rune) rune {
+		if character < 0x20 || character == 0x7f {
+			return ' '
+		}
+		return character
+	}, value)
+	for _, secret := range sensitive {
+		if secret != "" {
+			value = strings.ReplaceAll(value, secret, "[REDACTED]")
+		}
+	}
+	lower := strings.ToLower(value)
+	if strings.Contains(lower, "checksum") && (strings.Contains(lower, "invalid") || strings.Contains(lower, "mismatch")) {
+		return "Invalid checksum"
+	}
+	if strings.Contains(lower, "token") && (strings.Contains(lower, "invalid") || strings.Contains(lower, "expired")) {
+		return "Token is invalid or expired"
+	}
+	for _, forbidden := range []string{"api_key", "api key", "api_secret", "api secret", "request_token", "request token", "access_token", "access token", "checksum", "authorization"} {
+		value = replaceFold(value, forbidden, "[REDACTED]")
+	}
+	value = strings.Join(strings.Fields(value), " ")
+	runes := []rune(value)
+	if len(runes) > 256 {
+		value = string(runes[:256])
+	}
+	return value
+}
+
+func replaceFold(value, old, replacement string) string {
+	for {
+		index := strings.Index(strings.ToLower(value), strings.ToLower(old))
+		if index < 0 {
+			return value
+		}
+		value = value[:index] + replacement + value[index+len(old):]
+	}
 }
 
 func nextSessionExpiry(now time.Time) time.Time {

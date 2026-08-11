@@ -5,6 +5,7 @@ import (
 	"context"
 	"encoding/binary"
 	"errors"
+	"fmt"
 	"io"
 	"net/http"
 	"strings"
@@ -143,6 +144,47 @@ func TestExchangeTokenFailureIsRedacted(t *testing.T) {
 			t.Fatalf("secret appeared in result: %q", combined)
 		}
 	}
+}
+
+func TestExchangeTokenSurfacesInvalidChecksumSafely(t *testing.T) {
+	values := credentialValues()
+	var submittedChecksum string
+	dependencies := commandDependencies{roundTripper: roundTripFunc(func(request *http.Request) (*http.Response, error) {
+		if err := request.ParseForm(); err != nil {
+			t.Fatal(err)
+		}
+		submittedChecksum = request.Form.Get("checksum")
+		body := fmt.Sprintf(`{"status":"error","message":"Invalid checksum %s for api_key %s using api_secret %s and request_token %s","error_type":"TokenException"}`,
+			submittedChecksum, values[apiKeyEnvironment], values["TRADEEDGE_ZERODHA_API_SECRET"], values[requestTokenEnvironment])
+		return response(http.StatusForbidden, body), nil
+	})}
+	var output bytes.Buffer
+	err := run([]string{"exchange-token"}, mapLookup(values), &output, dependencies)
+	if !errors.Is(err, errAuthentication) || !errors.Is(err, errDiagnosticReported) {
+		t.Fatalf("run() error = %v", err)
+	}
+	want := "AUTHENTICATION=FAIL\nERROR_TYPE=TokenException\nMESSAGE=Invalid checksum\nHTTP_STATUS=403\n"
+	if output.String() != want {
+		t.Fatalf("output = %q, want %q", output.String(), want)
+	}
+	assertNoCredentialMaterial(t, output.String()+err.Error(), values, submittedChecksum)
+}
+
+func TestExchangeTokenSurfacesExpiredTokenSafely(t *testing.T) {
+	values := credentialValues()
+	dependencies := commandDependencies{roundTripper: roundTripFunc(func(*http.Request) (*http.Response, error) {
+		return response(http.StatusForbidden, `{"status":"error","message":"Token is invalid or has expired.","error_type":"TokenException"}`), nil
+	})}
+	var output bytes.Buffer
+	err := run([]string{"exchange-token"}, mapLookup(values), &output, dependencies)
+	if !errors.Is(err, errAuthentication) || !errors.Is(err, errDiagnosticReported) {
+		t.Fatalf("run() error = %v", err)
+	}
+	want := "AUTHENTICATION=FAIL\nERROR_TYPE=TokenException\nMESSAGE=Token is invalid or expired\nHTTP_STATUS=403\n"
+	if output.String() != want {
+		t.Fatalf("output = %q, want %q", output.String(), want)
+	}
+	assertNoCredentialMaterial(t, output.String()+err.Error(), values, "")
 }
 
 func TestExchangeTokenSuccessAndExpiry(t *testing.T) {
@@ -318,3 +360,15 @@ func merge(first, second map[string]string) map[string]string {
 }
 
 func valuesFrom(values map[string]string, key string) string { return values[key] }
+
+func assertNoCredentialMaterial(t *testing.T, output string, values map[string]string, checksum string) {
+	t.Helper()
+	for _, value := range []string{values[apiKeyEnvironment], values["TRADEEDGE_ZERODHA_API_SECRET"], values[requestTokenEnvironment], values[accessTokenEnvironment], checksum} {
+		if value != "" && strings.Contains(output, value) {
+			t.Fatalf("credential material appeared in output: %q", output)
+		}
+	}
+	if strings.Contains(strings.ToLower(output), "authorization: token") {
+		t.Fatalf("authorization header appeared in output: %q", output)
+	}
+}
