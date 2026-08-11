@@ -43,7 +43,7 @@ var (
 	errRESTVerification      = errors.New("Zerodha REST verification failed")
 	errWebSocketVerification = errors.New("Zerodha WebSocket verification failed")
 	apiKeyPattern            = regexp.MustCompile(`^[A-Za-z0-9_-]{1,128}$`)
-	supportedCommands        = []string{"login-url", "exchange-token", "verify-rest", "verify-websocket"}
+	supportedCommands        = []string{"login-url", "exchange-token", "verify-rest", "verify-websocket", "preflight"}
 )
 
 type lookupEnv func(string) (string, bool)
@@ -83,6 +83,8 @@ func run(args []string, lookup lookupEnv, output io.Writer, dependencies command
 		return verifyREST(args[1:], lookup, output, dependencies)
 	case "verify-websocket":
 		return verifyWebSocket(args[1:], lookup, output, dependencies)
+	case "preflight":
+		return preflight(args[1:], lookup, output, dependencies)
 	default:
 		return errInvalidCommand
 	}
@@ -156,21 +158,8 @@ func verifyREST(args []string, lookup lookupEnv, output io.Writer, dependencies 
 		_, _ = fmt.Fprintln(output, "REST_AUTH=FAIL")
 		return errRESTVerification
 	}
-	zerodhaConfig, err := loadReadOnlyConfig(lookup)
+	client, err := readOnlyClient(lookup, session, dependencies)
 	if err != nil {
-		session.Shutdown()
-		_, _ = fmt.Fprintln(output, "REST_AUTH=FAIL")
-		return errRESTVerification
-	}
-	transport, err := brokerzerodha.NewHTTPTransport(zerodhaConfig, dependencies.roundTripper)
-	if err != nil {
-		session.Shutdown()
-		_, _ = fmt.Fprintln(output, "REST_AUTH=FAIL")
-		return errRESTVerification
-	}
-	client, err := brokerzerodha.NewClient(transport, session, operatorClock(dependencies), nil)
-	if err != nil {
-		transport.CloseIdleConnections()
 		session.Shutdown()
 		_, _ = fmt.Fprintln(output, "REST_AUTH=FAIL")
 		return errRESTVerification
@@ -185,28 +174,21 @@ func verifyREST(args []string, lookup lookupEnv, output io.Writer, dependencies 
 }
 
 func verifyWebSocket(args []string, lookup lookupEnv, output io.Writer, dependencies commandDependencies) error {
-	set := flag.NewFlagSet("verify-websocket", flag.ContinueOnError)
-	set.SetOutput(io.Discard)
-	bundlePath := set.String("runtime-bundle", "", "checksum-pinned Day-0 runtime bundle")
-	timeout := set.Duration("timeout", defaultOperatorTimeout, "bounded verification timeout")
-	maxAge := set.Duration("max-age", defaultObservationMaxAge, "maximum observation age")
-	if err := set.Parse(args); err != nil || set.NArg() != 0 || *timeout <= 0 || *timeout > 30*time.Second || *maxAge <= 0 || *maxAge > time.Minute {
+	options, err := parseStreamOptions("verify-websocket", args, lookup)
+	if err != nil {
 		writeWebSocketResult(output, false, 0, false)
 		return errInvalidConfiguration
-	}
-	if strings.TrimSpace(*bundlePath) == "" {
-		*bundlePath, _ = lookup("TRADEEDGE_RUNTIME_BUNDLE")
 	}
 	loader := dependencies.loadTokens
 	if loader == nil {
 		loader = loadDay0Tokens
 	}
-	tokens, err := loader(strings.TrimSpace(*bundlePath))
+	tokens, err := loader(options.bundlePath)
 	if err != nil {
 		writeWebSocketResult(output, false, 0, false)
 		return errWebSocketVerification
 	}
-	ctx, cancel := context.WithTimeout(context.Background(), *timeout)
+	ctx, cancel := context.WithTimeout(context.Background(), options.timeout)
 	defer cancel()
 	session, err := authenticatedSession(ctx, lookup, dependencies)
 	if err != nil {
@@ -214,6 +196,42 @@ func verifyWebSocket(args []string, lookup lookupEnv, output io.Writer, dependen
 		return errWebSocketVerification
 	}
 	defer session.Shutdown()
+	result := verifyWebSocketSession(ctx, tokens, options.maxAge, session, dependencies)
+	writeWebSocketResult(output, result.passed, result.observations, result.shutdown)
+	if !result.passed {
+		return errWebSocketVerification
+	}
+	return nil
+}
+
+type streamOptions struct {
+	bundlePath string
+	timeout    time.Duration
+	maxAge     time.Duration
+}
+
+type webSocketResult struct {
+	passed       bool
+	observations int
+	shutdown     bool
+}
+
+func parseStreamOptions(name string, args []string, lookup lookupEnv) (streamOptions, error) {
+	set := flag.NewFlagSet(name, flag.ContinueOnError)
+	set.SetOutput(io.Discard)
+	bundlePath := set.String("runtime-bundle", "", "checksum-pinned Day-0 runtime bundle")
+	timeout := set.Duration("timeout", defaultOperatorTimeout, "bounded verification timeout")
+	maxAge := set.Duration("max-age", defaultObservationMaxAge, "maximum observation age")
+	if err := set.Parse(args); err != nil || set.NArg() != 0 || *timeout <= 0 || *timeout > 30*time.Second || *maxAge <= 0 || *maxAge > time.Minute {
+		return streamOptions{}, errInvalidConfiguration
+	}
+	if strings.TrimSpace(*bundlePath) == "" {
+		*bundlePath, _ = lookup("TRADEEDGE_RUNTIME_BUNDLE")
+	}
+	return streamOptions{bundlePath: strings.TrimSpace(*bundlePath), timeout: *timeout, maxAge: *maxAge}, nil
+}
+
+func verifyWebSocketSession(ctx context.Context, tokens []string, maxAge time.Duration, session *brokerzerodha.SessionManager, dependencies commandDependencies) webSocketResult {
 	dialer := dependencies.dialer
 	if dialer == nil {
 		dialer = brokerzerodha.NewWebSocketMarketDialer()
@@ -224,8 +242,7 @@ func verifyWebSocket(args []string, lookup lookupEnv, output io.Writer, dependen
 	}
 	stream, err := brokerzerodha.NewMarketStream(streamConfig, dialer, session, operatorClock(dependencies), nil)
 	if err != nil {
-		writeWebSocketResult(output, false, 0, false)
-		return errWebSocketVerification
+		return webSocketResult{}
 	}
 	seen := make(map[string]struct{}, len(tokens))
 	expected := make(map[string]struct{}, len(tokens))
@@ -234,7 +251,7 @@ func verifyWebSocket(args []string, lookup lookupEnv, output io.Writer, dependen
 	}
 	streamCtx, stopStream := context.WithCancel(ctx)
 	err = stream.Stream(streamCtx, tokens, func(_ context.Context, observation marketdata.Observation) error {
-		if _, ok := expected[observation.ProviderToken]; !ok || !freshObservation(observation, operatorClock(dependencies).Now(), *maxAge) {
+		if _, ok := expected[observation.ProviderToken]; !ok || !freshObservation(observation, operatorClock(dependencies).Now(), maxAge) {
 			return errWebSocketVerification
 		}
 		seen[observation.ProviderToken] = struct{}{}
@@ -247,11 +264,101 @@ func verifyWebSocket(args []string, lookup lookupEnv, output io.Writer, dependen
 	stream.Shutdown()
 	shutdown := stream.Snapshot().State == brokerzerodha.StreamStopped
 	passed := len(seen) == len(expected) && shutdown && (err == nil || errors.Is(err, context.Canceled))
-	writeWebSocketResult(output, passed, len(seen), shutdown)
-	if !passed {
-		return errWebSocketVerification
+	return webSocketResult{passed: passed, observations: len(seen), shutdown: shutdown}
+}
+
+func preflight(args []string, lookup lookupEnv, output io.Writer, dependencies commandDependencies) error {
+	options, err := parseStreamOptions("preflight", args, lookup)
+	if err != nil {
+		return writePreflightFailure(output, "AUTHENTICATION", "ConfigurationError", "Invalid preflight configuration", 0, 0, false)
 	}
-	return nil
+	if failure, failed := exchangePreflightFailure(lookup); failed {
+		if writeErr := writeAuthenticationFailure(output, failure); writeErr != nil {
+			return writeErr
+		}
+		return errors.Join(errAuthentication, errDiagnosticReported)
+	}
+	loader := dependencies.loadTokens
+	if loader == nil {
+		loader = loadDay0Tokens
+	}
+	tokens, err := loader(options.bundlePath)
+	if err != nil {
+		return writePreflightFailure(output, "AUTHENTICATION", "ConfigurationError", "Invalid checksum-pinned runtime bundle", 0, 0, false)
+	}
+
+	ctx, cancel := context.WithTimeout(context.Background(), options.timeout)
+	defer cancel()
+	session, err := authenticatedSession(ctx, withoutRestoredToken(lookup), dependencies)
+	if err != nil {
+		var failure brokerzerodha.AuthenticationFailure
+		if errors.As(err, &failure) {
+			if writeErr := writeAuthenticationFailure(output, failure); writeErr != nil {
+				return writeErr
+			}
+			return errors.Join(errAuthentication, errDiagnosticReported)
+		}
+		return writePreflightFailure(output, "AUTHENTICATION", "AuthenticationError", "Zerodha authentication failed", 0, 0, false)
+	}
+	snapshot := session.Snapshot()
+	if snapshot.State != brokerzerodha.SessionAuthenticated || snapshot.ExpiresAt.IsZero() {
+		session.Shutdown()
+		return writePreflightFailure(output, "AUTHENTICATION", "AuthenticationError", "Zerodha authentication failed", 0, 0, true)
+	}
+
+	client, err := readOnlyClient(lookup, session, dependencies)
+	if err != nil {
+		session.Shutdown()
+		return writePreflightFailure(output, "REST_AUTH", "RESTVerificationError", "Read-only REST verification failed", 0, 0, true)
+	}
+	if _, err = client.Capabilities(ctx); err != nil {
+		client.Shutdown()
+		return writePreflightFailure(output, "REST_AUTH", "RESTVerificationError", "Read-only REST verification failed", 0, 0, true)
+	}
+
+	streamResult := verifyWebSocketSession(ctx, tokens, options.maxAge, session, dependencies)
+	client.Shutdown()
+	shutdown := streamResult.shutdown && session.Snapshot().State == brokerzerodha.SessionStopped
+	if !streamResult.passed {
+		return writePreflightFailure(output, "WEBSOCKET_AUTH", "WebSocketVerificationError", "Read-only WebSocket verification failed", 0, streamResult.observations, shutdown)
+	}
+	_, err = fmt.Fprintf(output, "AUTHENTICATION=PASS\nREST_AUTH=PASS\nWEBSOCKET_AUTH=PASS\nOBSERVATIONS_RECEIVED=%d\nSHUTDOWN=PASS\nACCESS_TOKEN_EXPIRES_AT=%s\n", streamResult.observations, snapshot.ExpiresAt.UTC().Format(time.RFC3339))
+	return err
+}
+
+func readOnlyClient(lookup lookupEnv, session *brokerzerodha.SessionManager, dependencies commandDependencies) (*brokerzerodha.Client, error) {
+	zerodhaConfig, err := loadReadOnlyConfig(lookup)
+	if err != nil {
+		return nil, err
+	}
+	transport, err := brokerzerodha.NewHTTPTransport(zerodhaConfig, dependencies.roundTripper)
+	if err != nil {
+		return nil, err
+	}
+	client, err := brokerzerodha.NewClient(transport, session, operatorClock(dependencies), nil)
+	if err != nil {
+		transport.CloseIdleConnections()
+		return nil, err
+	}
+	return client, nil
+}
+
+func writePreflightFailure(output io.Writer, stage, errorType, message string, status, observations int, shutdown bool) error {
+	if stage == "AUTHENTICATION" {
+		_, _ = fmt.Fprintf(output, "AUTHENTICATION=FAIL\nERROR_TYPE=%s\nMESSAGE=%s\nHTTP_STATUS=%d\n", errorType, message, status)
+	} else if stage == "REST_AUTH" {
+		_, _ = fmt.Fprintf(output, "AUTHENTICATION=PASS\nREST_AUTH=FAIL\nERROR_TYPE=%s\nMESSAGE=%s\nHTTP_STATUS=%d\nSHUTDOWN=%s\n", errorType, message, status, passFail(shutdown))
+	} else {
+		_, _ = fmt.Fprintf(output, "AUTHENTICATION=PASS\nREST_AUTH=PASS\nWEBSOCKET_AUTH=FAIL\nOBSERVATIONS_RECEIVED=%d\nSHUTDOWN=%s\nERROR_TYPE=%s\nMESSAGE=%s\nHTTP_STATUS=%d\n", observations, passFail(shutdown), errorType, message, status)
+	}
+	return errors.Join(errDiagnosticReported, errWebSocketVerification)
+}
+
+func passFail(value bool) string {
+	if value {
+		return "PASS"
+	}
+	return "FAIL"
 }
 
 func authenticatedSession(ctx context.Context, lookup lookupEnv, dependencies commandDependencies) (*brokerzerodha.SessionManager, error) {

@@ -289,8 +289,148 @@ func TestVerifyWebSocketDisconnect(t *testing.T) {
 	}
 }
 
+func TestPreflightReusesOneAuthenticatedSession(t *testing.T) {
+	now := time.Date(2026, 8, 10, 10, 0, 0, 0, time.UTC)
+	values := credentialValues()
+	connection := &fakeMarketConnection{frames: []brokerzerodha.MarketFrame{
+		{Binary: true, Data: quoteFrame(256265, now)},
+		{Binary: true, Data: quoteFrame(260105, now)},
+	}}
+	dialer := &fakeMarketDialer{connection: connection}
+	exchanges, profiles := 0, 0
+	dependencies := websocketDependencies(now, dialer)
+	dependencies.roundTripper = roundTripFunc(func(request *http.Request) (*http.Response, error) {
+		switch {
+		case request.Method == http.MethodPost && request.URL.Path == "/session/token":
+			exchanges++
+			return response(http.StatusOK, `{"status":"success","data":{"access_token":"generated-access-token"}}`), nil
+		case request.Method == http.MethodGet && request.URL.Path == "/user/profile":
+			profiles++
+			if got := request.Header.Get("Authorization"); got != "token public-key:generated-access-token" {
+				t.Fatalf("REST did not use exchanged session")
+			}
+			return response(http.StatusOK, `{"status":"success","data":{"exchanges":["NSE"],"products":["CNC"],"order_types":["LIMIT"]}}`), nil
+		default:
+			t.Fatalf("unexpected request %s %s", request.Method, request.URL.Path)
+			return nil, errors.New("unexpected request")
+		}
+	})
+
+	var output bytes.Buffer
+	err := run([]string{"preflight", "-runtime-bundle", "pinned.json", "-timeout", "1s"}, mapLookup(values), &output, dependencies)
+	if err != nil {
+		t.Fatal(err)
+	}
+	want := "AUTHENTICATION=PASS\nREST_AUTH=PASS\nWEBSOCKET_AUTH=PASS\nOBSERVATIONS_RECEIVED=2\nSHUTDOWN=PASS\nACCESS_TOKEN_EXPIRES_AT=2026-08-11T00:30:00Z\n"
+	if output.String() != want {
+		t.Fatalf("output = %q, want %q", output.String(), want)
+	}
+	if exchanges != 1 || profiles != 1 {
+		t.Fatalf("token exchanges=%d profile calls=%d", exchanges, profiles)
+	}
+	if !strings.Contains(dialer.endpoint, "api_key=public-key") || !strings.Contains(dialer.endpoint, "access_token=generated-access-token") {
+		t.Fatal("WebSocket did not use the exchanged session")
+	}
+	connection.mu.Lock()
+	writes, closed := connection.writes, connection.closed
+	connection.mu.Unlock()
+	if writes != 2 || !closed {
+		t.Fatalf("subscription writes=%d closed=%t", writes, closed)
+	}
+	assertNoCredentialMaterial(t, output.String(), merge(values, map[string]string{accessTokenEnvironment: "generated-access-token"}), "")
+}
+
+func TestPreflightSurfacesAuthenticationFailureSafely(t *testing.T) {
+	values := credentialValues()
+	values[apiSecretEnvironment] = "recognizable-secret"
+	values[requestTokenEnvironment] = "recognizable-request-token"
+	dependencies := websocketDependencies(time.Date(2026, 8, 10, 10, 0, 0, 0, time.UTC), &fakeMarketDialer{connection: &fakeMarketConnection{}})
+	dependencies.roundTripper = roundTripFunc(func(*http.Request) (*http.Response, error) {
+		return response(http.StatusForbidden, `{"status":"error","message":"Invalid checksum recognizable-secret recognizable-request-token","error_type":"TokenException"}`), nil
+	})
+
+	var output, errorOutput bytes.Buffer
+	exitCode := execute([]string{"preflight", "-runtime-bundle", "pinned.json", "-timeout", "1s"}, mapLookup(values), &output, &errorOutput, dependencies)
+	want := "AUTHENTICATION=FAIL\nERROR_TYPE=TokenException\nMESSAGE=Invalid checksum\nHTTP_STATUS=403\n"
+	if exitCode != 1 || output.String() != want || errorOutput.Len() != 0 {
+		t.Fatalf("exit=%d stdout=%q stderr=%q", exitCode, output.String(), errorOutput.String())
+	}
+	assertNoCredentialMaterial(t, output.String()+errorOutput.String(), values, "")
+}
+
+func TestPreflightValidatesBundleBeforeExchange(t *testing.T) {
+	exchanges := 0
+	dependencies := commandDependencies{
+		loadTokens: func(string) ([]string, error) { return nil, errInvalidConfiguration },
+		roundTripper: roundTripFunc(func(*http.Request) (*http.Response, error) {
+			exchanges++
+			return nil, errors.New("must not exchange")
+		}),
+	}
+	var output bytes.Buffer
+	err := run([]string{"preflight", "-runtime-bundle", "invalid.json"}, mapLookup(credentialValues()), &output, dependencies)
+	if err == nil || exchanges != 0 {
+		t.Fatalf("error=%v exchanges=%d", err, exchanges)
+	}
+	want := "AUTHENTICATION=FAIL\nERROR_TYPE=ConfigurationError\nMESSAGE=Invalid checksum-pinned runtime bundle\nHTTP_STATUS=0\n"
+	if output.String() != want {
+		t.Fatalf("output=%q", output.String())
+	}
+}
+
+func TestPreflightContainsRESTFailureAndDoesNotOpenWebSocket(t *testing.T) {
+	now := time.Date(2026, 8, 10, 10, 0, 0, 0, time.UTC)
+	values := credentialValues()
+	dialer := &fakeMarketDialer{connection: &fakeMarketConnection{}}
+	exchanges := 0
+	dependencies := websocketDependencies(now, dialer)
+	dependencies.roundTripper = roundTripFunc(func(request *http.Request) (*http.Response, error) {
+		if request.URL.Path == "/session/token" {
+			exchanges++
+			return response(http.StatusOK, `{"status":"success","data":{"access_token":"generated-access-token"}}`), nil
+		}
+		return response(http.StatusForbidden, `{"status":"error","message":"recognizable-request-token","error_type":"TokenException"}`), nil
+	})
+
+	var output, errorOutput bytes.Buffer
+	exitCode := execute([]string{"preflight", "-runtime-bundle", "pinned.json", "-timeout", "1s"}, mapLookup(values), &output, &errorOutput, dependencies)
+	if exitCode != 1 || exchanges != 1 || dialer.endpoint != "" {
+		t.Fatalf("exit=%d exchanges=%d websocket=%q", exitCode, exchanges, dialer.endpoint)
+	}
+	want := "AUTHENTICATION=PASS\nREST_AUTH=FAIL\nERROR_TYPE=RESTVerificationError\nMESSAGE=Read-only REST verification failed\nHTTP_STATUS=0\nSHUTDOWN=PASS\n"
+	if output.String() != want || errorOutput.Len() != 0 {
+		t.Fatalf("stdout=%q stderr=%q", output.String(), errorOutput.String())
+	}
+	assertNoCredentialMaterial(t, output.String()+errorOutput.String(), merge(values, map[string]string{accessTokenEnvironment: "generated-access-token"}), "")
+}
+
+func TestPreflightContainsWebSocketTimeoutAndShutsDown(t *testing.T) {
+	now := time.Date(2026, 8, 10, 10, 0, 0, 0, time.UTC)
+	values := credentialValues()
+	connection := &fakeMarketConnection{}
+	dependencies := websocketDependencies(now, &fakeMarketDialer{connection: connection})
+	dependencies.roundTripper = preflightRoundTripper(t)
+
+	var output, errorOutput bytes.Buffer
+	exitCode := execute([]string{"preflight", "-runtime-bundle", "pinned.json", "-timeout", "20ms"}, mapLookup(values), &output, &errorOutput, dependencies)
+	if exitCode != 1 {
+		t.Fatalf("execute() = %d", exitCode)
+	}
+	want := "AUTHENTICATION=PASS\nREST_AUTH=PASS\nWEBSOCKET_AUTH=FAIL\nOBSERVATIONS_RECEIVED=0\nSHUTDOWN=PASS\nERROR_TYPE=WebSocketVerificationError\nMESSAGE=Read-only WebSocket verification failed\nHTTP_STATUS=0\n"
+	if output.String() != want || errorOutput.Len() != 0 {
+		t.Fatalf("stdout=%q stderr=%q", output.String(), errorOutput.String())
+	}
+	connection.mu.Lock()
+	closed := connection.closed
+	connection.mu.Unlock()
+	if !closed {
+		t.Fatal("WebSocket was not closed")
+	}
+	assertNoCredentialMaterial(t, output.String()+errorOutput.String(), merge(values, map[string]string{accessTokenEnvironment: "generated-access-token"}), "")
+}
+
 func TestCommandSurfaceHasNoMutationCapability(t *testing.T) {
-	want := []string{"login-url", "exchange-token", "verify-rest", "verify-websocket"}
+	want := []string{"login-url", "exchange-token", "verify-rest", "verify-websocket", "preflight"}
 	if strings.Join(supportedCommands, ",") != strings.Join(want, ",") {
 		t.Fatalf("supported commands = %v", supportedCommands)
 	}
@@ -338,6 +478,21 @@ func exchangeRoundTripper(t *testing.T) http.RoundTripper {
 			t.Fatalf("unexpected request %s %s", request.Method, request.URL.Path)
 		}
 		return response(http.StatusOK, `{"status":"success","data":{"access_token":"generated-access-token"}}`), nil
+	})
+}
+
+func preflightRoundTripper(t *testing.T) http.RoundTripper {
+	t.Helper()
+	return roundTripFunc(func(request *http.Request) (*http.Response, error) {
+		switch request.URL.Path {
+		case "/session/token":
+			return response(http.StatusOK, `{"status":"success","data":{"access_token":"generated-access-token"}}`), nil
+		case "/user/profile":
+			return response(http.StatusOK, `{"status":"success","data":{"exchanges":["NSE"],"products":["CNC"],"order_types":["LIMIT"]}}`), nil
+		default:
+			t.Fatalf("unexpected request %s %s", request.Method, request.URL.Path)
+			return nil, errors.New("unexpected request")
+		}
 	})
 }
 
