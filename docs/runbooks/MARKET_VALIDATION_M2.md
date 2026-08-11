@@ -101,8 +101,10 @@ handled by type: `message` is counted and reading continues, `order` is counted
 but cannot mutate the OMS during this preflight, and `error` fails with a
 sanitized provider category. Zerodha's observed startup `instruments_meta`
 control envelope is shape-validated, counted, and ignored without recording its
-payload so the same connection can proceed to binary heartbeats and quotes.
-Malformed or all other unknown text envelopes fail closed.
+payload. The following observed `app_code` timestamp envelope is likewise
+shape-validated and counted. Neither startup control message causes a reconnect,
+so the same connection proceeds to binary heartbeats and quotes. Malformed or
+all other unknown text envelopes fail closed.
 Gorilla WebSocket handles ping/pong controls during its single read loop;
 TradeEdge does not treat them as Kite binary payloads. Zerodha may deliver an
 initial timestamp-less 28-byte index quote before the requested full mode takes

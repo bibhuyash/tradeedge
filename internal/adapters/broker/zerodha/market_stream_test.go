@@ -274,12 +274,14 @@ func TestTextEnvelopeClassification(t *testing.T) {
 	}{
 		"message":   {raw: `{"type":"message","data":"notice"}`, kind: TextMessageMessage},
 		"metadata":  {raw: `{"type":"instruments_meta","data":{"count":90517,"etag":"12345678901234567890123456"}}`, kind: TextMessageInstrumentsMeta},
+		"app code":  {raw: `{"type":"app_code","timestamp":"2023-05-30T13:31:46+05:30"}`, kind: TextMessageAppCode},
 		"order":     {raw: `{"type":"order","data":{"order_id":"not-recorded"}}`, kind: TextMessageOrder},
 		"error":     {raw: `{"type":"error","data":"provider detail"}`, kind: TextMessageError},
 		"malformed": {raw: `{`, kind: TextMessageUnknown, err: ErrMalformedTextMessage},
 		"empty":     {raw: ``, kind: TextMessageUnknown, err: ErrMalformedTextMessage},
 		"unknown":   {raw: `{"type":"future","data":{}}`, kind: TextMessageUnknown, err: ErrUnknownTextMessage},
 		"bad meta":  {raw: `{"type":"instruments_meta","data":{"etag":"present"}}`, kind: TextMessageUnknown, err: ErrMalformedTextMessage},
+		"bad app":   {raw: `{"type":"app_code","timestamp":"not-a-time"}`, kind: TextMessageUnknown, err: ErrMalformedTextMessage},
 	} {
 		t.Run(name, func(t *testing.T) {
 			kind, err := parseTextMessage([]byte(testCase.raw))
@@ -287,6 +289,17 @@ func TestTextEnvelopeClassification(t *testing.T) {
 				t.Fatalf("kind=%s err=%v", kind, err)
 			}
 		})
+	}
+}
+
+func TestAppCodeFixtureMatchesObservedFrameLength(t *testing.T) {
+	raw := []byte(`{"type":"app_code","timestamp":"2023-05-30T13:31:46+05:30"}`)
+	if len(raw) != 59 {
+		t.Fatalf("fixture length=%d", len(raw))
+	}
+	messageType, err := parseTextMessage(raw)
+	if err != nil || messageType != TextMessageAppCode {
+		t.Fatalf("type=%s err=%v", messageType, err)
 	}
 }
 

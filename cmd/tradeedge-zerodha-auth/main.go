@@ -232,6 +232,7 @@ type webSocketResult struct {
 	textMessages        uint64
 	brokerMessages      uint64
 	instrumentMetadata  uint64
+	appCodeMessages     uint64
 	orderUpdates        uint64
 	providerErrors      uint64
 	lastFailureStage    string
@@ -307,6 +308,7 @@ func verifyWebSocketSession(ctx context.Context, tokens []string, maxAge time.Du
 	result.textMessages = snapshot.TextMessages
 	result.brokerMessages = snapshot.BrokerMessages
 	result.instrumentMetadata = snapshot.InstrumentMetadata
+	result.appCodeMessages = snapshot.AppCodeMessages
 	result.orderUpdates = snapshot.OrderUpdates
 	result.providerErrors = snapshot.ProviderErrors
 	result.frameDiagnostics = append([]brokerzerodha.FrameDiagnostic(nil), snapshot.FrameDiagnostics...)
@@ -499,8 +501,8 @@ func passFail(value bool) string {
 }
 
 func writeWebSocketDiagnostics(output io.Writer, result webSocketResult) {
-	_, _ = fmt.Fprintf(output, "WEBSOCKET_HANDSHAKE=%s\nSUBSCRIBE_SENT=%s\nEXPECTED_TOKEN_COUNT=%d\nEXPECTED_TOKENS_VALID=%s\nTEXT_MESSAGES_RECEIVED=%d\nBROKER_MESSAGES_RECEIVED=%d\nINSTRUMENTS_META_RECEIVED=%d\nORDER_UPDATES_RECEIVED=%d\nPROVIDER_ERRORS_RECEIVED=%d\nBINARY_FRAMES_RECEIVED=%d\nHEARTBEATS_RECEIVED=%d\nPACKETS_RECEIVED=%d\nINDEX_PACKETS_RECEIVED=%d\nPACKETS_DECODED=%d\nPACKETS_REJECTED=%d\nTOKEN_MATCHES=%d\nFRESH_OBSERVATIONS=%d\nLAST_FAILURE_STAGE=%s\n",
-		passFail(result.handshake), passFail(result.subscribeSent), result.expectedTokenCount, passFail(result.expectedTokensValid), result.textMessages, result.brokerMessages, result.instrumentMetadata, result.orderUpdates, result.providerErrors, result.binaryFrames, result.heartbeats, result.packets, result.indexPackets, result.packetsDecoded, result.packetsRejected, result.tokenMatches, result.freshObservations, result.lastFailureStage)
+	_, _ = fmt.Fprintf(output, "WEBSOCKET_HANDSHAKE=%s\nSUBSCRIBE_SENT=%s\nEXPECTED_TOKEN_COUNT=%d\nEXPECTED_TOKENS_VALID=%s\nTEXT_MESSAGES_RECEIVED=%d\nBROKER_MESSAGES_RECEIVED=%d\nINSTRUMENTS_META_RECEIVED=%d\nAPP_CODE_RECEIVED=%d\nORDER_UPDATES_RECEIVED=%d\nPROVIDER_ERRORS_RECEIVED=%d\nBINARY_FRAMES_RECEIVED=%d\nHEARTBEATS_RECEIVED=%d\nPACKETS_RECEIVED=%d\nINDEX_PACKETS_RECEIVED=%d\nPACKETS_DECODED=%d\nPACKETS_REJECTED=%d\nTOKEN_MATCHES=%d\nFRESH_OBSERVATIONS=%d\nLAST_FAILURE_STAGE=%s\n",
+		passFail(result.handshake), passFail(result.subscribeSent), result.expectedTokenCount, passFail(result.expectedTokensValid), result.textMessages, result.brokerMessages, result.instrumentMetadata, result.appCodeMessages, result.orderUpdates, result.providerErrors, result.binaryFrames, result.heartbeats, result.packets, result.indexPackets, result.packetsDecoded, result.packetsRejected, result.tokenMatches, result.freshObservations, result.lastFailureStage)
 	for _, frame := range result.frameDiagnostics {
 		_, _ = fmt.Fprintf(output, "FRAME_SEQUENCE=%d\nFRAME_MESSAGE_TYPE=%s\nFRAME_LENGTH=%d\nFRAME_CLASSIFICATION=%s\n", frame.Sequence, frame.MessageType, frame.Length, frame.Classification)
 		if frame.CloseCode != 0 {

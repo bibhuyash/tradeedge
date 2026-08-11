@@ -82,6 +82,7 @@ type MarketStreamSnapshot struct {
 	TextMessages          uint64            `json:"text_messages"`
 	BrokerMessages        uint64            `json:"broker_messages"`
 	InstrumentMetadata    uint64            `json:"instrument_metadata"`
+	AppCodeMessages       uint64            `json:"app_code_messages"`
 	OrderUpdates          uint64            `json:"order_updates"`
 	ProviderErrors        uint64            `json:"provider_errors"`
 	MalformedTextMessages uint64            `json:"malformed_text_messages"`
@@ -114,6 +115,7 @@ const (
 	FrameUnknown        FrameClassification = "UNKNOWN"
 	FrameBrokerMessage  FrameClassification = "BROKER_MESSAGE"
 	FrameInstrumentMeta FrameClassification = "INSTRUMENTS_META"
+	FrameAppCode        FrameClassification = "APP_CODE"
 	FrameOrderUpdate    FrameClassification = "ORDER_UPDATE"
 	FrameProviderError  FrameClassification = "PROVIDER_ERROR"
 	FrameMalformedText  FrameClassification = "MALFORMED_TEXT"
@@ -124,6 +126,7 @@ type TextMessageType string
 const (
 	TextMessageMessage         TextMessageType = "message"
 	TextMessageInstrumentsMeta TextMessageType = "instruments_meta"
+	TextMessageAppCode         TextMessageType = "app_code"
 	TextMessageOrder           TextMessageType = "order"
 	TextMessageError           TextMessageType = "error"
 	TextMessageUnknown         TextMessageType = "unknown"
@@ -491,6 +494,8 @@ func (s *MarketStream) recordFrame(frame MarketFrame, messageType MarketMessageT
 			classification = FrameBrokerMessage
 		case textType == TextMessageInstrumentsMeta:
 			classification = FrameInstrumentMeta
+		case textType == TextMessageAppCode:
+			classification = FrameAppCode
 		case textType == TextMessageOrder:
 			classification = FrameOrderUpdate
 		case textType == TextMessageError:
@@ -530,14 +535,18 @@ func (s *MarketStream) appendFrameDiagnosticLocked(value FrameDiagnostic) {
 
 func parseTextMessage(raw []byte) (TextMessageType, error) {
 	var envelope struct {
-		Type string          `json:"type"`
-		Data json.RawMessage `json:"data"`
+		Type      string          `json:"type"`
+		Data      json.RawMessage `json:"data"`
+		Timestamp *string         `json:"timestamp"`
 	}
-	if len(raw) == 0 || len(raw) > 64<<10 || json.Unmarshal(raw, &envelope) != nil || len(envelope.Data) == 0 {
+	if len(raw) == 0 || len(raw) > 64<<10 || json.Unmarshal(raw, &envelope) != nil || envelope.Type == "" {
 		return TextMessageUnknown, ErrMalformedTextMessage
 	}
 	switch envelope.Type {
 	case string(TextMessageMessage):
+		if len(envelope.Data) == 0 {
+			return TextMessageUnknown, ErrMalformedTextMessage
+		}
 		return TextMessageMessage, nil
 	case string(TextMessageInstrumentsMeta):
 		var metadata struct {
@@ -548,9 +557,23 @@ func parseTextMessage(raw []byte) (TextMessageType, error) {
 			return TextMessageUnknown, ErrMalformedTextMessage
 		}
 		return TextMessageInstrumentsMeta, nil
+	case string(TextMessageAppCode):
+		if len(envelope.Data) != 0 || envelope.Timestamp == nil {
+			return TextMessageUnknown, ErrMalformedTextMessage
+		}
+		if _, err := time.Parse(time.RFC3339, *envelope.Timestamp); err != nil {
+			return TextMessageUnknown, ErrMalformedTextMessage
+		}
+		return TextMessageAppCode, nil
 	case string(TextMessageOrder):
+		if len(envelope.Data) == 0 {
+			return TextMessageUnknown, ErrMalformedTextMessage
+		}
 		return TextMessageOrder, nil
 	case string(TextMessageError):
+		if len(envelope.Data) == 0 {
+			return TextMessageUnknown, ErrMalformedTextMessage
+		}
 		return TextMessageError, nil
 	default:
 		return TextMessageUnknown, ErrUnknownTextMessage
@@ -576,6 +599,9 @@ func (s *MarketStream) handleTextMessage(messageType TextMessageType) error {
 		return nil
 	case TextMessageInstrumentsMeta:
 		s.snapshot.InstrumentMetadata++
+		return nil
+	case TextMessageAppCode:
+		s.snapshot.AppCodeMessages++
 		return nil
 	case TextMessageOrder:
 		s.snapshot.OrderUpdates++
