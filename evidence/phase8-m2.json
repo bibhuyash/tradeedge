@@ -43,14 +43,15 @@
     "restart_exact": true
   },
   "connected_flow": {
+    "composition_scope": "DETERMINISTIC_VALIDATION_HARNESS_NOT_RELEASED_PHASE4_PHASE6_COMPOSITION",
     "signal_execution_separation": "PASS",
     "option_price_execution_authority": "PASS_BEST_ASK_ENTRY_BEST_BID_EXIT",
     "shadow": "PASS_NO_FILL_NO_POSITION",
-    "risk": "PASS_REQUIRED_CENTRAL_RISK_PORT",
-    "paper_fill": {"entry_minor":10100,"quantity":65,"price_source":"BEST_ASK"},
-    "position": {"cost_basis_minor":656500,"mark_minor":10500,"unrealized_pnl_minor":26000},
-    "exit": {"price_minor":10400,"price_source":"BEST_BID","realized_pnl_minor":19500,"position_open":false},
-    "telegram": "PASS_LABELLED_OUTBOUND_AND_FAILURE_CONTAINED"
+    "risk": "PASS_REQUIRED_PORT_NOT_CONNECTED_TO_PHASE3_RUNNER",
+    "paper_fill": {"entry_minor":10100,"quantity":65,"price_source":"BEST_ASK","authority":"HARNESS_NOT_PHASE4_OMS"},
+    "position": {"cost_basis_minor":656500,"mark_minor":10500,"unrealized_pnl_minor":26000,"authority":"HARNESS_NOT_PHASE6_ACCOUNTING"},
+    "exit": {"price_minor":10400,"price_source":"BEST_BID","realized_pnl_minor":19500,"position_open":false,"authority":"HARNESS_NOT_PHASE4_PHASE6"},
+    "telegram": "PASS_RENDER_AND_FAILURE_CONTAINMENT_NOT_RUNTIME_DELIVERY"
   },
   "adversarial": {
     "missing_future": "PASS",
@@ -89,5 +90,6 @@
     "race": "REQUIRED_ON_UBUNTU_CI_WINDOWS_CGO_UNAVAILABLE"
   },
   "authorization": "REQUIRED_BEFORE_REAL_MARKET_SHADOW_VALIDATION",
-  "result": "M2_LOCAL_PASS_CANDIDATE_DISABLED"
+  "known_blocker": "THE RELEASED PHASE3 RISK RUNNER PHASE4 OMS_PAPER_BROKER AND PHASE6 ACCOUNTING_VALUATION ARE NOT YET COMPOSED WITH DERIVATIVES SELECTION",
+  "result": "M2_DERIVATIVES_FOUNDATION_PASS_CONNECTED_PIPELINE_BLOCKED"
 }
