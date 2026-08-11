@@ -21,17 +21,28 @@ const (
 type NoActionReason string
 
 const (
-	NoActionInsufficientHistory NoActionReason = "INSUFFICIENT_HISTORY"
-	NoActionConditionsNotMet    NoActionReason = "CONDITIONS_NOT_MET"
-	NoActionCooldownActive      NoActionReason = "COOLDOWN_ACTIVE"
-	NoActionAlreadyPositioned   NoActionReason = "ALREADY_POSITIONED"
-	NoActionStateTransitionOnly NoActionReason = "STATE_TRANSITION_ONLY"
+	NoActionInsufficientHistory   NoActionReason = "INSUFFICIENT_HISTORY"
+	NoActionConditionsNotMet      NoActionReason = "CONDITIONS_NOT_MET"
+	NoActionCooldownActive        NoActionReason = "COOLDOWN_ACTIVE"
+	NoActionAlreadyPositioned     NoActionReason = "ALREADY_POSITIONED"
+	NoActionStateTransitionOnly   NoActionReason = "STATE_TRANSITION_ONLY"
+	NoActionDisabled              NoActionReason = "STRATEGY_DISABLED"
+	NoActionStaleMarketData       NoActionReason = "STALE_MARKET_DATA"
+	NoActionSessionNotAllowed     NoActionReason = "SESSION_NOT_ALLOWED"
+	NoActionCASRestricted         NoActionReason = "CAS_RESTRICTED"
+	NoActionPositionAlreadyOpen   NoActionReason = "POSITION_ALREADY_OPEN"
+	NoActionNoCrossover           NoActionReason = "NO_CROSSOVER"
+	NoActionMappingUnavailable    NoActionReason = "EXECUTION_MAPPING_UNAVAILABLE"
+	NoActionAuthoritativeConflict NoActionReason = "AUTHORITATIVE_STATE_CONFLICT"
 )
 
 func (reason NoActionReason) Valid() bool {
 	switch reason {
 	case NoActionInsufficientHistory, NoActionConditionsNotMet, NoActionCooldownActive,
-		NoActionAlreadyPositioned, NoActionStateTransitionOnly:
+		NoActionAlreadyPositioned, NoActionStateTransitionOnly, NoActionDisabled,
+		NoActionStaleMarketData, NoActionSessionNotAllowed, NoActionCASRestricted,
+		NoActionPositionAlreadyOpen, NoActionNoCrossover, NoActionMappingUnavailable,
+		NoActionAuthoritativeConflict:
 		return true
 	default:
 		return false

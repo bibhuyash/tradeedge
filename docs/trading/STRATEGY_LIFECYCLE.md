@@ -49,3 +49,13 @@ Exact windows, sample floors, metrics, and approval roles require strategy-speci
 - Every transition identifies evidence, policy version, actor, reason, and time.
 - Retirement is not automatically reversible.
 - Candidate supply never forces active status.
+
+## Phase 8 production candidate
+
+`nifty-ema-crossover-paper` is the sole production candidate. Its checked-in
+instance is disabled and remains a `CANDIDATE`; classification does not imply
+eligibility. Enabling requires a checksum-bound configuration with a verified
+tradable execution instrument, authoritative position feedback, fresh
+completed-candle inputs, `NORMAL_TRADING`, non-CAS session state, and existing
+Phase 3 controls. Any missing or inconsistent input produces explicit
+`NO_ACTION` or blocks publication. A strategy proposal remains advisory.

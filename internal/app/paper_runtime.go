@@ -40,6 +40,7 @@ import (
 	riskconfig "github.com/bibhuyash/tradeedge/internal/risk/config"
 	riskmodel "github.com/bibhuyash/tradeedge/internal/risk/model"
 	"github.com/bibhuyash/tradeedge/internal/risk/rules"
+	"github.com/bibhuyash/tradeedge/internal/strategy/ema"
 	"github.com/bibhuyash/tradeedge/internal/tradingruntime"
 	runtimeops "github.com/bibhuyash/tradeedge/internal/tradingruntime/opshttp"
 )
@@ -200,7 +201,8 @@ func composeProductionPaper(ctx context.Context, cfg config.Config) (*production
 	}
 	value.sink = live.Accept
 	executionOperations := executionops.New(executionops.Dependencies{Repository: executionStore, OMS: executionStore, PaperBroker: value.paper, Coordinator: zeroAuthorityExecutionHealth{}, Reconciliation: emptyReconciliationHealth{at: time.Now().UTC()}, Timeout: 2 * time.Second})
-	return value, Options{MarketReadiness: evaluator, LatestObservations: latestObservations, RuntimeReadiness: runtime, RuntimeOperations: runtimeops.New(runtime), TradingRuntime: runtime, ExecutionOperations: executionOperations, IntegrationOperations: value, IntegrationRuntime: value, OperationalOperations: operational.Handler(), NotificationRuntime: operational}, nil
+	strategyStatus := ema.NewStatusRecorder(false)
+	return value, Options{MarketReadiness: evaluator, LatestObservations: latestObservations, StrategyOperations: strategyStatus.Handler(), RuntimeReadiness: runtime, RuntimeOperations: runtimeops.New(runtime), TradingRuntime: runtime, ExecutionOperations: executionOperations, IntegrationOperations: value, IntegrationRuntime: value, OperationalOperations: operational.Handler(), NotificationRuntime: operational}, nil
 }
 
 func validateRuntimeAuthorization(value marketvalidation.AuthorizationManifest, runtimeBundleChecksum string, now time.Time) error {

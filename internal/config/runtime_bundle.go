@@ -83,8 +83,54 @@ func LoadRuntimeBundle(path string) (RuntimeBundle, error) {
 		SchemaVersion string            `json:"schema_version"`
 		Instances     []json.RawMessage `json:"instances"`
 	}
-	if strict(result.Files["strategies"], &strategies) != nil || strategies.SchemaVersion != "market-validation-strategies/v1" || len(strategies.Instances) != 0 {
-		return RuntimeBundle{}, errors.New("M1 production composition permits zero strategies only")
+	if strict(result.Files["strategies"], &strategies) != nil || strategies.SchemaVersion != "market-validation-strategies/v1" || len(strategies.Instances) > 1 {
+		return RuntimeBundle{}, errors.New("production composition permits at most one strategy candidate")
+	}
+	if len(strategies.Instances) == 1 {
+		var candidate struct {
+			StrategyID          string          `json:"strategy_id"`
+			Version             string          `json:"version"`
+			Classification      string          `json:"classification"`
+			Enabled             bool            `json:"enabled"`
+			CASPolicy           string          `json:"cas_policy"`
+			ConfigurationSchema string          `json:"configuration_schema"`
+			Configuration       json.RawMessage `json:"configuration"`
+		}
+		if strict(strategies.Instances[0], &candidate) != nil || candidate.StrategyID != "nifty-ema-crossover-paper" ||
+			candidate.Version != "1" || candidate.Classification != "PRODUCTION_CANDIDATE" || candidate.Enabled ||
+			candidate.CASPolicy != "CAS_RESTRICTED" || candidate.ConfigurationSchema != "nifty-ema-crossover-config/v1" || len(candidate.Configuration) == 0 {
+			return RuntimeBundle{}, errors.New("invalid disabled production strategy candidate")
+		}
+		var strategyConfiguration struct {
+			StrategyID          string   `json:"strategy_id"`
+			Version             string   `json:"version"`
+			Enabled             bool     `json:"enabled"`
+			SignalInstrument    string   `json:"signal_instrument"`
+			ExecutionInstrument string   `json:"execution_instrument"`
+			Timeframe           string   `json:"timeframe"`
+			FastPeriod          int      `json:"fast_ema_period"`
+			SlowPeriod          int      `json:"slow_ema_period"`
+			MinimumWarmup       int      `json:"minimum_warmup_samples"`
+			FreshnessSeconds    int64    `json:"freshness_threshold_seconds"`
+			AllowedSessions     []string `json:"allowed_session_regimes"`
+			CooldownSeconds     int64    `json:"cooldown_seconds"`
+			MaximumPositions    int      `json:"max_simultaneous_position_intent"`
+			QuantityLots        int64    `json:"quantity_lots"`
+			SizingBPS           int32    `json:"sizing_bps"`
+			ExitRule            string   `json:"exit_rule"`
+			CalculationPolicy   string   `json:"calculation_policy"`
+		}
+		if strict(candidate.Configuration, &strategyConfiguration) != nil || strategyConfiguration.Enabled ||
+			strategyConfiguration.StrategyID != candidate.StrategyID || strategyConfiguration.Version != candidate.Version ||
+			len(strategyConfiguration.SignalInstrument) != 64 || len(strategyConfiguration.ExecutionInstrument) != 64 ||
+			strategyConfiguration.SignalInstrument == strategyConfiguration.ExecutionInstrument || strategyConfiguration.Timeframe != "1m" ||
+			strategyConfiguration.FastPeriod != 20 || strategyConfiguration.SlowPeriod != 50 || strategyConfiguration.MinimumWarmup < 50 ||
+			strategyConfiguration.FreshnessSeconds <= 0 || len(strategyConfiguration.AllowedSessions) != 1 || strategyConfiguration.AllowedSessions[0] != "NORMAL_TRADING" ||
+			strategyConfiguration.CooldownSeconds < 0 || strategyConfiguration.MaximumPositions != 1 || strategyConfiguration.QuantityLots != 1 ||
+			strategyConfiguration.SizingBPS != 1000 || strategyConfiguration.ExitRule != "BEARISH_CROSSOVER_OR_EOD_CLOSE" ||
+			strategyConfiguration.CalculationPolicy != "fixed-point-ema-half-away-from-zero/v1" {
+			return RuntimeBundle{}, errors.New("invalid disabled production strategy configuration")
+		}
 	}
 	sum := sha256.Sum256(raw)
 	result.Checksum, result.Master, result.Watchlist, result.Tokens = hex.EncodeToString(sum[:]), master, watchlist, tokens

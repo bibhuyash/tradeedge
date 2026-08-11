@@ -1,4 +1,32 @@
 {
   "schema_version": "market-validation-strategies/v1",
-  "instances": []
+  "instances": [
+    {
+      "strategy_id": "nifty-ema-crossover-paper",
+      "version": "1",
+      "classification": "PRODUCTION_CANDIDATE",
+      "enabled": false,
+      "cas_policy": "CAS_RESTRICTED",
+      "configuration_schema": "nifty-ema-crossover-config/v1",
+      "configuration": {
+        "strategy_id": "nifty-ema-crossover-paper",
+        "version": "1",
+        "enabled": false,
+        "signal_instrument": "6be61844dcae953fb2d5039f5f2cb6695ff79c57b9775f78dd9395130d0529f9",
+        "execution_instrument": "75e846375c88fe2c2c2a8c8dedb6dce9bd918db96f30c334c39980c606df525f",
+        "timeframe": "1m",
+        "fast_ema_period": 20,
+        "slow_ema_period": 50,
+        "minimum_warmup_samples": 50,
+        "freshness_threshold_seconds": 90,
+        "allowed_session_regimes": ["NORMAL_TRADING"],
+        "cooldown_seconds": 300,
+        "max_simultaneous_position_intent": 1,
+        "quantity_lots": 1,
+        "sizing_bps": 1000,
+        "exit_rule": "BEARISH_CROSSOVER_OR_EOD_CLOSE",
+        "calculation_policy": "fixed-point-ema-half-away-from-zero/v1"
+      }
+    }
+  ]
 }

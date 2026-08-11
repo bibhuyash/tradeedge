@@ -53,6 +53,10 @@ Each phase has objective entry and exit criteria. Passing a technical milestone 
   existing PAPER pipeline, first through deterministic evidence and then
   through checksum-authorized full-pipeline sessions. It grants no live
   authority.
+- Phase 8 M1 selects the fixed-point NIFTY 50 EMA20/EMA50 crossover with a
+  separately configured tradable PAPER execution instrument. The candidate is
+  checked in disabled; missing execution mapping keeps full-pipeline activation
+  blocked rather than causing dynamic instrument selection.
 
 ## Invariants
 

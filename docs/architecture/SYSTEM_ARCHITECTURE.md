@@ -31,6 +31,12 @@ versioned exchange calendar, restores a consistent set of subsystem heads
 before activation, and applies bounded synchronous backpressure. It does not
 replace any subsystem's atomic publication boundary.
 
+Phase 8 M1 adds one provider-neutral EMA crossover definition under the Phase 2
+runner. It consumes only canonical completed candles, separates an
+observation-only signal instrument from an explicitly configured tradable
+PAPER instrument, and emits advisory proposals. It has no broker, risk,
+accounting, credential, HTTP-mutation, or Zerodha dependency.
+
 ```mermaid
 flowchart TB
     Z["Zerodha APIs"] --> A["Provider adapters"]
