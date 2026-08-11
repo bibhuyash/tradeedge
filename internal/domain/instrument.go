@@ -216,6 +216,13 @@ func (i Instrument) TickSize() Price            { return i.tickSize }
 func (i Instrument) Currency() Currency         { return i.currency }
 func (i Instrument) IsZero() bool               { return i.id.IsZero() }
 
+// IsObservationOnlyIndex reports whether the instrument carries no trading
+// metadata and is therefore valid only as a non-tradable index observation.
+func (i Instrument) IsObservationOnlyIndex() bool {
+	return i.instrumentType == InstrumentIndex && i.segment == SegmentIndex &&
+		i.lotSize.Int64() == 0 && i.tickSize.MinorUnits() == 0
+}
+
 type Provider string
 
 type ProviderInstrumentRef struct {
