@@ -30,6 +30,19 @@ jobs:
         run: go test -race ./internal/releasegate/marketvalidationm1 ./internal/marketdata/... ./internal/strategy/... ./internal/risk/... ./internal/execution/... ./internal/integration/zerodha/... ./internal/accounting/... ./internal/tradingruntime/... -count=2 -timeout=25m
       - name: M2 mapping, manifest, zero-strategy, Day-0 and risk gates
         run: go test -race ./internal/marketvalidation ./internal/config ./internal/app ./internal/releasegate/marketvalidationm2 -count=10 -timeout=20m
+      - name: Day-0 closure and latest-observation regressions
+        run: go test -race ./internal/marketvalidation ./internal/marketdata/latest ./internal/marketdata/opshttp ./internal/marketdata/ingest -count=20 -timeout=20m
+      - name: Canonical Docker Compose contract
+        env:
+          TRADEEDGE_AUTHORIZATION_MANIFEST_HOST: .cache/market-validation/2099-01-01/authorization.json
+          TRADEEDGE_ZERODHA_API_KEY: test-only-key
+          TRADEEDGE_ZERODHA_API_SECRET: test-only-secret
+          TRADEEDGE_ZERODHA_REQUEST_TOKEN: test-only-request
+          TRADEEDGE_TELEGRAM_BOT_TOKEN: test-only-bot
+          TRADEEDGE_TELEGRAM_CHAT_ID: test-only-destination
+        run: |
+          docker compose -f compose.yaml config --quiet
+          ! grep -nE '(privileged:|docker\.sock)' compose.yaml
       - name: Authority, credential, log and Telegram-control scans
         shell: bash
         run: |
@@ -39,6 +52,9 @@ jobs:
           ! grep -RInE --include='*.go' --exclude='*_test.go' '(getUpdates|setWebhook|/buy|/sell)' internal/notification internal/operations
           ! grep -RInE --include='*.go' '(logger\.|slog\.|log\.|Printf).*(access[_-]?token|api[_-]?secret|bot[_-]?token|chat[_-]?id)' internal
           ! grep -RInE --include='*.json' '(bot_token|chat_id|api_secret|access_token)' configs
+          ! grep -RInE --exclude='.env.example' --exclude-dir='.git' --exclude-dir='.cache' '(TRADEEDGE_ZERODHA_API_SECRET|TRADEEDGE_ZERODHA_ACCESS_TOKEN|TRADEEDGE_TELEGRAM_BOT_TOKEN)=' .
+          ! grep -RInE --include='*.go' 'internal/(adapters/broker|execution/broker)' internal/strategy
+          ! grep -RInE --include='*.go' --exclude='*_test.go' '\bfloat(32|64)\b' internal/portfolio internal/risk internal/execution internal/accounting internal/tradingruntime
       - name: Machine-readable M2 enablement evidence
         env:
           TRADEEDGE_M2_GATE_FORMAT: passed

@@ -5,11 +5,13 @@ import (
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
+	"strings"
 	"testing"
 	"time"
 
 	"github.com/bibhuyash/tradeedge/internal/domain"
 	"github.com/bibhuyash/tradeedge/internal/marketdata/calendar"
+	"github.com/bibhuyash/tradeedge/internal/marketdata/latest"
 	"github.com/bibhuyash/tradeedge/internal/marketdata/readiness"
 	"github.com/bibhuyash/tradeedge/internal/marketdata/storage"
 )
@@ -17,6 +19,55 @@ import (
 type snapshotSource struct{ snapshot readiness.Snapshot }
 
 func (s snapshotSource) Snapshot(context.Context) readiness.Snapshot { return s.snapshot }
+
+type latestSource struct{ values []latest.Observation }
+
+func (s latestSource) Snapshot(context.Context) []latest.Observation { return s.values }
+
+func TestLatestAcceptedObservationContract(t *testing.T) {
+	at := time.Date(2026, 8, 11, 9, 30, 0, 0, time.UTC)
+	handler := New(Dependencies{
+		Latest:    latestSource{values: []latest.Observation{{Provider: "zerodha", ProviderToken: "256265", InstrumentID: "canonical-nifty", Symbol: "NIFTY 50", Exchange: domain.ExchangeNSE, Segment: domain.SegmentIndex, LatestPriceMinor: 2450000, Currency: "INR", ExchangeTimestamp: at, IngestedTimestamp: at.Add(time.Millisecond)}}},
+		Readiness: snapshotSource{snapshot: readiness.Snapshot{Diagnostics: []readiness.Diagnostic{{Instrument: "canonical-nifty", State: readiness.StateReady, Reason: readiness.ReasonNone}}}},
+	})
+	response := request(handler, http.MethodGet, "/api/v1/market-data/observations/latest")
+	if response.Code != http.StatusOK {
+		t.Fatalf("status = %d: %s", response.Code, response.Body.String())
+	}
+	var body struct {
+		Items []struct {
+			Symbol string `json:"symbol"`
+			Price  int64  `json:"latest_price_minor"`
+			State  string `json:"freshness_state"`
+		} `json:"items"`
+	}
+	if err := json.NewDecoder(response.Body).Decode(&body); err != nil {
+		t.Fatal(err)
+	}
+	if len(body.Items) != 1 || body.Items[0].Symbol != "NIFTY 50" || body.Items[0].Price != 2450000 || body.Items[0].State != "READY" {
+		t.Fatalf("body = %#v", body)
+	}
+}
+
+func TestLatestObservationsFailsClosedWithoutAcceptedStore(t *testing.T) {
+	response := request(New(Dependencies{Readiness: snapshotSource{}}), http.MethodGet, "/api/v1/market-data/observations/latest")
+	if response.Code != http.StatusServiceUnavailable {
+		t.Fatalf("status = %d", response.Code)
+	}
+}
+
+func TestLatestObservationsExplicitlyReportsStaleAndAbsent(t *testing.T) {
+	handler := New(Dependencies{Latest: latestSource{}, Readiness: snapshotSource{snapshot: readiness.Snapshot{Diagnostics: []readiness.Diagnostic{{Instrument: "missing", State: readiness.StateNoData, Reason: readiness.ReasonNoAcceptedEvent}}}}})
+	response := request(handler, http.MethodGet, "/api/v1/market-data/observations/latest")
+	if response.Code != http.StatusOK || !strings.Contains(response.Body.String(), `"count":0`) {
+		t.Fatalf("absent response = %d %s", response.Code, response.Body.String())
+	}
+	handler = New(Dependencies{Latest: latestSource{values: []latest.Observation{{InstrumentID: "stale"}}}, Readiness: snapshotSource{snapshot: readiness.Snapshot{Diagnostics: []readiness.Diagnostic{{Instrument: "stale", State: readiness.StateStale, Reason: readiness.ReasonExchangeTimeStale}}}}})
+	response = request(handler, http.MethodGet, "/api/v1/market-data/observations/latest")
+	if !strings.Contains(response.Body.String(), `"freshness_state":"STALE"`) || !strings.Contains(response.Body.String(), `"freshness_reason":"EXCHANGE_TIME_STALE"`) {
+		t.Fatalf("stale response = %s", response.Body.String())
+	}
+}
 
 func TestReadinessAndPaginationContracts(t *testing.T) {
 	handler := New(Dependencies{Readiness: snapshotSource{snapshot: readiness.Snapshot{

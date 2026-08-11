@@ -23,9 +23,12 @@ import (
 	telegramadapter "github.com/bibhuyash/tradeedge/internal/adapters/notification/telegram"
 	"github.com/bibhuyash/tradeedge/internal/config"
 	"github.com/bibhuyash/tradeedge/internal/domain"
+	executionhealth "github.com/bibhuyash/tradeedge/internal/execution/health"
+	executionops "github.com/bibhuyash/tradeedge/internal/execution/opshttp"
 	"github.com/bibhuyash/tradeedge/internal/instrumentmaster"
 	"github.com/bibhuyash/tradeedge/internal/marketdata"
 	"github.com/bibhuyash/tradeedge/internal/marketdata/ingest"
+	"github.com/bibhuyash/tradeedge/internal/marketdata/latest"
 	marketmodel "github.com/bibhuyash/tradeedge/internal/marketdata/model"
 	marketreadiness "github.com/bibhuyash/tradeedge/internal/marketdata/readiness"
 	"github.com/bibhuyash/tradeedge/internal/marketvalidation"
@@ -117,6 +120,10 @@ func composeProductionPaper(ctx context.Context, cfg config.Config) (*production
 	if err != nil {
 		return nil, Options{}, err
 	}
+	latestObservations, err := latest.New(bundle.Master, bundle.Watchlist)
+	if err != nil {
+		return nil, Options{}, err
+	}
 	zerodhaConfig, err := brokerzerodha.LoadConfig(os.LookupEnv)
 	if err != nil || !zerodhaConfig.Enabled {
 		return nil, Options{}, errors.Join(brokerzerodha.ErrInvalidConfiguration, err)
@@ -172,7 +179,8 @@ func composeProductionPaper(ctx context.Context, cfg config.Config) (*production
 	if err != nil {
 		return nil, Options{}, err
 	}
-	deps := tradingruntime.PipelineDependencies{Strategy: zeroStrategyStage{}, Risk: sealedRiskStage{}, Execution: &sealedExecutionStage{store: executionmemory.NewStore(), broker: value.paper}, Accounting: &sealedAccountingStage{store: accountingmemory.NewDefault()}, Controls: controls, Restorer: checkpoint, Checkpointer: checkpoint, Observer: operational}
+	executionStore := executionmemory.NewStore()
+	deps := tradingruntime.PipelineDependencies{Strategy: zeroStrategyStage{}, Risk: sealedRiskStage{}, Execution: &sealedExecutionStage{store: executionStore, broker: value.paper}, Accounting: &sealedAccountingStage{store: accountingmemory.NewDefault()}, Controls: controls, Restorer: checkpoint, Checkpointer: checkpoint, Observer: operational}
 	runtimeConfig := tradingruntime.DefaultConfig()
 	runtimeConfig.Mode = tradingruntime.ModePaper
 	runtimeConfig.OperationTimeout = cfg.StrategyTimeout + cfg.RiskTimeout
@@ -186,12 +194,13 @@ func composeProductionPaper(ctx context.Context, cfg config.Config) (*production
 	if startErr != nil && !errors.Is(startErr, tradingruntime.ErrNotReady) {
 		return nil, Options{}, startErr
 	}
-	live, err := ingest.NewLiveService(ingest.Normalizer{Resolver: instrumentmaster.Resolver{Repository: repository}, Calendar: schedule}, ingest.ObserverGroup{evaluator}, value, 2*time.Second, 4096)
+	live, err := ingest.NewLiveService(ingest.Normalizer{Resolver: instrumentmaster.Resolver{Repository: repository}, Calendar: schedule}, ingest.ObserverGroup{evaluator, latestObservations}, value, 2*time.Second, 4096)
 	if err != nil {
 		return nil, Options{}, err
 	}
 	value.sink = live.Accept
-	return value, Options{MarketReadiness: evaluator, RuntimeReadiness: runtime, RuntimeOperations: runtimeops.New(runtime), TradingRuntime: runtime, IntegrationOperations: value, IntegrationRuntime: value, OperationalOperations: operational.Handler(), NotificationRuntime: operational}, nil
+	executionOperations := executionops.New(executionops.Dependencies{Repository: executionStore, OMS: executionStore, PaperBroker: value.paper, Coordinator: zeroAuthorityExecutionHealth{}, Reconciliation: emptyReconciliationHealth{at: time.Now().UTC()}, Timeout: 2 * time.Second})
+	return value, Options{MarketReadiness: evaluator, LatestObservations: latestObservations, RuntimeReadiness: runtime, RuntimeOperations: runtimeops.New(runtime), TradingRuntime: runtime, ExecutionOperations: executionOperations, IntegrationOperations: value, IntegrationRuntime: value, OperationalOperations: operational.Handler(), NotificationRuntime: operational}, nil
 }
 
 func validateRuntimeAuthorization(value marketvalidation.AuthorizationManifest, runtimeBundleChecksum string, now time.Time) error {
@@ -355,6 +364,18 @@ func (sealedRiskStage) UpdateFinancial(context.Context, valuation.PortfolioFinan
 type sealedExecutionStage struct {
 	store  *executionmemory.Store
 	broker *paper.ObservedBroker
+}
+
+type zeroAuthorityExecutionHealth struct{}
+
+func (zeroAuthorityExecutionHealth) Health() executionhealth.Coordinator {
+	return executionhealth.Coordinator{Available: true, MaximumPlans: 0}
+}
+
+type emptyReconciliationHealth struct{ at time.Time }
+
+func (h emptyReconciliationHealth) Health() executionhealth.Reconciliation {
+	return executionhealth.Reconciliation{Available: true, LastAttempt: h.at, LastSuccess: h.at, IssueCounts: map[string]int{}}
 }
 
 func (*sealedExecutionStage) Execute(context.Context, riskmodel.PortfolioRiskDecision) (tradingruntime.ExecutionResult, error) {

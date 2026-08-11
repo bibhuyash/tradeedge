@@ -9,6 +9,7 @@ import (
 	"github.com/bibhuyash/tradeedge/internal/instrumentmaster"
 	"github.com/bibhuyash/tradeedge/internal/marketdata"
 	"github.com/bibhuyash/tradeedge/internal/marketdata/calendar"
+	"github.com/bibhuyash/tradeedge/internal/marketdata/latest"
 	"github.com/bibhuyash/tradeedge/internal/marketdata/model"
 	marketreadiness "github.com/bibhuyash/tradeedge/internal/marketdata/readiness"
 )
@@ -97,13 +98,21 @@ func TestLiveServicePublishesObservationOnlyIndexesToReadiness(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
+	master, err := instrumentmaster.New(now.Add(-time.Hour), []domain.Instrument{nifty, bankNifty}, mappings)
+	if err != nil {
+		t.Fatal(err)
+	}
+	latestStore, err := latest.New(master, watchlist)
+	if err != nil {
+		t.Fatal(err)
+	}
 	if snapshot := evaluator.Snapshot(context.Background()); snapshot.State != marketreadiness.StateNoData {
 		t.Fatalf("initial readiness = %s, want NO_DATA", snapshot.State)
 	}
 	consumer := &liveConsumer{}
 	service, err := NewLiveService(
 		Normalizer{Resolver: resolverForInstruments(t, now, []domain.Instrument{nifty, bankNifty}, mappings), Calendar: schedule},
-		ObserverGroup{evaluator}, consumer, 0, 8,
+		ObserverGroup{evaluator, latestStore}, consumer, 0, 8,
 	)
 	if err != nil {
 		t.Fatal(err)
@@ -122,6 +131,18 @@ func TestLiveServicePublishesObservationOnlyIndexesToReadiness(t *testing.T) {
 	}
 	if len(consumer.events) != 2 {
 		t.Fatalf("accepted events = %d, want 2", len(consumer.events))
+	}
+	items := latestStore.Snapshot(context.Background())
+	if len(items) != 2 || (items[0].Symbol != "NIFTY 50" && items[1].Symbol != "NIFTY 50") || (items[0].Symbol != "NIFTY BANK" && items[1].Symbol != "NIFTY BANK") {
+		t.Fatalf("latest observations = %#v", items)
+	}
+	invalid := quoteForToken("256265", now, 2450999)
+	invalid.Currency = ""
+	if err := service.Accept(context.Background(), invalid); err != nil {
+		t.Fatal(err)
+	}
+	if got := latestStore.Snapshot(context.Background()); len(got) != 2 {
+		t.Fatalf("quarantined observation changed bounded latest state: %#v", got)
 	}
 }
 

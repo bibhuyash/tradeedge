@@ -42,3 +42,9 @@ subscription, fresh required quotes, mappings, calendar, controls, PAPER broker,
 OMS, accounting, valuation, reconciliation, and configuration are healthy.
 With zero configured strategies observations and operations continue while
 proposal, order, and fill counts remain zero.
+
+The canonical Windows-hosted operator procedure is
+`docs/runbooks/DAY0_PAPER_OPERATIONS.md`. It uses Linux Docker Compose for the
+Unix-socket control boundary, documents the one-time request-token lifecycle,
+and exposes accepted latest quotes at
+`GET /api/v1/market-data/observations/latest`.

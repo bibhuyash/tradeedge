@@ -12,6 +12,7 @@ import (
 
 	"github.com/bibhuyash/tradeedge/internal/domain"
 	"github.com/bibhuyash/tradeedge/internal/marketdata/calendar"
+	"github.com/bibhuyash/tradeedge/internal/marketdata/latest"
 	"github.com/bibhuyash/tradeedge/internal/marketdata/quality"
 	"github.com/bibhuyash/tradeedge/internal/marketdata/readiness"
 	"github.com/bibhuyash/tradeedge/internal/marketdata/storage"
@@ -25,11 +26,16 @@ type QualitySource interface {
 	MissingIntervals(context.Context) ([]quality.MissingInterval, error)
 }
 
+type LatestSource interface {
+	Snapshot(context.Context) []latest.Observation
+}
+
 type Dependencies struct {
 	Readiness ReadinessSource
 	Calendar  calendar.Calendar
 	Datasets  storage.RevisionRepository
 	Quality   QualitySource
+	Latest    LatestSource
 	Timeout   time.Duration
 }
 
@@ -56,6 +62,8 @@ func (h Handler) ServeHTTP(w http.ResponseWriter, request *http.Request) {
 		h.readiness(w, ctx, false, request)
 	case path == "/api/v1/market-data/readiness/instruments":
 		h.readiness(w, ctx, true, request)
+	case path == "/api/v1/market-data/observations/latest":
+		h.latest(w, ctx)
 	case path == "/api/v1/market-data/quality":
 		h.quality(w, ctx)
 	case path == "/api/v1/market-data/calendar":
@@ -67,6 +75,35 @@ func (h Handler) ServeHTTP(w http.ResponseWriter, request *http.Request) {
 	default:
 		writeError(w, http.StatusNotFound, "not_found")
 	}
+}
+
+type latestObservation struct {
+	latest.Observation
+	FreshnessState  readiness.State      `json:"freshness_state"`
+	FreshnessReason readiness.ReasonCode `json:"freshness_reason"`
+}
+
+func (h Handler) latest(w http.ResponseWriter, ctx context.Context) {
+	if h.dependencies.Latest == nil || h.dependencies.Readiness == nil {
+		writeError(w, http.StatusServiceUnavailable, "latest_observations_unavailable")
+		return
+	}
+	diagnostics := h.dependencies.Readiness.Snapshot(ctx).Diagnostics
+	freshness := make(map[string]readiness.Diagnostic, len(diagnostics))
+	for _, diagnostic := range diagnostics {
+		freshness[diagnostic.Instrument] = diagnostic
+	}
+	values := h.dependencies.Latest.Snapshot(ctx)
+	items := make([]latestObservation, 0, len(values))
+	for _, value := range values {
+		diagnostic, found := freshness[value.InstrumentID]
+		state, reason := readiness.StateUnknown, readiness.ReasonNoAcceptedEvent
+		if found {
+			state, reason = diagnostic.State, diagnostic.Reason
+		}
+		items = append(items, latestObservation{Observation: value, FreshnessState: state, FreshnessReason: reason})
+	}
+	writeJSON(w, http.StatusOK, map[string]any{"items": items, "count": len(items)})
 }
 
 func (h Handler) readiness(w http.ResponseWriter, ctx context.Context, instruments bool, request *http.Request) {
