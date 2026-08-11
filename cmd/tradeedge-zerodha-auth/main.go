@@ -25,9 +25,11 @@ import (
 
 const (
 	apiKeyEnvironment        = "TRADEEDGE_ZERODHA_API_KEY"
+	apiSecretEnvironment     = "TRADEEDGE_ZERODHA_API_SECRET"
 	accessTokenEnvironment   = "TRADEEDGE_ZERODHA_ACCESS_TOKEN"
 	accessExpiryEnvironment  = "TRADEEDGE_ZERODHA_ACCESS_TOKEN_EXPIRES_AT"
 	requestTokenEnvironment  = "TRADEEDGE_ZERODHA_REQUEST_TOKEN"
+	readOnlyEnvironment      = "TRADEEDGE_ZERODHA_READ_ONLY"
 	day0WatchlistID          = "day0-index-observation/v1"
 	defaultOperatorTimeout   = 10 * time.Second
 	defaultObservationMaxAge = 5 * time.Second
@@ -111,8 +113,11 @@ func exchangeToken(args []string, lookup lookupEnv, output io.Writer, dependenci
 	if err != nil {
 		return err
 	}
-	if value, ok := lookup(requestTokenEnvironment); !ok || strings.TrimSpace(value) == "" {
-		return errInvalidConfiguration
+	if failure, failed := exchangePreflightFailure(lookup); failed {
+		if writeErr := writeAuthenticationFailure(output, failure); writeErr != nil {
+			return writeErr
+		}
+		return errors.Join(errAuthentication, errDiagnosticReported)
 	}
 	ctx, cancel := context.WithTimeout(context.Background(), timeout)
 	defer cancel()
@@ -273,6 +278,27 @@ func authenticatedSession(ctx context.Context, lookup lookupEnv, dependencies co
 func writeAuthenticationFailure(output io.Writer, failure brokerzerodha.AuthenticationFailure) error {
 	_, err := fmt.Fprintf(output, "AUTHENTICATION=FAIL\nERROR_TYPE=%s\nMESSAGE=%s\nHTTP_STATUS=%d\n", failure.ErrorType, failure.Message, failure.HTTPStatus)
 	return err
+}
+
+func exchangePreflightFailure(lookup lookupEnv) (brokerzerodha.AuthenticationFailure, bool) {
+	readOnly, present := lookup(readOnlyEnvironment)
+	if !present || !strings.EqualFold(strings.TrimSpace(readOnly), "true") {
+		return configurationFailure(readOnlyEnvironment + " must be true"), true
+	}
+	for _, name := range []string{apiKeyEnvironment, apiSecretEnvironment, requestTokenEnvironment} {
+		value, ok := lookup(name)
+		if !ok || strings.TrimSpace(value) == "" {
+			return configurationFailure("Missing required environment variable: " + name), true
+		}
+		if strings.ContainsAny(value, "\r\n\x00") {
+			return configurationFailure("Invalid environment variable: " + name), true
+		}
+	}
+	return brokerzerodha.AuthenticationFailure{}, false
+}
+
+func configurationFailure(message string) brokerzerodha.AuthenticationFailure {
+	return brokerzerodha.AuthenticationFailure{ErrorType: "ConfigurationError", Message: message, HTTPStatus: 0}
 }
 
 func loadReadOnlyConfig(lookup lookupEnv) (brokerzerodha.Config, error) {

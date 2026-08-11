@@ -86,7 +86,7 @@ func TestLoginURLRequiresAPIKey(t *testing.T) {
 }
 
 func TestLoginURLIsSafeAndContainsNoSecret(t *testing.T) {
-	values := map[string]string{apiKeyEnvironment: "public-key", "TRADEEDGE_ZERODHA_API_SECRET": "never-print-secret"}
+	values := map[string]string{apiKeyEnvironment: "public-key", apiSecretEnvironment: "never-print-secret"}
 	var output bytes.Buffer
 	if err := run([]string{"login-url"}, mapLookup(values), &output, commandDependencies{}); err != nil {
 		t.Fatal(err)
@@ -94,27 +94,45 @@ func TestLoginURLIsSafeAndContainsNoSecret(t *testing.T) {
 	if got := strings.TrimSpace(output.String()); got != "https://kite.zerodha.com/connect/login?api_key=public-key&v=3" {
 		t.Fatalf("login URL = %q", got)
 	}
-	if strings.Contains(output.String(), values["TRADEEDGE_ZERODHA_API_SECRET"]) {
+	if strings.Contains(output.String(), values[apiSecretEnvironment]) {
 		t.Fatal("API secret appeared in output")
 	}
 }
 
 func TestExchangeTokenRejectsMissingAPIKeyAndSecret(t *testing.T) {
-	base := map[string]string{"TRADEEDGE_ZERODHA_READ_ONLY": "true", requestTokenEnvironment: "request"}
-	for name, values := range map[string]map[string]string{
-		"missing api key":    base,
-		"missing api secret": merge(base, map[string]string{apiKeyEnvironment: "key"}),
+	base := map[string]string{readOnlyEnvironment: "true", requestTokenEnvironment: "request"}
+	for name, testCase := range map[string]struct {
+		values  map[string]string
+		message string
+	}{
+		"missing api key":    {values: base, message: "Missing required environment variable: " + apiKeyEnvironment},
+		"missing api secret": {values: merge(base, map[string]string{apiKeyEnvironment: "key"}), message: "Missing required environment variable: " + apiSecretEnvironment},
 	} {
 		t.Run(name, func(t *testing.T) {
-			var output bytes.Buffer
-			if err := run([]string{"exchange-token"}, mapLookup(values), &output, commandDependencies{}); !errors.Is(err, errAuthentication) {
-				t.Fatalf("run() error = %v", err)
+			var output, errorOutput bytes.Buffer
+			if exitCode := execute([]string{"exchange-token"}, mapLookup(testCase.values), &output, &errorOutput, commandDependencies{}); exitCode != 1 {
+				t.Fatalf("execute() = %d", exitCode)
 			}
-			if output.Len() != 0 {
-				t.Fatalf("unexpected output %q", output.String())
+			want := "AUTHENTICATION=FAIL\nERROR_TYPE=ConfigurationError\nMESSAGE=" + testCase.message + "\nHTTP_STATUS=0\n"
+			if output.String() != want || errorOutput.Len() != 0 {
+				t.Fatalf("stdout=%q stderr=%q", output.String(), errorOutput.String())
 			}
 		})
 	}
+}
+
+func TestExchangeTokenReportsMissingReadOnlyOptIn(t *testing.T) {
+	values := credentialValues()
+	delete(values, readOnlyEnvironment)
+	var output, errorOutput bytes.Buffer
+	if exitCode := execute([]string{"exchange-token"}, mapLookup(values), &output, &errorOutput, commandDependencies{}); exitCode != 1 {
+		t.Fatalf("execute() = %d", exitCode)
+	}
+	want := "AUTHENTICATION=FAIL\nERROR_TYPE=ConfigurationError\nMESSAGE=TRADEEDGE_ZERODHA_READ_ONLY must be true\nHTTP_STATUS=0\n"
+	if output.String() != want || errorOutput.Len() != 0 {
+		t.Fatalf("stdout=%q stderr=%q", output.String(), errorOutput.String())
+	}
+	assertNoCredentialMaterial(t, output.String()+errorOutput.String(), values, "")
 }
 
 func TestExchangeTokenRejectsInvalidRequestToken(t *testing.T) {
@@ -128,7 +146,7 @@ func TestExchangeTokenRejectsInvalidRequestToken(t *testing.T) {
 
 func TestExchangeTokenFailureIsRedacted(t *testing.T) {
 	values := credentialValues()
-	values["TRADEEDGE_ZERODHA_API_SECRET"] = "recognizable-secret"
+	values[apiSecretEnvironment] = "recognizable-secret"
 	values[requestTokenEnvironment] = "recognizable-request-token"
 	dependencies := commandDependencies{roundTripper: roundTripFunc(func(*http.Request) (*http.Response, error) {
 		return response(http.StatusForbidden, `{"status":"error"}`), nil
@@ -139,7 +157,7 @@ func TestExchangeTokenFailureIsRedacted(t *testing.T) {
 		t.Fatalf("run() error = %v", err)
 	}
 	combined := output.String() + err.Error()
-	for _, secret := range []string{values["TRADEEDGE_ZERODHA_API_SECRET"], values[requestTokenEnvironment]} {
+	for _, secret := range []string{values[apiSecretEnvironment], values[requestTokenEnvironment]} {
 		if strings.Contains(combined, secret) {
 			t.Fatalf("secret appeared in result: %q", combined)
 		}
@@ -155,7 +173,7 @@ func TestExchangeTokenSurfacesInvalidChecksumSafely(t *testing.T) {
 		}
 		submittedChecksum = request.Form.Get("checksum")
 		body := fmt.Sprintf(`{"status":"error","message":"Invalid checksum %s for api_key %s using api_secret %s and request_token %s","error_type":"TokenException"}`,
-			submittedChecksum, values[apiKeyEnvironment], values["TRADEEDGE_ZERODHA_API_SECRET"], values[requestTokenEnvironment])
+			submittedChecksum, values[apiKeyEnvironment], values[apiSecretEnvironment], values[requestTokenEnvironment])
 		return response(http.StatusForbidden, body), nil
 	})}
 	var output, errorOutput bytes.Buffer
@@ -298,10 +316,10 @@ func nowClock(now time.Time) brokerzerodha.Clock { return fixedClock{now: now} }
 
 func credentialValues() map[string]string {
 	return map[string]string{
-		"TRADEEDGE_ZERODHA_READ_ONLY":  "true",
-		apiKeyEnvironment:              "public-key",
-		"TRADEEDGE_ZERODHA_API_SECRET": "api-secret",
-		requestTokenEnvironment:        "request-token",
+		readOnlyEnvironment:     "true",
+		apiKeyEnvironment:       "public-key",
+		apiSecretEnvironment:    "api-secret",
+		requestTokenEnvironment: "request-token",
 	}
 }
 
@@ -365,7 +383,7 @@ func valuesFrom(values map[string]string, key string) string { return values[key
 
 func assertNoCredentialMaterial(t *testing.T, output string, values map[string]string, checksum string) {
 	t.Helper()
-	for _, value := range []string{values[apiKeyEnvironment], values["TRADEEDGE_ZERODHA_API_SECRET"], values[requestTokenEnvironment], values[accessTokenEnvironment], checksum} {
+	for _, value := range []string{values[apiKeyEnvironment], values[apiSecretEnvironment], values[requestTokenEnvironment], values[accessTokenEnvironment], checksum} {
 		if value != "" && strings.Contains(output, value) {
 			t.Fatalf("credential material appeared in output: %q", output)
 		}
