@@ -55,12 +55,17 @@ type commandDependencies struct {
 }
 
 func main() {
-	if err := run(os.Args[1:], os.LookupEnv, os.Stdout, commandDependencies{}); err != nil {
+	os.Exit(execute(os.Args[1:], os.LookupEnv, os.Stdout, os.Stderr, commandDependencies{}))
+}
+
+func execute(args []string, lookup lookupEnv, output, errorOutput io.Writer, dependencies commandDependencies) int {
+	if err := run(args, lookup, output, dependencies); err != nil {
 		if !errors.Is(err, errDiagnosticReported) {
-			fmt.Fprintln(os.Stderr, err)
+			_, _ = fmt.Fprintln(errorOutput, err)
 		}
-		os.Exit(1)
+		return 1
 	}
+	return 0
 }
 
 func run(args []string, lookup lookupEnv, output io.Writer, dependencies commandDependencies) error {
@@ -111,15 +116,14 @@ func exchangeToken(args []string, lookup lookupEnv, output io.Writer, dependenci
 	}
 	ctx, cancel := context.WithTimeout(context.Background(), timeout)
 	defer cancel()
-	session, exchanger, err := authenticatedSession(ctx, withoutRestoredToken(lookup), dependencies)
+	session, err := authenticatedSession(ctx, withoutRestoredToken(lookup), dependencies)
 	if err != nil {
-		if exchanger != nil {
-			if failure, ok := exchanger.LastAuthenticationFailure(); ok {
-				if writeErr := writeAuthenticationFailure(output, failure); writeErr != nil {
-					return writeErr
-				}
-				return errors.Join(errAuthentication, errDiagnosticReported)
+		var failure brokerzerodha.AuthenticationFailure
+		if errors.As(err, &failure) {
+			if writeErr := writeAuthenticationFailure(output, failure); writeErr != nil {
+				return writeErr
 			}
+			return errors.Join(errAuthentication, errDiagnosticReported)
 		}
 		return errAuthentication
 	}
@@ -142,7 +146,7 @@ func verifyREST(args []string, lookup lookupEnv, output io.Writer, dependencies 
 	}
 	ctx, cancel := context.WithTimeout(context.Background(), timeout)
 	defer cancel()
-	session, _, err := authenticatedSession(ctx, lookup, dependencies)
+	session, err := authenticatedSession(ctx, lookup, dependencies)
 	if err != nil {
 		_, _ = fmt.Fprintln(output, "REST_AUTH=FAIL")
 		return errRESTVerification
@@ -199,7 +203,7 @@ func verifyWebSocket(args []string, lookup lookupEnv, output io.Writer, dependen
 	}
 	ctx, cancel := context.WithTimeout(context.Background(), *timeout)
 	defer cancel()
-	session, _, err := authenticatedSession(ctx, lookup, dependencies)
+	session, err := authenticatedSession(ctx, lookup, dependencies)
 	if err != nil {
 		writeWebSocketResult(output, false, 0, false)
 		return errWebSocketVerification
@@ -245,25 +249,25 @@ func verifyWebSocket(args []string, lookup lookupEnv, output io.Writer, dependen
 	return nil
 }
 
-func authenticatedSession(ctx context.Context, lookup lookupEnv, dependencies commandDependencies) (*brokerzerodha.SessionManager, *brokerzerodha.HTTPTokenExchanger, error) {
+func authenticatedSession(ctx context.Context, lookup lookupEnv, dependencies commandDependencies) (*brokerzerodha.SessionManager, error) {
 	zerodhaConfig, err := loadReadOnlyConfig(lookup)
 	if err != nil {
-		return nil, nil, err
+		return nil, err
 	}
 	credentials, err := (brokerzerodha.EnvCredentialSource{Lookup: brokerzerodha.LookupEnv(lookup)}).Load(ctx)
 	if err != nil {
-		return nil, nil, err
+		return nil, err
 	}
 	exchanger, err := brokerzerodha.NewHTTPTokenExchanger(zerodhaConfig, dependencies.roundTripper, operatorClock(dependencies))
 	if err != nil {
-		return nil, nil, err
+		return nil, err
 	}
 	session := brokerzerodha.NewSessionManager(credentials, exchanger, operatorClock(dependencies), nil)
 	if err = session.Authenticate(ctx); err != nil {
 		session.Shutdown()
-		return nil, exchanger, err
+		return nil, err
 	}
-	return session, exchanger, nil
+	return session, nil
 }
 
 func writeAuthenticationFailure(output io.Writer, failure brokerzerodha.AuthenticationFailure) error {

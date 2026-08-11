@@ -158,16 +158,18 @@ func TestExchangeTokenSurfacesInvalidChecksumSafely(t *testing.T) {
 			submittedChecksum, values[apiKeyEnvironment], values["TRADEEDGE_ZERODHA_API_SECRET"], values[requestTokenEnvironment])
 		return response(http.StatusForbidden, body), nil
 	})}
-	var output bytes.Buffer
-	err := run([]string{"exchange-token"}, mapLookup(values), &output, dependencies)
-	if !errors.Is(err, errAuthentication) || !errors.Is(err, errDiagnosticReported) {
-		t.Fatalf("run() error = %v", err)
+	var output, errorOutput bytes.Buffer
+	if exitCode := execute([]string{"exchange-token"}, mapLookup(values), &output, &errorOutput, dependencies); exitCode != 1 {
+		t.Fatalf("execute() = %d", exitCode)
 	}
 	want := "AUTHENTICATION=FAIL\nERROR_TYPE=TokenException\nMESSAGE=Invalid checksum\nHTTP_STATUS=403\n"
 	if output.String() != want {
 		t.Fatalf("output = %q, want %q", output.String(), want)
 	}
-	assertNoCredentialMaterial(t, output.String()+err.Error(), values, submittedChecksum)
+	if errorOutput.Len() != 0 {
+		t.Fatalf("stderr = %q", errorOutput.String())
+	}
+	assertNoCredentialMaterial(t, output.String()+errorOutput.String(), values, submittedChecksum)
 }
 
 func TestExchangeTokenSurfacesExpiredTokenSafely(t *testing.T) {
