@@ -99,7 +99,10 @@ classification, the bounded text-envelope type, and a numeric close code when
 applicable; payloads are never recorded. Documented Kite text envelopes are
 handled by type: `message` is counted and reading continues, `order` is counted
 but cannot mutate the OMS during this preflight, and `error` fails with a
-sanitized provider category. Malformed or unknown text envelopes fail closed.
+sanitized provider category. Zerodha's observed startup `instruments_meta`
+control envelope is shape-validated, counted, and ignored without recording its
+payload so the same connection can proceed to binary heartbeats and quotes.
+Malformed or all other unknown text envelopes fail closed.
 Gorilla WebSocket handles ping/pong controls during its single read loop;
 TradeEdge does not treat them as Kite binary payloads. Zerodha may deliver an
 initial timestamp-less 28-byte index quote before the requested full mode takes

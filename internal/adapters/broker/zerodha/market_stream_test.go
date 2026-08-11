@@ -273,11 +273,13 @@ func TestTextEnvelopeClassification(t *testing.T) {
 		err  error
 	}{
 		"message":   {raw: `{"type":"message","data":"notice"}`, kind: TextMessageMessage},
+		"metadata":  {raw: `{"type":"instruments_meta","data":{"count":90517,"etag":"12345678901234567890123456"}}`, kind: TextMessageInstrumentsMeta},
 		"order":     {raw: `{"type":"order","data":{"order_id":"not-recorded"}}`, kind: TextMessageOrder},
 		"error":     {raw: `{"type":"error","data":"provider detail"}`, kind: TextMessageError},
 		"malformed": {raw: `{`, kind: TextMessageUnknown, err: ErrMalformedTextMessage},
 		"empty":     {raw: ``, kind: TextMessageUnknown, err: ErrMalformedTextMessage},
 		"unknown":   {raw: `{"type":"future","data":{}}`, kind: TextMessageUnknown, err: ErrUnknownTextMessage},
+		"bad meta":  {raw: `{"type":"instruments_meta","data":{"etag":"present"}}`, kind: TextMessageUnknown, err: ErrMalformedTextMessage},
 	} {
 		t.Run(name, func(t *testing.T) {
 			kind, err := parseTextMessage([]byte(testCase.raw))
@@ -285,6 +287,17 @@ func TestTextEnvelopeClassification(t *testing.T) {
 				t.Fatalf("kind=%s err=%v", kind, err)
 			}
 		})
+	}
+}
+
+func TestInstrumentMetadataFixtureMatchesObservedFrameLength(t *testing.T) {
+	raw := []byte(`{"type":"instruments_meta","data":{"count":90517,"etag":"12345678901234567890123456"}}`)
+	if len(raw) != 86 {
+		t.Fatalf("fixture length=%d", len(raw))
+	}
+	messageType, err := parseTextMessage(raw)
+	if err != nil || messageType != TextMessageInstrumentsMeta {
+		t.Fatalf("type=%s err=%v", messageType, err)
 	}
 }
 

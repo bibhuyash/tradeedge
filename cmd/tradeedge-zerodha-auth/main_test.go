@@ -460,7 +460,7 @@ func TestPreflightContainsWebSocketTimeoutAndShutsDown(t *testing.T) {
 		t.Fatalf("execute() = %d", exitCode)
 	}
 	want := "AUTHENTICATION=PASS\nREST_AUTH=PASS\nWEBSOCKET_AUTH=FAIL\nOBSERVATIONS_RECEIVED=0\nSHUTDOWN=PASS\nERROR_TYPE=WebSocketTimeout\nMESSAGE=Timed out waiting for fresh market observations\nHTTP_STATUS=0\n" +
-		"WEBSOCKET_HANDSHAKE=PASS\nSUBSCRIBE_SENT=PASS\nEXPECTED_TOKEN_COUNT=2\nEXPECTED_TOKENS_VALID=PASS\nTEXT_MESSAGES_RECEIVED=0\nBROKER_MESSAGES_RECEIVED=0\nORDER_UPDATES_RECEIVED=0\nPROVIDER_ERRORS_RECEIVED=0\nBINARY_FRAMES_RECEIVED=0\nHEARTBEATS_RECEIVED=0\nPACKETS_RECEIVED=0\nINDEX_PACKETS_RECEIVED=0\nPACKETS_DECODED=0\nPACKETS_REJECTED=0\nTOKEN_MATCHES=0\nFRESH_OBSERVATIONS=0\nLAST_FAILURE_STAGE=FRAME_RECEIVE\n"
+		"WEBSOCKET_HANDSHAKE=PASS\nSUBSCRIBE_SENT=PASS\nEXPECTED_TOKEN_COUNT=2\nEXPECTED_TOKENS_VALID=PASS\nTEXT_MESSAGES_RECEIVED=0\nBROKER_MESSAGES_RECEIVED=0\nINSTRUMENTS_META_RECEIVED=0\nORDER_UPDATES_RECEIVED=0\nPROVIDER_ERRORS_RECEIVED=0\nBINARY_FRAMES_RECEIVED=0\nHEARTBEATS_RECEIVED=0\nPACKETS_RECEIVED=0\nINDEX_PACKETS_RECEIVED=0\nPACKETS_DECODED=0\nPACKETS_REJECTED=0\nTOKEN_MATCHES=0\nFRESH_OBSERVATIONS=0\nLAST_FAILURE_STAGE=FRAME_RECEIVE\n"
 	if output.String() != want || errorOutput.Len() != 0 {
 		t.Fatalf("stdout=%q stderr=%q", output.String(), errorOutput.String())
 	}
@@ -486,7 +486,7 @@ func TestPreflightReportsMalformedMarketFrameSafely(t *testing.T) {
 		t.Fatalf("execute() = %d", exitCode)
 	}
 	want := "AUTHENTICATION=PASS\nREST_AUTH=PASS\nWEBSOCKET_AUTH=FAIL\nOBSERVATIONS_RECEIVED=0\nSHUTDOWN=PASS\nERROR_TYPE=WebSocketProtocolError\nMESSAGE=Received a malformed market-data frame\nHTTP_STATUS=0\n" +
-		"WEBSOCKET_HANDSHAKE=PASS\nSUBSCRIBE_SENT=PASS\nEXPECTED_TOKEN_COUNT=2\nEXPECTED_TOKENS_VALID=PASS\nTEXT_MESSAGES_RECEIVED=0\nBROKER_MESSAGES_RECEIVED=0\nORDER_UPDATES_RECEIVED=0\nPROVIDER_ERRORS_RECEIVED=0\nBINARY_FRAMES_RECEIVED=1\nHEARTBEATS_RECEIVED=0\nPACKETS_RECEIVED=1\nINDEX_PACKETS_RECEIVED=0\nPACKETS_DECODED=0\nPACKETS_REJECTED=1\nTOKEN_MATCHES=0\nFRESH_OBSERVATIONS=0\nLAST_FAILURE_STAGE=PACKET_DECODE\n" +
+		"WEBSOCKET_HANDSHAKE=PASS\nSUBSCRIBE_SENT=PASS\nEXPECTED_TOKEN_COUNT=2\nEXPECTED_TOKENS_VALID=PASS\nTEXT_MESSAGES_RECEIVED=0\nBROKER_MESSAGES_RECEIVED=0\nINSTRUMENTS_META_RECEIVED=0\nORDER_UPDATES_RECEIVED=0\nPROVIDER_ERRORS_RECEIVED=0\nBINARY_FRAMES_RECEIVED=1\nHEARTBEATS_RECEIVED=0\nPACKETS_RECEIVED=1\nINDEX_PACKETS_RECEIVED=0\nPACKETS_DECODED=0\nPACKETS_REJECTED=1\nTOKEN_MATCHES=0\nFRESH_OBSERVATIONS=0\nLAST_FAILURE_STAGE=PACKET_DECODE\n" +
 		"FRAME_SEQUENCE=1\nFRAME_MESSAGE_TYPE=BINARY\nFRAME_LENGTH=3\nFRAME_CLASSIFICATION=MARKET_DATA\n"
 	if output.String() != want || errorOutput.Len() != 0 {
 		t.Fatalf("stdout=%q stderr=%q", output.String(), errorOutput.String())
@@ -517,6 +517,37 @@ func TestPreflightIdentifiesUnknownTextBeforeBinaryDecode(t *testing.T) {
 	}
 	if strings.Contains(output.String(), string(payload)) {
 		t.Fatal("frame payload appeared in diagnostics")
+	}
+}
+
+func TestPreflightContinuesAfterObservedInstrumentMetadata(t *testing.T) {
+	now := time.Date(2026, 8, 10, 10, 0, 0, 0, time.UTC)
+	metadata := []byte(`{"type":"instruments_meta","data":{"count":90517,"etag":"12345678901234567890123456"}}`)
+	connection := &fakeMarketConnection{frames: []brokerzerodha.MarketFrame{
+		{MessageType: brokerzerodha.MarketMessageText, Data: metadata},
+		{Binary: true, Data: []byte{0}},
+		{Binary: true, Data: quoteFrame(256265, now)},
+		{Binary: true, Data: quoteFrame(260105, now)},
+	}}
+	dependencies := websocketDependencies(now, &fakeMarketDialer{connection: connection})
+	dependencies.roundTripper = preflightRoundTripper(t)
+
+	var output bytes.Buffer
+	if err := run([]string{"preflight", "-runtime-bundle", "pinned.json", "-timeout", "1s"}, mapLookup(credentialValues()), &output, dependencies); err != nil {
+		t.Fatal(err)
+	}
+	for _, line := range []string{
+		"WEBSOCKET_AUTH=PASS", "OBSERVATIONS_RECEIVED=2", "TEXT_MESSAGES_RECEIVED=1",
+		"INSTRUMENTS_META_RECEIVED=1", "BINARY_FRAMES_RECEIVED=3", "HEARTBEATS_RECEIVED=1",
+		"INDEX_PACKETS_RECEIVED=2", "TOKEN_MATCHES=2", "FRESH_OBSERVATIONS=2",
+		"FRAME_LENGTH=86", "FRAME_CLASSIFICATION=INSTRUMENTS_META", "TEXT_MESSAGE_TYPE=instruments_meta",
+	} {
+		if !strings.Contains(output.String(), line+"\n") {
+			t.Fatalf("missing %q in output %q", line, output.String())
+		}
+	}
+	if strings.Contains(output.String(), "90517") || strings.Contains(output.String(), "12345678901234567890123456") {
+		t.Fatal("instrument metadata payload appeared in diagnostics")
 	}
 }
 

@@ -81,6 +81,7 @@ type MarketStreamSnapshot struct {
 	TokenMatches          uint64            `json:"token_matches"`
 	TextMessages          uint64            `json:"text_messages"`
 	BrokerMessages        uint64            `json:"broker_messages"`
+	InstrumentMetadata    uint64            `json:"instrument_metadata"`
 	OrderUpdates          uint64            `json:"order_updates"`
 	ProviderErrors        uint64            `json:"provider_errors"`
 	MalformedTextMessages uint64            `json:"malformed_text_messages"`
@@ -107,23 +108,25 @@ const (
 type FrameClassification string
 
 const (
-	FrameHeartbeat     FrameClassification = "HEARTBEAT"
-	FrameMarketData    FrameClassification = "MARKET_DATA"
-	FrameControl       FrameClassification = "CONTROL"
-	FrameUnknown       FrameClassification = "UNKNOWN"
-	FrameBrokerMessage FrameClassification = "BROKER_MESSAGE"
-	FrameOrderUpdate   FrameClassification = "ORDER_UPDATE"
-	FrameProviderError FrameClassification = "PROVIDER_ERROR"
-	FrameMalformedText FrameClassification = "MALFORMED_TEXT"
+	FrameHeartbeat      FrameClassification = "HEARTBEAT"
+	FrameMarketData     FrameClassification = "MARKET_DATA"
+	FrameControl        FrameClassification = "CONTROL"
+	FrameUnknown        FrameClassification = "UNKNOWN"
+	FrameBrokerMessage  FrameClassification = "BROKER_MESSAGE"
+	FrameInstrumentMeta FrameClassification = "INSTRUMENTS_META"
+	FrameOrderUpdate    FrameClassification = "ORDER_UPDATE"
+	FrameProviderError  FrameClassification = "PROVIDER_ERROR"
+	FrameMalformedText  FrameClassification = "MALFORMED_TEXT"
 )
 
 type TextMessageType string
 
 const (
-	TextMessageMessage TextMessageType = "message"
-	TextMessageOrder   TextMessageType = "order"
-	TextMessageError   TextMessageType = "error"
-	TextMessageUnknown TextMessageType = "unknown"
+	TextMessageMessage         TextMessageType = "message"
+	TextMessageInstrumentsMeta TextMessageType = "instruments_meta"
+	TextMessageOrder           TextMessageType = "order"
+	TextMessageError           TextMessageType = "error"
+	TextMessageUnknown         TextMessageType = "unknown"
 )
 
 type FrameDiagnostic struct {
@@ -486,6 +489,8 @@ func (s *MarketStream) recordFrame(frame MarketFrame, messageType MarketMessageT
 			classification = FrameMalformedText
 		case textType == TextMessageMessage:
 			classification = FrameBrokerMessage
+		case textType == TextMessageInstrumentsMeta:
+			classification = FrameInstrumentMeta
 		case textType == TextMessageOrder:
 			classification = FrameOrderUpdate
 		case textType == TextMessageError:
@@ -534,6 +539,15 @@ func parseTextMessage(raw []byte) (TextMessageType, error) {
 	switch envelope.Type {
 	case string(TextMessageMessage):
 		return TextMessageMessage, nil
+	case string(TextMessageInstrumentsMeta):
+		var metadata struct {
+			Count *uint64 `json:"count"`
+			ETag  *string `json:"etag"`
+		}
+		if json.Unmarshal(envelope.Data, &metadata) != nil || metadata.Count == nil || *metadata.Count == 0 || metadata.ETag == nil {
+			return TextMessageUnknown, ErrMalformedTextMessage
+		}
+		return TextMessageInstrumentsMeta, nil
 	case string(TextMessageOrder):
 		return TextMessageOrder, nil
 	case string(TextMessageError):
@@ -559,6 +573,9 @@ func (s *MarketStream) handleTextMessage(messageType TextMessageType) error {
 	switch messageType {
 	case TextMessageMessage:
 		s.snapshot.BrokerMessages++
+		return nil
+	case TextMessageInstrumentsMeta:
+		s.snapshot.InstrumentMetadata++
 		return nil
 	case TextMessageOrder:
 		s.snapshot.OrderUpdates++
