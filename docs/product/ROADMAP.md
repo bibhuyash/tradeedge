@@ -13,7 +13,8 @@ flowchart LR
     P4 --> P5["Phase 5: Broker Adapter & Reliability Validation"]
     P5 --> P6["Phase 6: Positions, P&L, and Reconciliation"]
     P6 --> P7["Phase 7: PAPER/SHADOW Runtime Orchestration"]
-    P7 --> G{"Explicit live approval?"}
+    P7 --> P8["Phase 8: Production-Candidate PAPER Strategy Validation"]
+    P8 --> G{"Explicit live approval?"}
     G -->|No| PT["Continue paper trading"]
     G -->|Yes| LP["Separately scoped live pilot"]
 ```
@@ -48,6 +49,10 @@ Each phase has objective entry and exit criteria. Passing a technical milestone 
 - Phase 7 Milestone 3 supplies the fail-closed full-day, adversarial, restart,
   replay, isolation, resource, regression, and operational evidence required
   to close PAPER/SHADOW orchestration. It adds no live authority.
+- Phase 8 adds one explicitly approved production-candidate strategy to the
+  existing PAPER pipeline, first through deterministic evidence and then
+  through checksum-authorized full-pipeline sessions. It grants no live
+  authority.
 
 ## Invariants
 

@@ -39,6 +39,7 @@ type Options struct {
 	RuntimeReadiness      httpserver.RuntimeReadinessSource
 	Metrics               *prometheusmetrics.Recorder
 	Quality               opshttp.QualitySource
+	LatestObservations    opshttp.LatestSource
 	StrategyOperations    http.Handler
 	ExecutionOperations   http.Handler
 	IntegrationOperations http.Handler
@@ -134,6 +135,7 @@ func RunWithOptions(
 		operations.Readiness = options.MarketReadiness
 	}
 	operations.Quality = options.Quality
+	operations.Latest = options.LatestObservations
 	if cfg.MarketDataCalendarPath != "" {
 		schedule, loadErr := calendarfile.Load(cfg.MarketDataCalendarPath)
 		if loadErr != nil {

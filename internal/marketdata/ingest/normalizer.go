@@ -80,12 +80,12 @@ func (n Normalizer) Normalize(ctx context.Context, observation marketdata.Observ
 		if err != nil {
 			return nil, fmt.Errorf("validate quote: %w", err)
 		}
-		if err := validateTickAlignment(event.LastPrice(), instrument.TickSize()); err != nil {
+		if err := validateInstrumentTickAlignment(event.LastPrice(), instrument); err != nil {
 			return nil, err
 		}
 		for _, level := range []*model.BookLevel{event.BestBid(), event.BestAsk()} {
 			if level != nil {
-				if err := validateTickAlignment(level.Price, instrument.TickSize()); err != nil {
+				if err := validateInstrumentTickAlignment(level.Price, instrument); err != nil {
 					return nil, err
 				}
 			}
@@ -139,7 +139,7 @@ func (n Normalizer) Normalize(ctx context.Context, observation marketdata.Observ
 			return nil, fmt.Errorf("validate candle: %w", err)
 		}
 		for _, price := range []domain.Price{event.Open(), event.High(), event.Low(), event.Close()} {
-			if err := validateTickAlignment(price, instrument.TickSize()); err != nil {
+			if err := validateInstrumentTickAlignment(price, instrument); err != nil {
 				return nil, err
 			}
 		}
@@ -147,6 +147,13 @@ func (n Normalizer) Normalize(ctx context.Context, observation marketdata.Observ
 	default:
 		return nil, marketdata.ErrInvalidObservation
 	}
+}
+
+func validateInstrumentTickAlignment(price domain.Price, instrument domain.Instrument) error {
+	if instrument.IsObservationOnlyIndex() {
+		return nil
+	}
+	return validateTickAlignment(price, instrument.TickSize())
 }
 
 func validateTickAlignment(price, tick domain.Price) error {

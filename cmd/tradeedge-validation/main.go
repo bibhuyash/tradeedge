@@ -33,7 +33,7 @@ func main() {
 
 func run(args []string) error {
 	if len(args) == 0 {
-		return errors.New("usage: tradeedge-validation <readiness|telegram-check|calendar-check|generate-mappings|authorize|day0-gate|day1-gate|finalize-day|scorecard>")
+		return errors.New("usage: tradeedge-validation <readiness|telegram-check|calendar-check|generate-mappings|authorize|day0-gate|day1-gate|close-day0|finalize-day|scorecard>")
 	}
 	switch args[0] {
 	case "readiness":
@@ -50,6 +50,8 @@ func run(args []string) error {
 		return day0Gate(args[1:])
 	case "day1-gate":
 		return day1Gate(args[1:])
+	case "close-day0":
+		return closeDay0(args[1:])
 	case "finalize-day":
 		return finalizeDay(args[1:])
 	case "scorecard":
@@ -57,6 +59,37 @@ func run(args []string) error {
 	default:
 		return errors.New("unknown market-validation command")
 	}
+}
+
+func closeDay0(args []string) error {
+	set := flag.NewFlagSet("close-day0", flag.ContinueOnError)
+	input, output := set.String("input", "", "Day-0 closure draft JSON"), set.String("output", "", "final Day-0 closure JSON")
+	if err := set.Parse(args); err != nil || *input == "" || *output == "" {
+		return errors.New("close-day0 requires -input and -output")
+	}
+	raw, err := os.ReadFile(*input)
+	if err != nil {
+		return err
+	}
+	draft, err := marketvalidation.DecodeDay0ClosureDraft(raw)
+	if err != nil {
+		return err
+	}
+	closure, err := marketvalidation.FinalizeDay0Closure(*output, draft)
+	if err != nil {
+		return err
+	}
+	raw, err = marketvalidation.Marshal(closure)
+	if err != nil {
+		return err
+	}
+	if err = writeEvidence(*output, raw); err != nil {
+		return err
+	}
+	if closure.Classification == marketvalidation.Day0SessionFail {
+		return errors.New("Day-0 session classified SESSION_FAIL; evidence was preserved")
+	}
+	return nil
 }
 
 func calendarCheck(args []string) error {

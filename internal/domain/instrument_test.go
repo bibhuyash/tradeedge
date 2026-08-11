@@ -71,14 +71,32 @@ func TestObservationOnlyIndexAllowsZeroTradingMetadata(t *testing.T) {
 	spec := validIndexSpec(t)
 	spec.LotSize = 0
 	spec.TickSize, _ = NewPrice(0, "INR")
-	if _, err := NewInstrument(spec); err != nil {
+	instrument, err := NewInstrument(spec)
+	if err != nil {
 		t.Fatalf("NewInstrument() observation-only index error = %v", err)
 	}
+	if !instrument.IsObservationOnlyIndex() {
+		t.Fatal("observation-only index classification = false")
+	}
 
-	spec.Type = InstrumentEquity
-	spec.Segment = SegmentCash
-	if _, err := NewInstrument(spec); !errors.Is(err, ErrInvalidInstrument) {
-		t.Fatalf("NewInstrument() accepted zero trading metadata for an equity: %v", err)
+	for name, mutate := range map[string]func(InstrumentSpec) InstrumentSpec{
+		"equity": func(value InstrumentSpec) InstrumentSpec {
+			value.Type = InstrumentEquity
+			value.Segment = SegmentCash
+			value.LotSize, _ = NewQuantity(1)
+			return value
+		},
+		"option": func(value InstrumentSpec) InstrumentSpec {
+			option := validOptionSpec(t)
+			option.TickSize = value.TickSize
+			return option
+		},
+	} {
+		t.Run(name, func(t *testing.T) {
+			if _, err := NewInstrument(mutate(spec)); !errors.Is(err, ErrInvalidInstrument) {
+				t.Fatalf("NewInstrument() accepted zero trading metadata for a tradable %s: %v", name, err)
+			}
+		})
 	}
 }
 

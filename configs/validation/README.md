@@ -23,3 +23,9 @@ catalog. `OPERATIONS_ONLY` permits the checked-in empty strategy list.
 No current repository fixture is suitable for Day 1. The checked-in market-data
 fixture uses provider `fixture`, covers an expired date, and maps only a test
 NIFTY instrument. Do not relabel it as Zerodha evidence.
+
+`tradeedge-validation close-day0` finalizes a checksum-bound operations-only
+closure from the authorization, external evidence, runtime attestation,
+container log, clean checkpoint, and operator controls. It preserves the
+distinction between a partial session and a full-session validation; neither
+classification grants trading authority.
