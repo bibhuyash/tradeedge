@@ -13,22 +13,43 @@ import (
 )
 
 type fakeMarketConnection struct {
-	mu     sync.Mutex
-	frames []MarketFrame
-	writes []any
-	closed bool
+	mu                     sync.Mutex
+	frames                 []MarketFrame
+	readError              error
+	writes                 []any
+	closed                 bool
+	activeReaders          int
+	maxReaders             int
+	readBeforeSubscription bool
 }
 
 func (c *fakeMarketConnection) Read(ctx context.Context) (MarketFrame, error) {
 	c.mu.Lock()
+	c.activeReaders++
+	if len(c.writes) < 2 {
+		c.readBeforeSubscription = true
+	}
+	if c.activeReaders > c.maxReaders {
+		c.maxReaders = c.activeReaders
+	}
 	if len(c.frames) > 0 {
 		value := c.frames[0]
 		c.frames = c.frames[1:]
+		c.activeReaders--
 		c.mu.Unlock()
 		return value, nil
 	}
+	err := c.readError
+	if err != nil {
+		c.activeReaders--
+		c.mu.Unlock()
+		return MarketFrame{}, err
+	}
 	c.mu.Unlock()
 	<-ctx.Done()
+	c.mu.Lock()
+	c.activeReaders--
+	c.mu.Unlock()
 	return MarketFrame{}, ctx.Err()
 }
 func (c *fakeMarketConnection) WriteJSON(_ context.Context, value any) error {
@@ -123,6 +144,32 @@ func TestDecodeMarketFrameSupportsOfficialPacketLengths(t *testing.T) {
 	}
 }
 
+func TestDecodeMarketFrameSupportsMultiPacketEnvelope(t *testing.T) {
+	ingested := time.Date(2026, 8, 10, 4, 0, 1, 0, time.UTC)
+	raw := wrapPackets(
+		ltpPacket(408065, 150025),
+		indexPacket(256265, 2450125, 2460000, 2440000, 2445000, 2455000, time.Time{}),
+		indexPacket(260105, 5500125, 5510000, 5490000, 5495000, 5505000, ingested.Add(-time.Second)),
+	)
+	observations, stats, err := decodeMarketFrame(raw, ingested)
+	if err != nil || len(observations) != 3 {
+		t.Fatalf("decode=%#v stats=%#v err=%v", observations, stats, err)
+	}
+	if stats.packets != 3 || stats.indexPackets != 2 || stats.decoded != 3 || stats.rejected != 0 {
+		t.Fatalf("stats=%#v", stats)
+	}
+	if observations[0].ProviderToken != "408065" || observations[1].ProviderToken != "256265" || observations[2].ProviderToken != "260105" {
+		t.Fatalf("tokens=%#v", observations)
+	}
+}
+
+func TestMaximumMessageSizeAllowsLargestKiteEnvelope(t *testing.T) {
+	const maximumKiteEnvelope = 2 + 3000*(2+184)
+	if maximumKiteEnvelope >= maxWebSocketMessageBytes {
+		t.Fatalf("Kite envelope %d exceeds read limit %d", maximumKiteEnvelope, maxWebSocketMessageBytes)
+	}
+}
+
 func TestDecodeMarketFrameRejectsTruncationAndTrailingBytes(t *testing.T) {
 	if _, err := DecodeMarketFrame([]byte{0, 1, 0, 32, 1}, time.Now()); !errors.Is(err, ErrMarketStreamMalformed) {
 		t.Fatalf("truncated error = %v", err)
@@ -190,8 +237,11 @@ func TestMarketStreamReconnectsAndResubscribes(t *testing.T) {
 		t.Fatalf("subscription messages = %#v", second.writes)
 	}
 	snapshot := stream.Snapshot()
-	if !snapshot.HandshakeEstablished || !snapshot.SubscribeSent || snapshot.Heartbeats != 1 || snapshot.BinaryFrames != 2 || snapshot.Packets != 1 || snapshot.IndexPackets != 1 || snapshot.PacketsDecoded != 1 || snapshot.PacketsRejected != 1 || snapshot.TokenMatches != 1 {
+	if !snapshot.HandshakeEstablished || !snapshot.SubscribeSent || snapshot.Heartbeats != 1 || snapshot.BinaryFrames != 3 || snapshot.Packets != 1 || snapshot.IndexPackets != 1 || snapshot.PacketsDecoded != 1 || snapshot.PacketsRejected != 1 || snapshot.TokenMatches != 1 {
 		t.Fatalf("snapshot = %#v", snapshot)
+	}
+	if first.maxReaders != 1 || second.maxReaders != 1 || first.readBeforeSubscription || second.readBeforeSubscription {
+		t.Fatalf("read sequencing readers=%d/%d before-subscribe=%t/%t", first.maxReaders, second.maxReaders, first.readBeforeSubscription, second.readBeforeSubscription)
 	}
 }
 
@@ -202,6 +252,56 @@ func TestMarketStreamBlocksUnexpectedOrderFrame(t *testing.T) {
 	}
 	if stream.Snapshot().UnexpectedOrderFrames != 1 {
 		t.Fatal("unexpected order frame not recorded")
+	}
+}
+
+func TestMarketStreamRejectsUnknownTextWithoutCallingBinaryDecoder(t *testing.T) {
+	stream := &MarketStream{}
+	if err := stream.observeText([]byte(`{"unexpected":true}`)); !errors.Is(err, ErrUnexpectedTextMessage) {
+		t.Fatalf("error=%v", err)
+	}
+}
+
+func TestMarketStreamClassifiesControlAndCloseFrames(t *testing.T) {
+	now := time.Date(2026, 8, 10, 4, 0, 0, 0, time.UTC)
+	credentials, err := (EnvCredentialSource{Lookup: func(key string) (string, bool) {
+		values := map[string]string{"TRADEEDGE_ZERODHA_API_KEY": "key", "TRADEEDGE_ZERODHA_API_SECRET": "secret", "TRADEEDGE_ZERODHA_ACCESS_TOKEN": "access", "TRADEEDGE_ZERODHA_ACCESS_TOKEN_EXPIRES_AT": now.Add(time.Hour).Format(time.RFC3339)}
+		value, ok := values[key]
+		return value, ok
+	}}).Load(context.Background())
+	if err != nil {
+		t.Fatal(err)
+	}
+	clock := fixedClock{now}
+	session := NewSessionManager(credentials, nil, &clock, nil)
+	connection := &fakeMarketConnection{frames: []MarketFrame{
+		{MessageType: MarketMessagePing},
+		{MessageType: MarketMessagePong},
+		{MessageType: MarketMessageClose, CloseCode: 1000},
+	}}
+	dialer := &fakeMarketDialer{connections: []*fakeMarketConnection{connection}}
+	cfg := DefaultMarketStreamConfig()
+	cfg.MaxReconnects = 0
+	stream, err := NewMarketStream(cfg, dialer, session, &clock, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	err = stream.Stream(context.Background(), []string{"256265"}, func(context.Context, marketdata.Observation) error { return nil })
+	if !errors.Is(err, ErrUnavailable) {
+		t.Fatalf("stream error=%v", err)
+	}
+	snapshot := stream.Snapshot()
+	if len(snapshot.FrameDiagnostics) != 3 {
+		t.Fatalf("diagnostics=%#v", snapshot.FrameDiagnostics)
+	}
+	for index, messageType := range []MarketMessageType{MarketMessagePing, MarketMessagePong, MarketMessageClose} {
+		diagnostic := snapshot.FrameDiagnostics[index]
+		if diagnostic.Sequence != uint64(index+1) || diagnostic.MessageType != messageType || diagnostic.Classification != FrameControl {
+			t.Fatalf("diagnostic[%d]=%#v", index, diagnostic)
+		}
+	}
+	if snapshot.FrameDiagnostics[2].CloseCode != 1000 || connection.maxReaders != 1 {
+		t.Fatalf("close/read diagnostics=%#v readers=%d", snapshot.FrameDiagnostics[2], connection.maxReaders)
 	}
 }
 

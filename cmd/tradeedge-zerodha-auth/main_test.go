@@ -486,11 +486,60 @@ func TestPreflightReportsMalformedMarketFrameSafely(t *testing.T) {
 		t.Fatalf("execute() = %d", exitCode)
 	}
 	want := "AUTHENTICATION=PASS\nREST_AUTH=PASS\nWEBSOCKET_AUTH=FAIL\nOBSERVATIONS_RECEIVED=0\nSHUTDOWN=PASS\nERROR_TYPE=WebSocketProtocolError\nMESSAGE=Received a malformed market-data frame\nHTTP_STATUS=0\n" +
-		"WEBSOCKET_HANDSHAKE=PASS\nSUBSCRIBE_SENT=PASS\nEXPECTED_TOKEN_COUNT=2\nEXPECTED_TOKENS_VALID=PASS\nBINARY_FRAMES_RECEIVED=1\nHEARTBEATS_RECEIVED=0\nPACKETS_RECEIVED=1\nINDEX_PACKETS_RECEIVED=0\nPACKETS_DECODED=0\nPACKETS_REJECTED=1\nTOKEN_MATCHES=0\nFRESH_OBSERVATIONS=0\nLAST_FAILURE_STAGE=PACKET_DECODE\n"
+		"WEBSOCKET_HANDSHAKE=PASS\nSUBSCRIBE_SENT=PASS\nEXPECTED_TOKEN_COUNT=2\nEXPECTED_TOKENS_VALID=PASS\nBINARY_FRAMES_RECEIVED=1\nHEARTBEATS_RECEIVED=0\nPACKETS_RECEIVED=1\nINDEX_PACKETS_RECEIVED=0\nPACKETS_DECODED=0\nPACKETS_REJECTED=1\nTOKEN_MATCHES=0\nFRESH_OBSERVATIONS=0\nLAST_FAILURE_STAGE=PACKET_DECODE\n" +
+		"FRAME_SEQUENCE=1\nFRAME_MESSAGE_TYPE=BINARY\nFRAME_LENGTH=3\nFRAME_CLASSIFICATION=MARKET_DATA\n"
 	if output.String() != want || errorOutput.Len() != 0 {
 		t.Fatalf("stdout=%q stderr=%q", output.String(), errorOutput.String())
 	}
 	assertNoCredentialMaterial(t, output.String()+errorOutput.String(), merge(values, map[string]string{accessTokenEnvironment: "generated-access-token"}), "")
+}
+
+func TestPreflightIdentifiesUnknownTextBeforeBinaryDecode(t *testing.T) {
+	now := time.Date(2026, 8, 10, 10, 0, 0, 0, time.UTC)
+	payload := []byte(`{"unexpected":true}`)
+	connection := &fakeMarketConnection{frames: []brokerzerodha.MarketFrame{{MessageType: brokerzerodha.MarketMessageText, Data: payload}}}
+	dependencies := websocketDependencies(now, &fakeMarketDialer{connection: connection})
+	dependencies.roundTripper = preflightRoundTripper(t)
+
+	var output bytes.Buffer
+	err := run([]string{"preflight", "-runtime-bundle", "pinned.json", "-timeout", "1s"}, mapLookup(credentialValues()), &output, dependencies)
+	if err == nil {
+		t.Fatal("expected preflight failure")
+	}
+	for _, line := range []string{
+		"ERROR_TYPE=WebSocketMessageTypeError", "MESSAGE=Received an unrecognized text WebSocket message", "BINARY_FRAMES_RECEIVED=0", "PACKETS_REJECTED=0",
+		"LAST_FAILURE_STAGE=MESSAGE_TYPE", "FRAME_SEQUENCE=1", "FRAME_MESSAGE_TYPE=TEXT",
+		fmt.Sprintf("FRAME_LENGTH=%d", len(payload)), "FRAME_CLASSIFICATION=UNKNOWN",
+	} {
+		if !strings.Contains(output.String(), line+"\n") {
+			t.Fatalf("missing %q in output %q", line, output.String())
+		}
+	}
+	if strings.Contains(output.String(), string(payload)) {
+		t.Fatal("frame payload appeared in diagnostics")
+	}
+}
+
+func TestPreflightCountsOneByteHeartbeatBeforeValidation(t *testing.T) {
+	now := time.Date(2026, 8, 10, 10, 0, 0, 0, time.UTC)
+	connection := &fakeMarketConnection{frames: []brokerzerodha.MarketFrame{{Binary: true, Data: []byte{0}}}}
+	dependencies := websocketDependencies(now, &fakeMarketDialer{connection: connection})
+	dependencies.roundTripper = preflightRoundTripper(t)
+
+	var output bytes.Buffer
+	err := run([]string{"preflight", "-runtime-bundle", "pinned.json", "-timeout", "20ms"}, mapLookup(credentialValues()), &output, dependencies)
+	if err == nil {
+		t.Fatal("expected preflight timeout")
+	}
+	for _, line := range []string{
+		"BINARY_FRAMES_RECEIVED=1", "HEARTBEATS_RECEIVED=1", "PACKETS_RECEIVED=0",
+		"PACKETS_REJECTED=0", "FRAME_MESSAGE_TYPE=BINARY", "FRAME_LENGTH=1",
+		"FRAME_CLASSIFICATION=HEARTBEAT", "LAST_FAILURE_STAGE=FRAME_RECEIVE",
+	} {
+		if !strings.Contains(output.String(), line+"\n") {
+			t.Fatalf("missing %q in output %q", line, output.String())
+		}
+	}
 }
 
 func TestFreshObservationEnforcesFiveSecondPolicy(t *testing.T) {

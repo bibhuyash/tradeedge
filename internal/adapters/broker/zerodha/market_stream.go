@@ -18,13 +18,19 @@ import (
 	"github.com/gorilla/websocket"
 )
 
-const defaultWebSocketURL = "wss://ws.kite.trade"
+const (
+	defaultWebSocketURL      = "wss://ws.kite.trade"
+	maxWebSocketMessageBytes = 1 << 20
+)
+
+const maxFrameDiagnostics = 5
 
 var (
 	ErrMarketStreamMalformed = errors.New("malformed zerodha market stream frame")
 	ErrMarketStreamStale     = errors.New("zerodha market stream is stale")
 	ErrMarketStreamOverflow  = errors.New("zerodha market stream buffer overflow")
 	ErrUnexpectedOrderUpdate = errors.New("unexpected zerodha order update on read-only stream")
+	ErrUnexpectedTextMessage = errors.New("unexpected zerodha text message")
 )
 
 type MarketStreamConfig struct {
@@ -50,29 +56,60 @@ func (c MarketStreamConfig) Validate() error {
 }
 
 type MarketStreamSnapshot struct {
-	State                 StreamState `json:"state"`
-	HandshakeEstablished  bool        `json:"handshake_established"`
-	SubscribeSent         bool        `json:"subscribe_sent"`
-	Subscriptions         int         `json:"subscriptions"`
-	ReconnectAttempts     int         `json:"reconnect_attempts"`
-	Frames                uint64      `json:"frames"`
-	BinaryFrames          uint64      `json:"binary_frames"`
-	Heartbeats            uint64      `json:"heartbeats"`
-	Packets               uint64      `json:"packets"`
-	IndexPackets          uint64      `json:"index_packets"`
-	PacketsDecoded        uint64      `json:"packets_decoded"`
-	PacketsRejected       uint64      `json:"packets_rejected"`
-	TokenMatches          uint64      `json:"token_matches"`
-	Observations          uint64      `json:"observations"`
-	UnexpectedOrderFrames uint64      `json:"unexpected_order_frames"`
-	LastFrameAt           time.Time   `json:"last_frame_at,omitempty"`
-	LastObservationAt     time.Time   `json:"last_observation_at,omitempty"`
-	LastError             string      `json:"last_error,omitempty"`
+	State                 StreamState       `json:"state"`
+	HandshakeEstablished  bool              `json:"handshake_established"`
+	SubscribeSent         bool              `json:"subscribe_sent"`
+	Subscriptions         int               `json:"subscriptions"`
+	ReconnectAttempts     int               `json:"reconnect_attempts"`
+	Frames                uint64            `json:"frames"`
+	BinaryFrames          uint64            `json:"binary_frames"`
+	Heartbeats            uint64            `json:"heartbeats"`
+	Packets               uint64            `json:"packets"`
+	IndexPackets          uint64            `json:"index_packets"`
+	PacketsDecoded        uint64            `json:"packets_decoded"`
+	PacketsRejected       uint64            `json:"packets_rejected"`
+	TokenMatches          uint64            `json:"token_matches"`
+	Observations          uint64            `json:"observations"`
+	UnexpectedOrderFrames uint64            `json:"unexpected_order_frames"`
+	LastFrameAt           time.Time         `json:"last_frame_at,omitempty"`
+	LastObservationAt     time.Time         `json:"last_observation_at,omitempty"`
+	LastError             string            `json:"last_error,omitempty"`
+	FrameDiagnostics      []FrameDiagnostic `json:"frame_diagnostics,omitempty"`
+}
+
+type MarketMessageType string
+
+const (
+	MarketMessageBinary MarketMessageType = "BINARY"
+	MarketMessageText   MarketMessageType = "TEXT"
+	MarketMessagePing   MarketMessageType = "PING"
+	MarketMessagePong   MarketMessageType = "PONG"
+	MarketMessageClose  MarketMessageType = "CLOSE"
+	MarketMessageOther  MarketMessageType = "OTHER"
+)
+
+type FrameClassification string
+
+const (
+	FrameHeartbeat  FrameClassification = "HEARTBEAT"
+	FrameMarketData FrameClassification = "MARKET_DATA"
+	FrameControl    FrameClassification = "CONTROL"
+	FrameUnknown    FrameClassification = "UNKNOWN"
+)
+
+type FrameDiagnostic struct {
+	Sequence       uint64              `json:"sequence"`
+	MessageType    MarketMessageType   `json:"message_type"`
+	Length         int                 `json:"length"`
+	Classification FrameClassification `json:"classification"`
+	CloseCode      int                 `json:"close_code,omitempty"`
 }
 
 type MarketFrame struct {
-	Binary bool
-	Data   []byte
+	Binary      bool
+	MessageType MarketMessageType
+	Data        []byte
+	CloseCode   int
 }
 
 type MarketConnection interface {
@@ -99,7 +136,7 @@ func (d websocketMarketDialer) Dial(ctx context.Context, endpoint string) (Marke
 	if err != nil {
 		return nil, ErrUnavailable
 	}
-	conn.SetReadLimit(1 << 20)
+	conn.SetReadLimit(maxWebSocketMessageBytes)
 	return &gorillaMarketConnection{conn: conn}, nil
 }
 
@@ -109,17 +146,39 @@ type gorillaMarketConnection struct {
 }
 
 func (c *gorillaMarketConnection) Read(ctx context.Context) (MarketFrame, error) {
-	stop := context.AfterFunc(ctx, func() { _ = c.conn.SetReadDeadline(time.Now()) })
+	if deadline, ok := ctx.Deadline(); ok {
+		_ = c.conn.SetReadDeadline(deadline)
+	}
+	stop := context.AfterFunc(ctx, func() { _ = c.conn.Close() })
 	defer stop()
 	kind, data, err := c.conn.ReadMessage()
 	if err != nil {
 		if ctx.Err() != nil {
 			return MarketFrame{}, ctx.Err()
 		}
+		var closeError *websocket.CloseError
+		if errors.As(err, &closeError) {
+			return MarketFrame{}, marketReadError{messageType: MarketMessageClose, closeCode: closeError.Code}
+		}
 		return MarketFrame{}, ErrUnavailable
 	}
-	return MarketFrame{Binary: kind == websocket.BinaryMessage, Data: append([]byte(nil), data...)}, nil
+	messageType := MarketMessageOther
+	switch kind {
+	case websocket.BinaryMessage:
+		messageType = MarketMessageBinary
+	case websocket.TextMessage:
+		messageType = MarketMessageText
+	}
+	return MarketFrame{Binary: kind == websocket.BinaryMessage, MessageType: messageType, Data: append([]byte(nil), data...)}, nil
 }
+
+type marketReadError struct {
+	messageType MarketMessageType
+	closeCode   int
+}
+
+func (failure marketReadError) Error() string { return "zerodha market stream closed" }
+func (failure marketReadError) Unwrap() error { return ErrUnavailable }
 
 func (c *gorillaMarketConnection) WriteJSON(ctx context.Context, value any) error {
 	c.mu.Lock()
@@ -297,28 +356,30 @@ func (s *MarketStream) consume(ctx context.Context, connection MarketConnection,
 		case <-ctx.Done():
 			return ctx.Err()
 		case err := <-errorsCh:
+			s.recordReadFailure(err)
 			return err
 		case frame := <-frames:
 			now := s.clock.Now().UTC()
-			s.mu.Lock()
-			s.snapshot.Frames++
-			s.snapshot.LastFrameAt = now
-			s.mu.Unlock()
-			if frame.Binary && len(frame.Data) == 1 {
+			messageType := marketFrameType(frame)
+			s.recordFrame(frame, messageType, now)
+			if messageType == MarketMessageClose {
+				return ErrUnavailable
+			}
+			if messageType == MarketMessagePing || messageType == MarketMessagePong {
+				continue
+			}
+			if messageType == MarketMessageBinary && len(frame.Data) == 1 {
 				s.mu.Lock()
 				s.snapshot.Heartbeats++
 				s.mu.Unlock()
 				continue
 			}
-			if !frame.Binary {
+			if messageType != MarketMessageBinary {
 				if err := s.observeText(frame.Data); err != nil {
 					return err
 				}
 				continue
 			}
-			s.mu.Lock()
-			s.snapshot.BinaryFrames++
-			s.mu.Unlock()
 			observations, stats, err := decodeMarketFrame(frame.Data, now)
 			s.mu.Lock()
 			s.snapshot.Packets += stats.packets
@@ -354,6 +415,63 @@ func (s *MarketStream) consume(ctx context.Context, connection MarketConnection,
 	}
 }
 
+func marketFrameType(frame MarketFrame) MarketMessageType {
+	if frame.MessageType != "" {
+		return frame.MessageType
+	}
+	if frame.Binary {
+		return MarketMessageBinary
+	}
+	return MarketMessageText
+}
+
+func (s *MarketStream) recordFrame(frame MarketFrame, messageType MarketMessageType, at time.Time) {
+	classification := FrameUnknown
+	if messageType == MarketMessageBinary {
+		classification = FrameMarketData
+		if len(frame.Data) == 1 {
+			classification = FrameHeartbeat
+		}
+	} else if messageType == MarketMessagePing || messageType == MarketMessagePong || messageType == MarketMessageClose || recognizedTextFrame(frame.Data) {
+		classification = FrameControl
+	}
+	s.mu.Lock()
+	s.snapshot.Frames++
+	s.snapshot.LastFrameAt = at
+	if messageType == MarketMessageBinary {
+		s.snapshot.BinaryFrames++
+	}
+	s.appendFrameDiagnosticLocked(FrameDiagnostic{Sequence: s.snapshot.Frames, MessageType: messageType, Length: len(frame.Data), Classification: classification, CloseCode: frame.CloseCode})
+	s.mu.Unlock()
+}
+
+func (s *MarketStream) recordReadFailure(err error) {
+	var failure marketReadError
+	if !errors.As(err, &failure) || failure.messageType != MarketMessageClose {
+		return
+	}
+	s.mu.Lock()
+	s.snapshot.Frames++
+	s.appendFrameDiagnosticLocked(FrameDiagnostic{Sequence: s.snapshot.Frames, MessageType: MarketMessageClose, Classification: FrameControl, CloseCode: failure.closeCode})
+	s.mu.Unlock()
+}
+
+func (s *MarketStream) appendFrameDiagnosticLocked(value FrameDiagnostic) {
+	if len(s.snapshot.FrameDiagnostics) < maxFrameDiagnostics {
+		s.snapshot.FrameDiagnostics = append(s.snapshot.FrameDiagnostics, value)
+	}
+}
+
+func recognizedTextFrame(raw []byte) bool {
+	var envelope struct {
+		Type string `json:"type"`
+	}
+	if len(raw) > 64<<10 || json.Unmarshal(raw, &envelope) != nil {
+		return false
+	}
+	return envelope.Type == "message" || envelope.Type == "error" || envelope.Type == "order"
+}
+
 func readWithLiveness(ctx context.Context, connection MarketConnection, timeout time.Duration) (MarketFrame, error) {
 	readCtx, cancel := context.WithTimeout(ctx, timeout)
 	defer cancel()
@@ -369,7 +487,7 @@ func (s *MarketStream) observeText(raw []byte) error {
 		Type string `json:"type"`
 	}
 	if len(raw) > 64<<10 || json.Unmarshal(raw, &envelope) != nil {
-		return ErrMarketStreamMalformed
+		return ErrUnexpectedTextMessage
 	}
 	if envelope.Type == "order" {
 		s.mu.Lock()
@@ -381,7 +499,7 @@ func (s *MarketStream) observeText(raw []byte) error {
 		return ErrUnavailable
 	}
 	if envelope.Type != "message" {
-		return ErrMarketStreamMalformed
+		return ErrUnexpectedTextMessage
 	}
 	return nil
 }
@@ -561,6 +679,8 @@ func boundedMarketError(err error) string {
 		return "BUFFER_OVERFLOW"
 	case errors.Is(err, ErrUnexpectedOrderUpdate):
 		return "UNEXPECTED_ORDER_UPDATE"
+	case errors.Is(err, ErrUnexpectedTextMessage):
+		return "UNEXPECTED_TEXT_MESSAGE"
 	case errors.Is(err, ErrSessionExpired):
 		return "SESSION_EXPIRED"
 	default:
@@ -571,7 +691,9 @@ func boundedMarketError(err error) string {
 func (s *MarketStream) Snapshot() MarketStreamSnapshot {
 	s.mu.RLock()
 	defer s.mu.RUnlock()
-	return s.snapshot
+	value := s.snapshot
+	value.FrameDiagnostics = append([]FrameDiagnostic(nil), s.snapshot.FrameDiagnostics...)
+	return value
 }
 
 func (s *MarketStream) Shutdown() {

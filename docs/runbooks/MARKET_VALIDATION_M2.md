@@ -93,7 +93,11 @@ process's session.
 On WebSocket failure, preflight also prints bounded, credential-free stage
 counters for handshake, subscription, binary frames, heartbeats, packet decode,
 index packets, token matches, and fresh observations. `LAST_FAILURE_STAGE` is a
-safe enum and never includes the authenticated endpoint. Zerodha may deliver an
+safe enum and never includes the authenticated endpoint. Up to the first five
+frames include only sequence, WebSocket message type, byte length,
+classification, and a numeric close code when applicable; payloads are never
+recorded. Gorilla WebSocket handles ping/pong controls during its single read
+loop; TradeEdge does not treat them as Kite binary payloads. Zerodha may deliver an
 initial timestamp-less 28-byte index quote before the requested full mode takes
 effect. The parser accepts the documented 8-, 28-, 32-, 44-, and 184-byte
 formats, but only timestamped packets can satisfy the unchanged freshness gate.
