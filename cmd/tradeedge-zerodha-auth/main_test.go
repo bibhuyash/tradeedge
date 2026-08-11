@@ -416,7 +416,7 @@ func TestPreflightContainsWebSocketTimeoutAndShutsDown(t *testing.T) {
 	if exitCode != 1 {
 		t.Fatalf("execute() = %d", exitCode)
 	}
-	want := "AUTHENTICATION=PASS\nREST_AUTH=PASS\nWEBSOCKET_AUTH=FAIL\nOBSERVATIONS_RECEIVED=0\nSHUTDOWN=PASS\nERROR_TYPE=WebSocketVerificationError\nMESSAGE=Read-only WebSocket verification failed\nHTTP_STATUS=0\n"
+	want := "AUTHENTICATION=PASS\nREST_AUTH=PASS\nWEBSOCKET_AUTH=FAIL\nOBSERVATIONS_RECEIVED=0\nSHUTDOWN=PASS\nERROR_TYPE=WebSocketTimeout\nMESSAGE=Timed out waiting for fresh market observations\nHTTP_STATUS=0\n"
 	if output.String() != want || errorOutput.Len() != 0 {
 		t.Fatalf("stdout=%q stderr=%q", output.String(), errorOutput.String())
 	}
@@ -425,6 +425,25 @@ func TestPreflightContainsWebSocketTimeoutAndShutsDown(t *testing.T) {
 	connection.mu.Unlock()
 	if !closed {
 		t.Fatal("WebSocket was not closed")
+	}
+	assertNoCredentialMaterial(t, output.String()+errorOutput.String(), merge(values, map[string]string{accessTokenEnvironment: "generated-access-token"}), "")
+}
+
+func TestPreflightReportsMalformedMarketFrameSafely(t *testing.T) {
+	now := time.Date(2026, 8, 10, 10, 0, 0, 0, time.UTC)
+	values := credentialValues()
+	connection := &fakeMarketConnection{frames: []brokerzerodha.MarketFrame{{Binary: true, Data: []byte{0, 1, 0}}}}
+	dependencies := websocketDependencies(now, &fakeMarketDialer{connection: connection})
+	dependencies.roundTripper = preflightRoundTripper(t)
+
+	var output, errorOutput bytes.Buffer
+	exitCode := execute([]string{"preflight", "-runtime-bundle", "pinned.json", "-timeout", "1s"}, mapLookup(values), &output, &errorOutput, dependencies)
+	if exitCode != 1 {
+		t.Fatalf("execute() = %d", exitCode)
+	}
+	want := "AUTHENTICATION=PASS\nREST_AUTH=PASS\nWEBSOCKET_AUTH=FAIL\nOBSERVATIONS_RECEIVED=0\nSHUTDOWN=PASS\nERROR_TYPE=WebSocketProtocolError\nMESSAGE=Received a malformed market-data frame\nHTTP_STATUS=0\n"
+	if output.String() != want || errorOutput.Len() != 0 {
+		t.Fatalf("stdout=%q stderr=%q", output.String(), errorOutput.String())
 	}
 	assertNoCredentialMaterial(t, output.String()+errorOutput.String(), merge(values, map[string]string{accessTokenEnvironment: "generated-access-token"}), "")
 }

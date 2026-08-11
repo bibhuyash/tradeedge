@@ -214,6 +214,8 @@ type webSocketResult struct {
 	passed       bool
 	observations int
 	shutdown     bool
+	errorType    string
+	message      string
 }
 
 func parseStreamOptions(name string, args []string, lookup lookupEnv) (streamOptions, error) {
@@ -242,7 +244,7 @@ func verifyWebSocketSession(ctx context.Context, tokens []string, maxAge time.Du
 	}
 	stream, err := brokerzerodha.NewMarketStream(streamConfig, dialer, session, operatorClock(dependencies), nil)
 	if err != nil {
-		return webSocketResult{}
+		return webSocketResult{errorType: "WebSocketConfigurationError", message: "Invalid read-only WebSocket configuration"}
 	}
 	seen := make(map[string]struct{}, len(tokens))
 	expected := make(map[string]struct{}, len(tokens))
@@ -264,7 +266,31 @@ func verifyWebSocketSession(ctx context.Context, tokens []string, maxAge time.Du
 	stream.Shutdown()
 	shutdown := stream.Snapshot().State == brokerzerodha.StreamStopped
 	passed := len(seen) == len(expected) && shutdown && (err == nil || errors.Is(err, context.Canceled))
-	return webSocketResult{passed: passed, observations: len(seen), shutdown: shutdown}
+	errorType, message := classifyWebSocketFailure(err)
+	return webSocketResult{passed: passed, observations: len(seen), shutdown: shutdown, errorType: errorType, message: message}
+}
+
+func classifyWebSocketFailure(err error) (string, string) {
+	switch {
+	case err == nil:
+		return "WebSocketVerificationError", "Read-only WebSocket verification failed"
+	case errors.Is(err, context.DeadlineExceeded):
+		return "WebSocketTimeout", "Timed out waiting for fresh market observations"
+	case errors.Is(err, errWebSocketVerification):
+		return "ObservationValidationError", "Received an unexpected or stale market observation"
+	case errors.Is(err, brokerzerodha.ErrMarketStreamMalformed):
+		return "WebSocketProtocolError", "Received a malformed market-data frame"
+	case errors.Is(err, brokerzerodha.ErrMarketStreamStale):
+		return "WebSocketTimeout", "Market stream became stale"
+	case errors.Is(err, brokerzerodha.ErrMarketStreamOverflow):
+		return "WebSocketOverflow", "Market stream buffer capacity was exceeded"
+	case errors.Is(err, brokerzerodha.ErrUnexpectedOrderUpdate):
+		return "WebSocketSafetyError", "Unexpected order update received on read-only stream"
+	case errors.Is(err, brokerzerodha.ErrSessionExpired):
+		return "WebSocketAuthenticationError", "Authenticated market session expired"
+	default:
+		return "WebSocketUnavailable", "Unable to establish or maintain the read-only market stream"
+	}
 }
 
 func preflight(args []string, lookup lookupEnv, output io.Writer, dependencies commandDependencies) error {
@@ -320,7 +346,7 @@ func preflight(args []string, lookup lookupEnv, output io.Writer, dependencies c
 	client.Shutdown()
 	shutdown := streamResult.shutdown && session.Snapshot().State == brokerzerodha.SessionStopped
 	if !streamResult.passed {
-		return writePreflightFailure(output, "WEBSOCKET_AUTH", "WebSocketVerificationError", "Read-only WebSocket verification failed", 0, streamResult.observations, shutdown)
+		return writePreflightFailure(output, "WEBSOCKET_AUTH", streamResult.errorType, streamResult.message, 0, streamResult.observations, shutdown)
 	}
 	_, err = fmt.Fprintf(output, "AUTHENTICATION=PASS\nREST_AUTH=PASS\nWEBSOCKET_AUTH=PASS\nOBSERVATIONS_RECEIVED=%d\nSHUTDOWN=PASS\nACCESS_TOKEN_EXPIRES_AT=%s\n", streamResult.observations, snapshot.ExpiresAt.UTC().Format(time.RFC3339))
 	return err
