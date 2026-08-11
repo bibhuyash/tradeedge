@@ -37,6 +37,10 @@ observation-only signal instrument from an explicitly configured tradable
 PAPER instrument, and emits advisory proposals. It has no broker, risk,
 accounting, credential, HTTP-mutation, or Zerodha dependency.
 
+Phase 8 M2 adds provider-neutral derivatives selection. NIFTY spot owns signal
+evidence, a resolved future owns forward selection context, and the selected
+option quote owns PAPER fill and valuation. No Zerodha mutation port is added.
+
 ```mermaid
 flowchart TB
     Z["Zerodha APIs"] --> A["Provider adapters"]

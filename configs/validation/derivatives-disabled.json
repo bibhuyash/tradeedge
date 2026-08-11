@@ -1,0 +1,23 @@
+{
+  "schema_version": "phase8-m2-derivatives-config/v1",
+  "enabled": false,
+  "underlying": "NIFTY",
+  "provider": "zerodha",
+  "future_policy": "nearest-eligible-nifty-future/v1",
+  "expiry_policy": "nearest-option-expiry-min-one-day/v1",
+  "strike_policy": "forward-atm-nearest-strike-half-up/v1",
+  "universe_policy": "bounded-atm-neighborhood/v1",
+  "execution_price_policy": "option-touch-or-ltp-conservative/v1",
+  "minimum_expiry_days": 1,
+  "maximum_expiry_days": 14,
+  "strikes_each_side": 2,
+  "allowed_option_types": ["CALL"],
+  "maximum_quote_age_seconds": 5,
+  "maximum_spread_bps": 500,
+  "minimum_book_quantity": 1,
+  "allow_ltp_fallback": true,
+  "greeks": "UNAVAILABLE",
+  "iv": "UNAVAILABLE",
+  "mode_allowlist": ["SHADOW", "PAPER"],
+  "live_enabled": false
+}

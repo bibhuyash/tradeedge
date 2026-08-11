@@ -18,6 +18,9 @@ The paper adapter models explicit order states, duplicate prevention, configurab
 - Phase 0 accepts paper mode only.
 - Simulation limitations are visible in results.
 - Paper success is evidence, not live authorization.
+- Option BUY fills use only the selected option ask and SELL fills use its bid.
+  The LTP fallback is a labelled approximation. Spot, futures, EMA, and
+  theoretical prices are forbidden fill inputs.
 
 ## Failure Modes
 

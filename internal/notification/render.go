@@ -13,9 +13,11 @@ func Render(event Event) RenderedMessage {
 	var body string
 	switch event.Kind {
 	case KindShadowTrade:
-		body = fmt.Sprintf("Shadow trade (hypothetical): %s qty=%d", d.InstrumentID, d.Quantity)
+		body = fmt.Sprintf("TRADEEDGE SHADOW / PAPER VALIDATION — Shadow trade (hypothetical): %s qty=%d %s", d.InstrumentID, d.Quantity, d.Subject)
+	case KindProposalGenerated:
+		body = "TRADEEDGE SHADOW / PAPER VALIDATION — Reference candidate proposal: " + d.Subject
 	case KindPaperPartialFill, KindPaperFill:
-		body = fmt.Sprintf("Paper fill: %s qty=%d price=%d %s state=%s", d.InstrumentID, d.Quantity, d.PriceMinor, d.Currency, d.State)
+		body = fmt.Sprintf("PAPER ONLY fill: %s qty=%d price=%d %s state=%s %s", d.InstrumentID, d.Quantity, d.PriceMinor, d.Currency, d.State, d.Subject)
 	case KindRiskRejected:
 		body = "Risk rejected proposal: " + d.Reason
 	case KindExecutionUnknown:

@@ -74,6 +74,9 @@ Interfaces are small and owned by their consumers. Cross-module shared values ar
 - Execution operations expose bounded GET-only lifecycle, health, UNKNOWN,
   reconciliation, paper-broker, and audit views without broker or OMS mutation.
 - Notifications report but never determine trading truth.
+- Derivatives selection consumes canonical instruments, mappings, and quotes.
+  It owns future/expiry/strike policy but has no transport, broker mutation,
+  credentials, or strategy-parameter authority.
 
 ## Invariants
 

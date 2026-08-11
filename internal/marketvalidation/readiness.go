@@ -304,7 +304,7 @@ func validateWatchlistAndMaster(watchlistPath, masterPath, tradingDate string) (
 		ID            string        `json:"id"`
 		Requirements  []requirement `json:"requirements"`
 	}
-	if err := decodeStrictPath(watchlistPath, &watchlist); err != nil || watchlist.SchemaVersion != 1 || watchlist.ID == "" || len(watchlist.Requirements) == 0 || len(watchlist.Requirements) > 4 {
+	if err := decodeStrictPath(watchlistPath, &watchlist); err != nil || watchlist.SchemaVersion != 1 || watchlist.ID == "" || len(watchlist.Requirements) == 0 || len(watchlist.Requirements) > 12 {
 		return nil, ErrInvalidRecord
 	}
 	keys := map[string]bool{}
