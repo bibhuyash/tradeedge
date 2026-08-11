@@ -67,3 +67,22 @@ func TestSessionAuthenticationFailureAndRestartRestoration(t *testing.T) {
 		t.Fatalf("Authorization() after Shutdown error = %v", err)
 	}
 }
+
+func TestSessionAuthenticationPreservesSanitizedProviderFailure(t *testing.T) {
+	now := time.Date(2026, 8, 11, 3, 0, 0, 0, time.UTC)
+	providerFailure := AuthenticationFailure{ErrorType: "TokenException", Message: "Invalid checksum", HTTPStatus: 403}
+	manager := NewSessionManager(
+		CredentialMaterial{apiKey: "key", apiSecret: "secret", requestToken: "request"},
+		&fakeExchanger{err: providerFailure},
+		&fixedClock{now: now},
+		nil,
+	)
+	err := manager.Authenticate(context.Background())
+	var propagated AuthenticationFailure
+	if !errors.Is(err, ErrAuthentication) || !errors.As(err, &propagated) || propagated != providerFailure {
+		t.Fatalf("Authenticate() error = %#v", err)
+	}
+	if manager.Snapshot().State != SessionAuthFailed {
+		t.Fatalf("state = %s", manager.Snapshot().State)
+	}
+}

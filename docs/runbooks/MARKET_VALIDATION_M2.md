@@ -61,19 +61,55 @@ Open the printed URL manually. After successful login, copy the one-time
 `request_token` from the registered redirect URL into the approved secret
 injection mechanism as `TRADEEDGE_ZERODHA_REQUEST_TOKEN`. Also inject
 `TRADEEDGE_ZERODHA_API_SECRET`; never place either value in a command argument,
-tracked file, evidence, log, or ticket. The bounded exchange check is:
+tracked file, evidence, log, or ticket. The standalone bounded exchange
+diagnostic is:
 
 ```powershell
 go run ./cmd/tradeedge-zerodha-auth exchange-token -timeout 10s
 ```
 
 It prints only `AUTHENTICATED` and the calculated expiry. The access token is
-held in memory, cleared on shutdown, and never printed or persisted. Because a
-request token is one-time, obtain a fresh login/request token for each later
-command that must perform its own in-memory exchange. Alternatively, inject an
-already exchanged `TRADEEDGE_ZERODHA_ACCESS_TOKEN` and its mandatory RFC3339
-`TRADEEDGE_ZERODHA_ACCESS_TOKEN_EXPIRES_AT` through the approved secret
-mechanism.
+held in memory, cleared on shutdown, and never printed or persisted. Running
+`exchange-token` and then running `verify-rest` or `verify-websocket` cannot
+hand that session to the new process. Do not exchange the same one-time
+`request_token` again.
+
+For the complete Day-0 authentication and connectivity check, obtain one fresh
+`request_token` and run the single-process preflight. It validates the pinned
+bundle before consuming the token, exchanges exactly once, and retains the
+same in-memory session for the read-only profile and market-stream checks:
+
+```powershell
+go run ./cmd/tradeedge-zerodha-auth preflight -runtime-bundle '.cache\market-validation\config\runtime-bundle.json' -timeout 15s -max-age 5s
+```
+
+Require `AUTHENTICATION=PASS`, `REST_AUTH=PASS`, `WEBSOCKET_AUTH=PASS`,
+`OBSERVATIONS_RECEIVED=2`, and `SHUTDOWN=PASS`. The expiry is safe to record,
+but the access token is never output or persisted. The separate verification
+commands below remain diagnostics for an access token and expiry injected
+through the approved secret mechanism; they do not reuse an earlier CLI
+process's session.
+
+On WebSocket failure, preflight also prints bounded, credential-free stage
+counters for handshake, subscription, binary frames, heartbeats, packet decode,
+index packets, token matches, and fresh observations. `LAST_FAILURE_STAGE` is a
+safe enum and never includes the authenticated endpoint. Up to the first five
+frames include only sequence, WebSocket message type, byte length,
+classification, the bounded text-envelope type, and a numeric close code when
+applicable; payloads are never recorded. Documented Kite text envelopes are
+handled by type: `message` is counted and reading continues, `order` is counted
+but cannot mutate the OMS during this preflight, and `error` fails with a
+sanitized provider category. Zerodha's observed startup `instruments_meta`
+control envelope is shape-validated, counted, and ignored without recording its
+payload. The following observed `app_code` timestamp envelope is likewise
+shape-validated and counted. Neither startup control message causes a reconnect,
+so the same connection proceeds to binary heartbeats and quotes. Malformed or
+all other unknown text envelopes fail closed.
+Gorilla WebSocket handles ping/pong controls during its single read loop;
+TradeEdge does not treat them as Kite binary payloads. Zerodha may deliver an
+initial timestamp-less 28-byte index quote before the requested full mode takes
+effect. The parser accepts the documented 8-, 28-, 32-, 44-, and 184-byte
+formats, but only timestamped packets can satisfy the unchanged freshness gate.
 
 Verify only the fixed read-only profile endpoint:
 
@@ -81,10 +117,11 @@ Verify only the fixed read-only profile endpoint:
 go run ./cmd/tradeedge-zerodha-auth verify-rest -timeout 10s
 ```
 
-Require `REST_AUTH=PASS`. Then verify the checksum-pinned Day-0 NIFTY 50 and
-NIFTY BANK quote mappings. The utility rejects every other watchlist, waits for
-a fresh observation from both provider tokens, and disconnects cleanly within
-the bound:
+Require `REST_AUTH=PASS`. To diagnose market connectivity with an independently
+injected session, verify the checksum-pinned Day-0 NIFTY 50 and NIFTY BANK
+quote mappings. The utility rejects every other watchlist, waits for a fresh
+observation from both provider tokens, and disconnects cleanly within the
+bound:
 
 ```powershell
 go run ./cmd/tradeedge-zerodha-auth verify-websocket -runtime-bundle '.cache\market-validation\config\runtime-bundle.json' -timeout 15s -max-age 5s

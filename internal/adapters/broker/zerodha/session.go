@@ -2,6 +2,7 @@ package zerodha
 
 import (
 	"context"
+	"errors"
 	"sync"
 	"time"
 
@@ -97,6 +98,10 @@ func (manager *SessionManager) Authenticate(ctx context.Context) error {
 	if err != nil || result.accessToken == "" || !result.expiresAt.After(manager.clock.Now()) {
 		manager.state = SessionAuthFailed
 		manager.telemetry.Record(brokertelemetry.Event{Operation: brokertelemetry.OperationAuthentication, Outcome: brokertelemetry.OutcomeFailure, Duration: manager.clock.Now().Sub(started)})
+		var providerFailure AuthenticationFailure
+		if errors.As(err, &providerFailure) {
+			return errors.Join(ErrAuthentication, providerFailure)
+		}
 		return ErrAuthentication
 	}
 	manager.accessToken = result.accessToken
