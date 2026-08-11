@@ -30,7 +30,16 @@ var (
 	ErrMarketStreamStale     = errors.New("zerodha market stream is stale")
 	ErrMarketStreamOverflow  = errors.New("zerodha market stream buffer overflow")
 	ErrUnexpectedOrderUpdate = errors.New("unexpected zerodha order update on read-only stream")
-	ErrUnexpectedTextMessage = errors.New("unexpected zerodha text message")
+	ErrProviderTextMessage   = errors.New("zerodha websocket provider error")
+	ErrMalformedTextMessage  = errors.New("malformed zerodha text message")
+	ErrUnknownTextMessage    = errors.New("unknown zerodha text message type")
+)
+
+type OrderTextPolicy string
+
+const (
+	OrderTextFailClosed  OrderTextPolicy = "FAIL_CLOSED"
+	OrderTextObserveOnly OrderTextPolicy = "OBSERVE_ONLY"
 )
 
 type MarketStreamConfig struct {
@@ -41,15 +50,16 @@ type MarketStreamConfig struct {
 	InitialBackoff   time.Duration
 	MaximumBackoff   time.Duration
 	LivenessTimeout  time.Duration
+	OrderTextPolicy  OrderTextPolicy
 }
 
 func DefaultMarketStreamConfig() MarketStreamConfig {
-	return MarketStreamConfig{URL: defaultWebSocketURL, MaxSubscriptions: 250, BufferCapacity: 1024, MaxReconnects: 5, InitialBackoff: 250 * time.Millisecond, MaximumBackoff: 5 * time.Second, LivenessTimeout: 10 * time.Second}
+	return MarketStreamConfig{URL: defaultWebSocketURL, MaxSubscriptions: 250, BufferCapacity: 1024, MaxReconnects: 5, InitialBackoff: 250 * time.Millisecond, MaximumBackoff: 5 * time.Second, LivenessTimeout: 10 * time.Second, OrderTextPolicy: OrderTextFailClosed}
 }
 
 func (c MarketStreamConfig) Validate() error {
 	parsed, err := url.Parse(c.URL)
-	if err != nil || parsed.Scheme != "wss" || parsed.Host == "" || parsed.User != nil || parsed.RawQuery != "" || parsed.Fragment != "" || c.MaxSubscriptions < 1 || c.MaxSubscriptions > 3000 || c.BufferCapacity < 1 || c.BufferCapacity > 65536 || c.MaxReconnects < 0 || c.MaxReconnects > 20 || c.InitialBackoff <= 0 || c.MaximumBackoff < c.InitialBackoff || c.MaximumBackoff > time.Minute || c.LivenessTimeout <= 0 || c.LivenessTimeout > time.Minute {
+	if err != nil || parsed.Scheme != "wss" || parsed.Host == "" || parsed.User != nil || parsed.RawQuery != "" || parsed.Fragment != "" || c.MaxSubscriptions < 1 || c.MaxSubscriptions > 3000 || c.BufferCapacity < 1 || c.BufferCapacity > 65536 || c.MaxReconnects < 0 || c.MaxReconnects > 20 || c.InitialBackoff <= 0 || c.MaximumBackoff < c.InitialBackoff || c.MaximumBackoff > time.Minute || c.LivenessTimeout <= 0 || c.LivenessTimeout > time.Minute || (c.OrderTextPolicy != OrderTextFailClosed && c.OrderTextPolicy != OrderTextObserveOnly) {
 		return ErrInvalidConfiguration
 	}
 	return nil
@@ -69,6 +79,12 @@ type MarketStreamSnapshot struct {
 	PacketsDecoded        uint64            `json:"packets_decoded"`
 	PacketsRejected       uint64            `json:"packets_rejected"`
 	TokenMatches          uint64            `json:"token_matches"`
+	TextMessages          uint64            `json:"text_messages"`
+	BrokerMessages        uint64            `json:"broker_messages"`
+	OrderUpdates          uint64            `json:"order_updates"`
+	ProviderErrors        uint64            `json:"provider_errors"`
+	MalformedTextMessages uint64            `json:"malformed_text_messages"`
+	UnknownTextMessages   uint64            `json:"unknown_text_messages"`
 	Observations          uint64            `json:"observations"`
 	UnexpectedOrderFrames uint64            `json:"unexpected_order_frames"`
 	LastFrameAt           time.Time         `json:"last_frame_at,omitempty"`
@@ -91,18 +107,32 @@ const (
 type FrameClassification string
 
 const (
-	FrameHeartbeat  FrameClassification = "HEARTBEAT"
-	FrameMarketData FrameClassification = "MARKET_DATA"
-	FrameControl    FrameClassification = "CONTROL"
-	FrameUnknown    FrameClassification = "UNKNOWN"
+	FrameHeartbeat     FrameClassification = "HEARTBEAT"
+	FrameMarketData    FrameClassification = "MARKET_DATA"
+	FrameControl       FrameClassification = "CONTROL"
+	FrameUnknown       FrameClassification = "UNKNOWN"
+	FrameBrokerMessage FrameClassification = "BROKER_MESSAGE"
+	FrameOrderUpdate   FrameClassification = "ORDER_UPDATE"
+	FrameProviderError FrameClassification = "PROVIDER_ERROR"
+	FrameMalformedText FrameClassification = "MALFORMED_TEXT"
+)
+
+type TextMessageType string
+
+const (
+	TextMessageMessage TextMessageType = "message"
+	TextMessageOrder   TextMessageType = "order"
+	TextMessageError   TextMessageType = "error"
+	TextMessageUnknown TextMessageType = "unknown"
 )
 
 type FrameDiagnostic struct {
-	Sequence       uint64              `json:"sequence"`
-	MessageType    MarketMessageType   `json:"message_type"`
-	Length         int                 `json:"length"`
-	Classification FrameClassification `json:"classification"`
-	CloseCode      int                 `json:"close_code,omitempty"`
+	Sequence        uint64              `json:"sequence"`
+	MessageType     MarketMessageType   `json:"message_type"`
+	Length          int                 `json:"length"`
+	Classification  FrameClassification `json:"classification"`
+	CloseCode       int                 `json:"close_code,omitempty"`
+	TextMessageType TextMessageType     `json:"text_message_type,omitempty"`
 }
 
 type MarketFrame struct {
@@ -252,6 +282,7 @@ func (s *MarketStream) Stream(ctx context.Context, tokens []string, sink marketd
 	}()
 
 	backoff := s.config.InitialBackoff
+	matchedTokens := make(map[string]struct{}, len(expectedTokens))
 	for attempt := 0; attempt <= s.config.MaxReconnects; attempt++ {
 		endpoint, endpointErr := s.endpoint()
 		if endpointErr != nil {
@@ -279,7 +310,7 @@ func (s *MarketStream) Stream(ctx context.Context, tokens []string, sink marketd
 		}
 		if connectErr == nil {
 			s.setState(StreamConnected, attempt)
-			connectErr = s.consume(runCtx, connection, expectedTokens, sink)
+			connectErr = s.consume(runCtx, connection, expectedTokens, matchedTokens, sink)
 		}
 		if connection != nil {
 			_ = connection.Close()
@@ -329,7 +360,7 @@ func subscribe(ctx context.Context, connection MarketConnection, tokens []uint32
 	return connection.WriteJSON(ctx, map[string]any{"a": "mode", "v": []any{"full", tokens}})
 }
 
-func (s *MarketStream) consume(ctx context.Context, connection MarketConnection, expectedTokens map[string]struct{}, sink marketdata.ObservationSink) error {
+func (s *MarketStream) consume(ctx context.Context, connection MarketConnection, expectedTokens, matchedTokens map[string]struct{}, sink marketdata.ObservationSink) error {
 	frames := make(chan MarketFrame, s.config.BufferCapacity)
 	errorsCh := make(chan error, 1)
 	readCtx, cancel := context.WithCancel(ctx)
@@ -361,7 +392,12 @@ func (s *MarketStream) consume(ctx context.Context, connection MarketConnection,
 		case frame := <-frames:
 			now := s.clock.Now().UTC()
 			messageType := marketFrameType(frame)
-			s.recordFrame(frame, messageType, now)
+			textType := TextMessageType("")
+			var textErr error
+			if messageType == MarketMessageText {
+				textType, textErr = parseTextMessage(frame.Data)
+			}
+			s.recordFrame(frame, messageType, textType, textErr, now)
 			if messageType == MarketMessageClose {
 				return ErrUnavailable
 			}
@@ -375,7 +411,14 @@ func (s *MarketStream) consume(ctx context.Context, connection MarketConnection,
 				continue
 			}
 			if messageType != MarketMessageBinary {
-				if err := s.observeText(frame.Data); err != nil {
+				if messageType != MarketMessageText {
+					return ErrUnknownTextMessage
+				}
+				if textErr != nil {
+					s.recordTextFailure(textErr)
+					return textErr
+				}
+				if err := s.handleTextMessage(textType); err != nil {
 					return err
 				}
 				continue
@@ -392,9 +435,12 @@ func (s *MarketStream) consume(ctx context.Context, connection MarketConnection,
 			}
 			for _, observation := range observations {
 				if _, matched := expectedTokens[observation.ProviderToken]; matched {
-					s.mu.Lock()
-					s.snapshot.TokenMatches++
-					s.mu.Unlock()
+					if _, alreadyMatched := matchedTokens[observation.ProviderToken]; !alreadyMatched {
+						matchedTokens[observation.ProviderToken] = struct{}{}
+						s.mu.Lock()
+						s.snapshot.TokenMatches++
+						s.mu.Unlock()
+					}
 				}
 				if observation.ExchangeTime.IsZero() {
 					continue
@@ -425,23 +471,38 @@ func marketFrameType(frame MarketFrame) MarketMessageType {
 	return MarketMessageText
 }
 
-func (s *MarketStream) recordFrame(frame MarketFrame, messageType MarketMessageType, at time.Time) {
+func (s *MarketStream) recordFrame(frame MarketFrame, messageType MarketMessageType, textType TextMessageType, textErr error, at time.Time) {
 	classification := FrameUnknown
 	if messageType == MarketMessageBinary {
 		classification = FrameMarketData
 		if len(frame.Data) == 1 {
 			classification = FrameHeartbeat
 		}
-	} else if messageType == MarketMessagePing || messageType == MarketMessagePong || messageType == MarketMessageClose || recognizedTextFrame(frame.Data) {
+	} else if messageType == MarketMessagePing || messageType == MarketMessagePong || messageType == MarketMessageClose {
 		classification = FrameControl
+	} else if messageType == MarketMessageText {
+		switch {
+		case errors.Is(textErr, ErrMalformedTextMessage):
+			classification = FrameMalformedText
+		case textType == TextMessageMessage:
+			classification = FrameBrokerMessage
+		case textType == TextMessageOrder:
+			classification = FrameOrderUpdate
+		case textType == TextMessageError:
+			classification = FrameProviderError
+		default:
+			classification = FrameUnknown
+		}
 	}
 	s.mu.Lock()
 	s.snapshot.Frames++
 	s.snapshot.LastFrameAt = at
 	if messageType == MarketMessageBinary {
 		s.snapshot.BinaryFrames++
+	} else if messageType == MarketMessageText {
+		s.snapshot.TextMessages++
 	}
-	s.appendFrameDiagnosticLocked(FrameDiagnostic{Sequence: s.snapshot.Frames, MessageType: messageType, Length: len(frame.Data), Classification: classification, CloseCode: frame.CloseCode})
+	s.appendFrameDiagnosticLocked(FrameDiagnostic{Sequence: s.snapshot.Frames, MessageType: messageType, Length: len(frame.Data), Classification: classification, CloseCode: frame.CloseCode, TextMessageType: textType})
 	s.mu.Unlock()
 }
 
@@ -462,14 +523,24 @@ func (s *MarketStream) appendFrameDiagnosticLocked(value FrameDiagnostic) {
 	}
 }
 
-func recognizedTextFrame(raw []byte) bool {
+func parseTextMessage(raw []byte) (TextMessageType, error) {
 	var envelope struct {
-		Type string `json:"type"`
+		Type string          `json:"type"`
+		Data json.RawMessage `json:"data"`
 	}
-	if len(raw) > 64<<10 || json.Unmarshal(raw, &envelope) != nil {
-		return false
+	if len(raw) == 0 || len(raw) > 64<<10 || json.Unmarshal(raw, &envelope) != nil || len(envelope.Data) == 0 {
+		return TextMessageUnknown, ErrMalformedTextMessage
 	}
-	return envelope.Type == "message" || envelope.Type == "error" || envelope.Type == "order"
+	switch envelope.Type {
+	case string(TextMessageMessage):
+		return TextMessageMessage, nil
+	case string(TextMessageOrder):
+		return TextMessageOrder, nil
+	case string(TextMessageError):
+		return TextMessageError, nil
+	default:
+		return TextMessageUnknown, ErrUnknownTextMessage
+	}
 }
 
 func readWithLiveness(ctx context.Context, connection MarketConnection, timeout time.Duration) (MarketFrame, error) {
@@ -482,26 +553,37 @@ func readWithLiveness(ctx context.Context, connection MarketConnection, timeout 
 	return frame, err
 }
 
-func (s *MarketStream) observeText(raw []byte) error {
-	var envelope struct {
-		Type string `json:"type"`
-	}
-	if len(raw) > 64<<10 || json.Unmarshal(raw, &envelope) != nil {
-		return ErrUnexpectedTextMessage
-	}
-	if envelope.Type == "order" {
-		s.mu.Lock()
+func (s *MarketStream) handleTextMessage(messageType TextMessageType) error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	switch messageType {
+	case TextMessageMessage:
+		s.snapshot.BrokerMessages++
+		return nil
+	case TextMessageOrder:
+		s.snapshot.OrderUpdates++
 		s.snapshot.UnexpectedOrderFrames++
-		s.mu.Unlock()
+		if s.config.OrderTextPolicy == OrderTextObserveOnly {
+			return nil
+		}
 		return ErrUnexpectedOrderUpdate
+	case TextMessageError:
+		s.snapshot.ProviderErrors++
+		return ErrProviderTextMessage
+	default:
+		s.snapshot.UnknownTextMessages++
+		return ErrUnknownTextMessage
 	}
-	if envelope.Type == "error" {
-		return ErrUnavailable
+}
+
+func (s *MarketStream) recordTextFailure(err error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if errors.Is(err, ErrMalformedTextMessage) {
+		s.snapshot.MalformedTextMessages++
+		return
 	}
-	if envelope.Type != "message" {
-		return ErrUnexpectedTextMessage
-	}
-	return nil
+	s.snapshot.UnknownTextMessages++
 }
 
 type marketFrameDecodeStats struct {
@@ -679,8 +761,12 @@ func boundedMarketError(err error) string {
 		return "BUFFER_OVERFLOW"
 	case errors.Is(err, ErrUnexpectedOrderUpdate):
 		return "UNEXPECTED_ORDER_UPDATE"
-	case errors.Is(err, ErrUnexpectedTextMessage):
-		return "UNEXPECTED_TEXT_MESSAGE"
+	case errors.Is(err, ErrProviderTextMessage):
+		return "PROVIDER_ERROR"
+	case errors.Is(err, ErrMalformedTextMessage):
+		return "MALFORMED_TEXT"
+	case errors.Is(err, ErrUnknownTextMessage):
+		return "UNKNOWN_TEXT_TYPE"
 	case errors.Is(err, ErrSessionExpired):
 		return "SESSION_EXPIRED"
 	default:

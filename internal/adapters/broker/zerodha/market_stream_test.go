@@ -246,8 +246,12 @@ func TestMarketStreamReconnectsAndResubscribes(t *testing.T) {
 }
 
 func TestMarketStreamBlocksUnexpectedOrderFrame(t *testing.T) {
-	stream := &MarketStream{}
-	if err := stream.observeText([]byte(`{"type":"order","data":{}}`)); !errors.Is(err, ErrUnexpectedOrderUpdate) {
+	stream := &MarketStream{config: MarketStreamConfig{OrderTextPolicy: OrderTextFailClosed}}
+	messageType, err := parseTextMessage([]byte(`{"type":"order","data":{}}`))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err = stream.handleTextMessage(messageType); !errors.Is(err, ErrUnexpectedOrderUpdate) {
 		t.Fatalf("error = %v", err)
 	}
 	if stream.Snapshot().UnexpectedOrderFrames != 1 {
@@ -256,9 +260,31 @@ func TestMarketStreamBlocksUnexpectedOrderFrame(t *testing.T) {
 }
 
 func TestMarketStreamRejectsUnknownTextWithoutCallingBinaryDecoder(t *testing.T) {
-	stream := &MarketStream{}
-	if err := stream.observeText([]byte(`{"unexpected":true}`)); !errors.Is(err, ErrUnexpectedTextMessage) {
+	messageType, err := parseTextMessage([]byte(`{"type":"future","data":{}}`))
+	if messageType != TextMessageUnknown || !errors.Is(err, ErrUnknownTextMessage) {
 		t.Fatalf("error=%v", err)
+	}
+}
+
+func TestTextEnvelopeClassification(t *testing.T) {
+	for name, testCase := range map[string]struct {
+		raw  string
+		kind TextMessageType
+		err  error
+	}{
+		"message":   {raw: `{"type":"message","data":"notice"}`, kind: TextMessageMessage},
+		"order":     {raw: `{"type":"order","data":{"order_id":"not-recorded"}}`, kind: TextMessageOrder},
+		"error":     {raw: `{"type":"error","data":"provider detail"}`, kind: TextMessageError},
+		"malformed": {raw: `{`, kind: TextMessageUnknown, err: ErrMalformedTextMessage},
+		"empty":     {raw: ``, kind: TextMessageUnknown, err: ErrMalformedTextMessage},
+		"unknown":   {raw: `{"type":"future","data":{}}`, kind: TextMessageUnknown, err: ErrUnknownTextMessage},
+	} {
+		t.Run(name, func(t *testing.T) {
+			kind, err := parseTextMessage([]byte(testCase.raw))
+			if kind != testCase.kind || !errors.Is(err, testCase.err) {
+				t.Fatalf("kind=%s err=%v", kind, err)
+			}
+		})
 	}
 }
 

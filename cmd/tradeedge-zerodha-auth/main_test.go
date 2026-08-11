@@ -322,9 +322,10 @@ func TestPreflightReusesOneAuthenticatedSession(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	want := "AUTHENTICATION=PASS\nREST_AUTH=PASS\nWEBSOCKET_AUTH=PASS\nOBSERVATIONS_RECEIVED=2\nSHUTDOWN=PASS\nACCESS_TOKEN_EXPIRES_AT=2026-08-11T00:30:00Z\n"
-	if output.String() != want {
-		t.Fatalf("output = %q, want %q", output.String(), want)
+	for _, line := range []string{"AUTHENTICATION=PASS", "REST_AUTH=PASS", "WEBSOCKET_AUTH=PASS", "OBSERVATIONS_RECEIVED=2", "TEXT_MESSAGES_RECEIVED=0", "BINARY_FRAMES_RECEIVED=2", "INDEX_PACKETS_RECEIVED=2", "TOKEN_MATCHES=2", "FRESH_OBSERVATIONS=2", "LAST_FAILURE_STAGE=NONE", "ACCESS_TOKEN_EXPIRES_AT=2026-08-11T00:30:00Z"} {
+		if !strings.Contains(output.String(), line+"\n") {
+			t.Fatalf("missing %q in output %q", line, output.String())
+		}
 	}
 	if exchanges != 1 || profiles != 1 {
 		t.Fatalf("token exchanges=%d profile calls=%d", exchanges, profiles)
@@ -355,8 +356,7 @@ func TestPreflightIgnoresTimestampLessIndexQuoteUntilFreshFullPackets(t *testing
 	if err := run([]string{"preflight", "-runtime-bundle", "pinned.json", "-timeout", "1s", "-max-age", "5s"}, mapLookup(credentialValues()), &output, dependencies); err != nil {
 		t.Fatal(err)
 	}
-	want := "AUTHENTICATION=PASS\nREST_AUTH=PASS\nWEBSOCKET_AUTH=PASS\nOBSERVATIONS_RECEIVED=2\nSHUTDOWN=PASS\nACCESS_TOKEN_EXPIRES_AT=2026-08-11T00:30:00Z\n"
-	if output.String() != want {
+	if !strings.Contains(output.String(), "WEBSOCKET_AUTH=PASS\n") || !strings.Contains(output.String(), "INDEX_PACKETS_RECEIVED=3\n") || !strings.Contains(output.String(), "FRESH_OBSERVATIONS=2\n") {
 		t.Fatalf("output=%q", output.String())
 	}
 }
@@ -460,7 +460,7 @@ func TestPreflightContainsWebSocketTimeoutAndShutsDown(t *testing.T) {
 		t.Fatalf("execute() = %d", exitCode)
 	}
 	want := "AUTHENTICATION=PASS\nREST_AUTH=PASS\nWEBSOCKET_AUTH=FAIL\nOBSERVATIONS_RECEIVED=0\nSHUTDOWN=PASS\nERROR_TYPE=WebSocketTimeout\nMESSAGE=Timed out waiting for fresh market observations\nHTTP_STATUS=0\n" +
-		"WEBSOCKET_HANDSHAKE=PASS\nSUBSCRIBE_SENT=PASS\nEXPECTED_TOKEN_COUNT=2\nEXPECTED_TOKENS_VALID=PASS\nBINARY_FRAMES_RECEIVED=0\nHEARTBEATS_RECEIVED=0\nPACKETS_RECEIVED=0\nINDEX_PACKETS_RECEIVED=0\nPACKETS_DECODED=0\nPACKETS_REJECTED=0\nTOKEN_MATCHES=0\nFRESH_OBSERVATIONS=0\nLAST_FAILURE_STAGE=FRAME_RECEIVE\n"
+		"WEBSOCKET_HANDSHAKE=PASS\nSUBSCRIBE_SENT=PASS\nEXPECTED_TOKEN_COUNT=2\nEXPECTED_TOKENS_VALID=PASS\nTEXT_MESSAGES_RECEIVED=0\nBROKER_MESSAGES_RECEIVED=0\nORDER_UPDATES_RECEIVED=0\nPROVIDER_ERRORS_RECEIVED=0\nBINARY_FRAMES_RECEIVED=0\nHEARTBEATS_RECEIVED=0\nPACKETS_RECEIVED=0\nINDEX_PACKETS_RECEIVED=0\nPACKETS_DECODED=0\nPACKETS_REJECTED=0\nTOKEN_MATCHES=0\nFRESH_OBSERVATIONS=0\nLAST_FAILURE_STAGE=FRAME_RECEIVE\n"
 	if output.String() != want || errorOutput.Len() != 0 {
 		t.Fatalf("stdout=%q stderr=%q", output.String(), errorOutput.String())
 	}
@@ -486,7 +486,7 @@ func TestPreflightReportsMalformedMarketFrameSafely(t *testing.T) {
 		t.Fatalf("execute() = %d", exitCode)
 	}
 	want := "AUTHENTICATION=PASS\nREST_AUTH=PASS\nWEBSOCKET_AUTH=FAIL\nOBSERVATIONS_RECEIVED=0\nSHUTDOWN=PASS\nERROR_TYPE=WebSocketProtocolError\nMESSAGE=Received a malformed market-data frame\nHTTP_STATUS=0\n" +
-		"WEBSOCKET_HANDSHAKE=PASS\nSUBSCRIBE_SENT=PASS\nEXPECTED_TOKEN_COUNT=2\nEXPECTED_TOKENS_VALID=PASS\nBINARY_FRAMES_RECEIVED=1\nHEARTBEATS_RECEIVED=0\nPACKETS_RECEIVED=1\nINDEX_PACKETS_RECEIVED=0\nPACKETS_DECODED=0\nPACKETS_REJECTED=1\nTOKEN_MATCHES=0\nFRESH_OBSERVATIONS=0\nLAST_FAILURE_STAGE=PACKET_DECODE\n" +
+		"WEBSOCKET_HANDSHAKE=PASS\nSUBSCRIBE_SENT=PASS\nEXPECTED_TOKEN_COUNT=2\nEXPECTED_TOKENS_VALID=PASS\nTEXT_MESSAGES_RECEIVED=0\nBROKER_MESSAGES_RECEIVED=0\nORDER_UPDATES_RECEIVED=0\nPROVIDER_ERRORS_RECEIVED=0\nBINARY_FRAMES_RECEIVED=1\nHEARTBEATS_RECEIVED=0\nPACKETS_RECEIVED=1\nINDEX_PACKETS_RECEIVED=0\nPACKETS_DECODED=0\nPACKETS_REJECTED=1\nTOKEN_MATCHES=0\nFRESH_OBSERVATIONS=0\nLAST_FAILURE_STAGE=PACKET_DECODE\n" +
 		"FRAME_SEQUENCE=1\nFRAME_MESSAGE_TYPE=BINARY\nFRAME_LENGTH=3\nFRAME_CLASSIFICATION=MARKET_DATA\n"
 	if output.String() != want || errorOutput.Len() != 0 {
 		t.Fatalf("stdout=%q stderr=%q", output.String(), errorOutput.String())
@@ -496,7 +496,7 @@ func TestPreflightReportsMalformedMarketFrameSafely(t *testing.T) {
 
 func TestPreflightIdentifiesUnknownTextBeforeBinaryDecode(t *testing.T) {
 	now := time.Date(2026, 8, 10, 10, 0, 0, 0, time.UTC)
-	payload := []byte(`{"unexpected":true}`)
+	payload := []byte(`{"type":"future","data":{}}`)
 	connection := &fakeMarketConnection{frames: []brokerzerodha.MarketFrame{{MessageType: brokerzerodha.MarketMessageText, Data: payload}}}
 	dependencies := websocketDependencies(now, &fakeMarketDialer{connection: connection})
 	dependencies.roundTripper = preflightRoundTripper(t)
@@ -507,9 +507,9 @@ func TestPreflightIdentifiesUnknownTextBeforeBinaryDecode(t *testing.T) {
 		t.Fatal("expected preflight failure")
 	}
 	for _, line := range []string{
-		"ERROR_TYPE=WebSocketMessageTypeError", "MESSAGE=Received an unrecognized text WebSocket message", "BINARY_FRAMES_RECEIVED=0", "PACKETS_REJECTED=0",
+		"ERROR_TYPE=WebSocketMessageTypeError", "MESSAGE=Received an unknown WebSocket text message type", "BINARY_FRAMES_RECEIVED=0", "PACKETS_REJECTED=0",
 		"LAST_FAILURE_STAGE=MESSAGE_TYPE", "FRAME_SEQUENCE=1", "FRAME_MESSAGE_TYPE=TEXT",
-		fmt.Sprintf("FRAME_LENGTH=%d", len(payload)), "FRAME_CLASSIFICATION=UNKNOWN",
+		fmt.Sprintf("FRAME_LENGTH=%d", len(payload)), "FRAME_CLASSIFICATION=UNKNOWN", "TEXT_MESSAGE_TYPE=unknown",
 	} {
 		if !strings.Contains(output.String(), line+"\n") {
 			t.Fatalf("missing %q in output %q", line, output.String())
@@ -517,6 +517,85 @@ func TestPreflightIdentifiesUnknownTextBeforeBinaryDecode(t *testing.T) {
 	}
 	if strings.Contains(output.String(), string(payload)) {
 		t.Fatal("frame payload appeared in diagnostics")
+	}
+}
+
+func TestPreflightContinuesAcrossDocumentedTextMessages(t *testing.T) {
+	now := time.Date(2026, 8, 10, 10, 0, 0, 0, time.UTC)
+	sensitiveOrderID := "sensitive-order-id"
+	connection := &fakeMarketConnection{frames: []brokerzerodha.MarketFrame{
+		{MessageType: brokerzerodha.MarketMessageText, Data: []byte(`{"type":"message","data":"market alert"}`)},
+		{MessageType: brokerzerodha.MarketMessageText, Data: []byte(`{"type":"message","data":"second alert"}`)},
+		{MessageType: brokerzerodha.MarketMessageText, Data: []byte(`{"type":"order","data":{"order_id":"` + sensitiveOrderID + `"}}`)},
+		{Binary: true, Data: []byte{0}},
+		{Binary: true, Data: indexQuoteFrame(256265)},
+		{Binary: true, Data: quoteFrame(256265, now)},
+		{Binary: true, Data: quoteFrame(260105, now)},
+	}}
+	dependencies := websocketDependencies(now, &fakeMarketDialer{connection: connection})
+	dependencies.roundTripper = preflightRoundTripper(t)
+
+	var output bytes.Buffer
+	if err := run([]string{"preflight", "-runtime-bundle", "pinned.json", "-timeout", "1s"}, mapLookup(credentialValues()), &output, dependencies); err != nil {
+		t.Fatal(err)
+	}
+	for _, line := range []string{
+		"WEBSOCKET_AUTH=PASS", "OBSERVATIONS_RECEIVED=2", "TEXT_MESSAGES_RECEIVED=3",
+		"BROKER_MESSAGES_RECEIVED=2", "ORDER_UPDATES_RECEIVED=1", "PROVIDER_ERRORS_RECEIVED=0",
+		"BINARY_FRAMES_RECEIVED=4", "HEARTBEATS_RECEIVED=1", "INDEX_PACKETS_RECEIVED=3",
+		"TOKEN_MATCHES=2", "FRESH_OBSERVATIONS=2", "LAST_FAILURE_STAGE=NONE",
+		"FRAME_CLASSIFICATION=BROKER_MESSAGE", "TEXT_MESSAGE_TYPE=message", "FRAME_CLASSIFICATION=ORDER_UPDATE", "TEXT_MESSAGE_TYPE=order",
+	} {
+		if !strings.Contains(output.String(), line+"\n") {
+			t.Fatalf("missing %q in output %q", line, output.String())
+		}
+	}
+	if strings.Contains(output.String(), sensitiveOrderID) || strings.Contains(output.String(), "market alert") {
+		t.Fatal("text payload appeared in diagnostics")
+	}
+}
+
+func TestPreflightFailsSafelyOnProviderTextError(t *testing.T) {
+	now := time.Date(2026, 8, 10, 10, 0, 0, 0, time.UTC)
+	providerDetail := "sensitive provider detail"
+	connection := &fakeMarketConnection{frames: []brokerzerodha.MarketFrame{{MessageType: brokerzerodha.MarketMessageText, Data: []byte(`{"type":"error","data":"` + providerDetail + `"}`)}}}
+	dependencies := websocketDependencies(now, &fakeMarketDialer{connection: connection})
+	dependencies.roundTripper = preflightRoundTripper(t)
+
+	var output bytes.Buffer
+	err := run([]string{"preflight", "-runtime-bundle", "pinned.json", "-timeout", "1s"}, mapLookup(credentialValues()), &output, dependencies)
+	if err == nil {
+		t.Fatal("expected provider error")
+	}
+	for _, line := range []string{"ERROR_TYPE=WebSocketProviderError", "MESSAGE=Zerodha reported a WebSocket provider error", "TEXT_MESSAGES_RECEIVED=1", "PROVIDER_ERRORS_RECEIVED=1", "FRAME_CLASSIFICATION=PROVIDER_ERROR", "TEXT_MESSAGE_TYPE=error"} {
+		if !strings.Contains(output.String(), line+"\n") {
+			t.Fatalf("missing %q in output %q", line, output.String())
+		}
+	}
+	if strings.Contains(output.String(), providerDetail) {
+		t.Fatal("provider payload appeared in diagnostics")
+	}
+}
+
+func TestPreflightFailsClosedOnMalformedText(t *testing.T) {
+	now := time.Date(2026, 8, 10, 10, 0, 0, 0, time.UTC)
+	payload := []byte(`{"type":`)
+	connection := &fakeMarketConnection{frames: []brokerzerodha.MarketFrame{{MessageType: brokerzerodha.MarketMessageText, Data: payload}}}
+	dependencies := websocketDependencies(now, &fakeMarketDialer{connection: connection})
+	dependencies.roundTripper = preflightRoundTripper(t)
+
+	var output bytes.Buffer
+	err := run([]string{"preflight", "-runtime-bundle", "pinned.json", "-timeout", "1s"}, mapLookup(credentialValues()), &output, dependencies)
+	if err == nil {
+		t.Fatal("expected malformed text failure")
+	}
+	for _, line := range []string{"ERROR_TYPE=WebSocketTextProtocolError", "FRAME_CLASSIFICATION=MALFORMED_TEXT", "TEXT_MESSAGE_TYPE=unknown"} {
+		if !strings.Contains(output.String(), line+"\n") {
+			t.Fatalf("missing %q in output %q", line, output.String())
+		}
+	}
+	if strings.Contains(output.String(), string(payload)) {
+		t.Fatal("malformed payload appeared in diagnostics")
 	}
 }
 

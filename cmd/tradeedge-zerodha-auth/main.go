@@ -229,6 +229,10 @@ type webSocketResult struct {
 	packetsRejected     uint64
 	tokenMatches        uint64
 	freshObservations   uint64
+	textMessages        uint64
+	brokerMessages      uint64
+	orderUpdates        uint64
+	providerErrors      uint64
 	lastFailureStage    string
 	frameDiagnostics    []brokerzerodha.FrameDiagnostic
 }
@@ -262,6 +266,7 @@ func verifyWebSocketSession(ctx context.Context, tokens []string, maxAge time.Du
 	if streamConfig.URL == "" {
 		streamConfig = brokerzerodha.DefaultMarketStreamConfig()
 	}
+	streamConfig.OrderTextPolicy = brokerzerodha.OrderTextObserveOnly
 	stream, err := brokerzerodha.NewMarketStream(streamConfig, dialer, session, operatorClock(dependencies), nil)
 	if err != nil {
 		result.errorType, result.message, result.lastFailureStage = "WebSocketConfigurationError", "Invalid read-only WebSocket configuration", "HANDSHAKE"
@@ -298,6 +303,10 @@ func verifyWebSocketSession(ctx context.Context, tokens []string, maxAge time.Du
 	result.packetsDecoded = snapshot.PacketsDecoded
 	result.packetsRejected = snapshot.PacketsRejected
 	result.tokenMatches = snapshot.TokenMatches
+	result.textMessages = snapshot.TextMessages
+	result.brokerMessages = snapshot.BrokerMessages
+	result.orderUpdates = snapshot.OrderUpdates
+	result.providerErrors = snapshot.ProviderErrors
 	result.frameDiagnostics = append([]brokerzerodha.FrameDiagnostic(nil), snapshot.FrameDiagnostics...)
 	result.freshObservations = uint64(len(seen))
 	result.observations = len(seen)
@@ -366,8 +375,12 @@ func classifyWebSocketFailure(err error) (string, string) {
 		return "WebSocketTimeout", "Timed out waiting for fresh market observations"
 	case errors.Is(err, errWebSocketVerification):
 		return "ObservationValidationError", "Received an unexpected or stale market observation"
-	case errors.Is(err, brokerzerodha.ErrUnexpectedTextMessage):
-		return "WebSocketMessageTypeError", "Received an unrecognized text WebSocket message"
+	case errors.Is(err, brokerzerodha.ErrProviderTextMessage):
+		return "WebSocketProviderError", "Zerodha reported a WebSocket provider error"
+	case errors.Is(err, brokerzerodha.ErrMalformedTextMessage):
+		return "WebSocketTextProtocolError", "Received malformed WebSocket text JSON"
+	case errors.Is(err, brokerzerodha.ErrUnknownTextMessage):
+		return "WebSocketMessageTypeError", "Received an unknown WebSocket text message type"
 	case errors.Is(err, brokerzerodha.ErrMarketStreamMalformed):
 		return "WebSocketProtocolError", "Received a malformed market-data frame"
 	case errors.Is(err, brokerzerodha.ErrMarketStreamStale):
@@ -440,7 +453,11 @@ func preflight(args []string, lookup lookupEnv, output io.Writer, dependencies c
 		writeWebSocketDiagnostics(output, streamResult)
 		return failure
 	}
-	_, err = fmt.Fprintf(output, "AUTHENTICATION=PASS\nREST_AUTH=PASS\nWEBSOCKET_AUTH=PASS\nOBSERVATIONS_RECEIVED=%d\nSHUTDOWN=PASS\nACCESS_TOKEN_EXPIRES_AT=%s\n", streamResult.observations, snapshot.ExpiresAt.UTC().Format(time.RFC3339))
+	if _, err = fmt.Fprintf(output, "AUTHENTICATION=PASS\nREST_AUTH=PASS\nWEBSOCKET_AUTH=PASS\nOBSERVATIONS_RECEIVED=%d\nSHUTDOWN=PASS\n", streamResult.observations); err != nil {
+		return err
+	}
+	writeWebSocketDiagnostics(output, streamResult)
+	_, err = fmt.Fprintf(output, "ACCESS_TOKEN_EXPIRES_AT=%s\n", snapshot.ExpiresAt.UTC().Format(time.RFC3339))
 	return err
 }
 
@@ -480,12 +497,15 @@ func passFail(value bool) string {
 }
 
 func writeWebSocketDiagnostics(output io.Writer, result webSocketResult) {
-	_, _ = fmt.Fprintf(output, "WEBSOCKET_HANDSHAKE=%s\nSUBSCRIBE_SENT=%s\nEXPECTED_TOKEN_COUNT=%d\nEXPECTED_TOKENS_VALID=%s\nBINARY_FRAMES_RECEIVED=%d\nHEARTBEATS_RECEIVED=%d\nPACKETS_RECEIVED=%d\nINDEX_PACKETS_RECEIVED=%d\nPACKETS_DECODED=%d\nPACKETS_REJECTED=%d\nTOKEN_MATCHES=%d\nFRESH_OBSERVATIONS=%d\nLAST_FAILURE_STAGE=%s\n",
-		passFail(result.handshake), passFail(result.subscribeSent), result.expectedTokenCount, passFail(result.expectedTokensValid), result.binaryFrames, result.heartbeats, result.packets, result.indexPackets, result.packetsDecoded, result.packetsRejected, result.tokenMatches, result.freshObservations, result.lastFailureStage)
+	_, _ = fmt.Fprintf(output, "WEBSOCKET_HANDSHAKE=%s\nSUBSCRIBE_SENT=%s\nEXPECTED_TOKEN_COUNT=%d\nEXPECTED_TOKENS_VALID=%s\nTEXT_MESSAGES_RECEIVED=%d\nBROKER_MESSAGES_RECEIVED=%d\nORDER_UPDATES_RECEIVED=%d\nPROVIDER_ERRORS_RECEIVED=%d\nBINARY_FRAMES_RECEIVED=%d\nHEARTBEATS_RECEIVED=%d\nPACKETS_RECEIVED=%d\nINDEX_PACKETS_RECEIVED=%d\nPACKETS_DECODED=%d\nPACKETS_REJECTED=%d\nTOKEN_MATCHES=%d\nFRESH_OBSERVATIONS=%d\nLAST_FAILURE_STAGE=%s\n",
+		passFail(result.handshake), passFail(result.subscribeSent), result.expectedTokenCount, passFail(result.expectedTokensValid), result.textMessages, result.brokerMessages, result.orderUpdates, result.providerErrors, result.binaryFrames, result.heartbeats, result.packets, result.indexPackets, result.packetsDecoded, result.packetsRejected, result.tokenMatches, result.freshObservations, result.lastFailureStage)
 	for _, frame := range result.frameDiagnostics {
 		_, _ = fmt.Fprintf(output, "FRAME_SEQUENCE=%d\nFRAME_MESSAGE_TYPE=%s\nFRAME_LENGTH=%d\nFRAME_CLASSIFICATION=%s\n", frame.Sequence, frame.MessageType, frame.Length, frame.Classification)
 		if frame.CloseCode != 0 {
 			_, _ = fmt.Fprintf(output, "CLOSE_CODE=%d\n", frame.CloseCode)
+		}
+		if frame.TextMessageType != "" {
+			_, _ = fmt.Fprintf(output, "TEXT_MESSAGE_TYPE=%s\n", frame.TextMessageType)
 		}
 	}
 }

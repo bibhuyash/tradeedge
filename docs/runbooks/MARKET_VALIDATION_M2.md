@@ -95,9 +95,13 @@ counters for handshake, subscription, binary frames, heartbeats, packet decode,
 index packets, token matches, and fresh observations. `LAST_FAILURE_STAGE` is a
 safe enum and never includes the authenticated endpoint. Up to the first five
 frames include only sequence, WebSocket message type, byte length,
-classification, and a numeric close code when applicable; payloads are never
-recorded. Gorilla WebSocket handles ping/pong controls during its single read
-loop; TradeEdge does not treat them as Kite binary payloads. Zerodha may deliver an
+classification, the bounded text-envelope type, and a numeric close code when
+applicable; payloads are never recorded. Documented Kite text envelopes are
+handled by type: `message` is counted and reading continues, `order` is counted
+but cannot mutate the OMS during this preflight, and `error` fails with a
+sanitized provider category. Malformed or unknown text envelopes fail closed.
+Gorilla WebSocket handles ping/pong controls during its single read loop;
+TradeEdge does not treat them as Kite binary payloads. Zerodha may deliver an
 initial timestamp-less 28-byte index quote before the requested full mode takes
 effect. The parser accepts the documented 8-, 28-, 32-, 44-, and 184-byte
 formats, but only timestamped packets can satisfy the unchanged freshness gate.
