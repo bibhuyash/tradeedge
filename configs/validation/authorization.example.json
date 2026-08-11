@@ -1,5 +1,5 @@
 {
-  "schema_version": "market-validation-authorization/v1",
+  "schema_version": "market-validation-authorization/v2",
   "checksum": "",
   "application_commit": "0000000000000000000000000000000000000000",
   "mode": "PAPER",
@@ -9,7 +9,6 @@
   "expires_at": "2099-01-01T16:30:00+05:30",
   "approved_by": "REPLACE_WITH_APPROVER_ROLE",
   "evidence_root": ".cache/market-validation/2099-01-01",
-  "telegram_configuration_identity": "outbound-telegram-configuration/v1",
   "paper_capital_minor": 100000000,
   "currency": "INR",
   "portfolio_id": "REPLACE_WITH_DECODED_PORTFOLIO_IDENTITY",
@@ -29,7 +28,9 @@
     "watchlist": {"path":"../config/watchlist.json","sha256":"0000000000000000000000000000000000000000000000000000000000000000","identity":"REPLACE_WITH_WATCHLIST_VERSION"},
     "strategies": {"path":"../../../configs/validation/strategies-disabled.json","sha256":"0000000000000000000000000000000000000000000000000000000000000000","identity":"strategies-disabled/v1"},
     "portfolio": {"path":"../../../configs/validation/portfolio.paper.json","sha256":"0000000000000000000000000000000000000000000000000000000000000000","identity":"REPLACE_WITH_PORTFOLIO_HASH"},
-    "risk": {"path":"../../../configs/validation/risk.paper.json","sha256":"0000000000000000000000000000000000000000000000000000000000000000","identity":"REPLACE_WITH_RISK_HASH"}
+    "risk": {"path":"../../../configs/validation/risk.paper.json","sha256":"0000000000000000000000000000000000000000000000000000000000000000","identity":"REPLACE_WITH_RISK_HASH"},
+    "telegram_evidence": {"path":"telegram-test.json","sha256":"0000000000000000000000000000000000000000000000000000000000000000","identity":"REPLACE_WITH_TELEGRAM_EVIDENCE_SHA256"},
+    "zerodha_preflight": {"path":"zerodha-preflight.json","sha256":"0000000000000000000000000000000000000000000000000000000000000000","identity":"REPLACE_WITH_ZERODHA_PREFLIGHT_SHA256"}
   },
   "live_trading_authorized": false
 }

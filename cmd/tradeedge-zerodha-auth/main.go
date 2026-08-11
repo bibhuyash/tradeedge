@@ -11,6 +11,7 @@ import (
 	"net/http"
 	"net/url"
 	"os"
+	"os/exec"
 	"regexp"
 	"sort"
 	"strconv"
@@ -22,6 +23,7 @@ import (
 	"github.com/bibhuyash/tradeedge/internal/domain"
 	"github.com/bibhuyash/tradeedge/internal/marketdata"
 	marketmodel "github.com/bibhuyash/tradeedge/internal/marketdata/model"
+	"github.com/bibhuyash/tradeedge/internal/marketvalidation"
 )
 
 const (
@@ -50,11 +52,14 @@ var (
 type lookupEnv func(string) (string, bool)
 
 type commandDependencies struct {
-	clock        brokerzerodha.Clock
-	roundTripper http.RoundTripper
-	dialer       brokerzerodha.MarketDialer
-	streamConfig brokerzerodha.MarketStreamConfig
-	loadTokens   func(string) ([]string, error)
+	clock              brokerzerodha.Clock
+	roundTripper       http.RoundTripper
+	dialer             brokerzerodha.MarketDialer
+	streamConfig       brokerzerodha.MarketStreamConfig
+	loadTokens         func(string) ([]string, error)
+	loadBundleChecksum func(string) (string, error)
+	currentCommit      func() (string, error)
+	publishEvidence    func(string, []byte) (string, error)
 }
 
 func main() {
@@ -206,9 +211,11 @@ func verifyWebSocket(args []string, lookup lookupEnv, output io.Writer, dependen
 }
 
 type streamOptions struct {
-	bundlePath string
-	timeout    time.Duration
-	maxAge     time.Duration
+	bundlePath  string
+	timeout     time.Duration
+	maxAge      time.Duration
+	outputPath  string
+	tradingDate string
 }
 
 type webSocketResult struct {
@@ -245,13 +252,26 @@ func parseStreamOptions(name string, args []string, lookup lookupEnv) (streamOpt
 	bundlePath := set.String("runtime-bundle", "", "checksum-pinned Day-0 runtime bundle")
 	timeout := set.Duration("timeout", defaultOperatorTimeout, "bounded verification timeout")
 	maxAge := set.Duration("max-age", defaultObservationMaxAge, "maximum observation age")
+	outputPath := set.String("output", "", "create-once safe preflight evidence JSON")
+	tradingDate := set.String("date", "", "target trading date YYYY-MM-DD")
 	if err := set.Parse(args); err != nil || set.NArg() != 0 || *timeout <= 0 || *timeout > 30*time.Second || *maxAge <= 0 || *maxAge > time.Minute {
 		return streamOptions{}, errInvalidConfiguration
+	}
+	if name != "preflight" && (*outputPath != "" || *tradingDate != "") {
+		return streamOptions{}, errInvalidConfiguration
+	}
+	if (*outputPath == "") != (*tradingDate == "") {
+		return streamOptions{}, errInvalidConfiguration
+	}
+	if *tradingDate != "" {
+		if _, err := time.Parse("2006-01-02", *tradingDate); err != nil {
+			return streamOptions{}, errInvalidConfiguration
+		}
 	}
 	if strings.TrimSpace(*bundlePath) == "" {
 		*bundlePath, _ = lookup("TRADEEDGE_RUNTIME_BUNDLE")
 	}
-	return streamOptions{bundlePath: strings.TrimSpace(*bundlePath), timeout: *timeout, maxAge: *maxAge}, nil
+	return streamOptions{bundlePath: strings.TrimSpace(*bundlePath), timeout: *timeout, maxAge: *maxAge, outputPath: strings.TrimSpace(*outputPath), tradingDate: *tradingDate}, nil
 }
 
 func verifyWebSocketSession(ctx context.Context, tokens []string, maxAge time.Duration, session *brokerzerodha.SessionManager, dependencies commandDependencies) webSocketResult {
@@ -419,6 +439,24 @@ func preflight(args []string, lookup lookupEnv, output io.Writer, dependencies c
 	if err != nil {
 		return writePreflightFailure(output, "AUTHENTICATION", "ConfigurationError", "Invalid checksum-pinned runtime bundle", 0, 0, false)
 	}
+	applicationCommit, bundleChecksum := "", ""
+	if options.outputPath != "" {
+		commitLoader := dependencies.currentCommit
+		if commitLoader == nil {
+			commitLoader = repositoryCommit
+		}
+		checksumLoader := dependencies.loadBundleChecksum
+		if checksumLoader == nil {
+			checksumLoader = runtimeBundleChecksum
+		}
+		applicationCommit, err = commitLoader()
+		if err == nil {
+			bundleChecksum, err = checksumLoader(options.bundlePath)
+		}
+		if err != nil {
+			return writePreflightFailure(output, "AUTHENTICATION", "ConfigurationError", "Unable to bind preflight evidence", 0, 0, false)
+		}
+	}
 
 	ctx, cancel := context.WithTimeout(context.Background(), options.timeout)
 	defer cancel()
@@ -461,8 +499,48 @@ func preflight(args []string, lookup lookupEnv, output io.Writer, dependencies c
 		return err
 	}
 	writeWebSocketDiagnostics(output, streamResult)
-	_, err = fmt.Fprintf(output, "ACCESS_TOKEN_EXPIRES_AT=%s\n", snapshot.ExpiresAt.UTC().Format(time.RFC3339))
+	if _, err = fmt.Fprintf(output, "ACCESS_TOKEN_EXPIRES_AT=%s\n", snapshot.ExpiresAt.UTC().Format(time.RFC3339)); err != nil {
+		return err
+	}
+	if options.outputPath != "" {
+		evidence := marketvalidation.ZerodhaPreflightEvidence{
+			SchemaVersion: marketvalidation.ZerodhaPreflightEvidenceSchemaVersion, ApplicationCommit: applicationCommit, TradingDate: options.tradingDate, Mode: "PAPER", RuntimeBundleChecksum: bundleChecksum,
+			Timestamp: operatorClock(dependencies).Now().UTC(), AuthenticationPass: true, RESTAuthPass: true, WebSocketAuthPass: true, ExpectedTokenCount: streamResult.expectedTokenCount, ExpectedTokensValid: streamResult.expectedTokensValid,
+			ObservationsReceived: streamResult.observations, FreshObservations: streamResult.freshObservations, ShutdownPass: shutdown, TextMessagesReceived: streamResult.textMessages, BrokerMessagesReceived: streamResult.brokerMessages,
+			InstrumentsMetaReceived: streamResult.instrumentMetadata, AppCodeReceived: streamResult.appCodeMessages, OrderUpdatesReceived: streamResult.orderUpdates, ProviderErrorsReceived: streamResult.providerErrors,
+			BinaryFramesReceived: streamResult.binaryFrames, HeartbeatsReceived: streamResult.heartbeats, PacketsReceived: streamResult.packets, IndexPacketsReceived: streamResult.indexPackets, PacketsDecoded: streamResult.packetsDecoded,
+			PacketsRejected: streamResult.packetsRejected, TokenMatches: streamResult.tokenMatches, LastFailureStage: streamResult.lastFailureStage, AccessTokenExpiresAt: snapshot.ExpiresAt.UTC(),
+		}
+		raw, encodeErr := marketvalidation.EncodeZerodhaPreflightEvidence(evidence)
+		if encodeErr != nil {
+			return errInvalidConfiguration
+		}
+		publisher := dependencies.publishEvidence
+		if publisher == nil {
+			publisher = marketvalidation.PublishEvidenceCreateOnce
+		}
+		checksum, publishErr := publisher(options.outputPath, raw)
+		if publishErr != nil {
+			_, _ = fmt.Fprintln(output, "EVIDENCE=FAIL")
+			return errInvalidConfiguration
+		}
+		_, err = fmt.Fprintf(output, "EVIDENCE=PASS\nEVIDENCE_PATH=%s\nEVIDENCE_SHA256=%s\n", options.outputPath, checksum)
+	}
 	return err
+}
+
+func repositoryCommit() (string, error) {
+	raw, err := exec.Command("git", "rev-parse", "HEAD").Output()
+	value := strings.TrimSpace(string(raw))
+	if err != nil || !regexp.MustCompile(`^[0-9a-f]{40}$`).MatchString(value) {
+		return "", errInvalidConfiguration
+	}
+	return value, nil
+}
+
+func runtimeBundleChecksum(path string) (string, error) {
+	bundle, err := config.LoadRuntimeBundle(path)
+	return bundle.Checksum, err
 }
 
 func readOnlyClient(lookup lookupEnv, session *brokerzerodha.SessionManager, dependencies commandDependencies) (*brokerzerodha.Client, error) {

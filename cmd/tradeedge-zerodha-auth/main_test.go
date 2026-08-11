@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"encoding/binary"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"io"
@@ -15,6 +16,7 @@ import (
 
 	brokerzerodha "github.com/bibhuyash/tradeedge/internal/adapters/broker/zerodha"
 	"github.com/bibhuyash/tradeedge/internal/marketdata"
+	"github.com/bibhuyash/tradeedge/internal/marketvalidation"
 )
 
 type fixedClock struct{ now time.Time }
@@ -340,6 +342,54 @@ func TestPreflightReusesOneAuthenticatedSession(t *testing.T) {
 		t.Fatalf("subscription writes=%d closed=%t", writes, closed)
 	}
 	assertNoCredentialMaterial(t, output.String(), merge(values, map[string]string{accessTokenEnvironment: "generated-access-token"}), "")
+}
+
+func TestPreflightPublishesSafeCommitBoundEvidence(t *testing.T) {
+	now := time.Date(2026, 8, 11, 10, 0, 0, 0, time.UTC)
+	values := credentialValues()
+	connection := &fakeMarketConnection{frames: []brokerzerodha.MarketFrame{
+		{Binary: true, Data: quoteFrame(256265, now)},
+		{Binary: true, Data: quoteFrame(260105, now)},
+	}}
+	dependencies := websocketDependencies(now, &fakeMarketDialer{connection: connection})
+	dependencies.roundTripper = preflightRoundTripper(t)
+	dependencies.currentCommit = func() (string, error) { return strings.Repeat("b", 40), nil }
+	dependencies.loadBundleChecksum = func(string) (string, error) { return strings.Repeat("a", 64), nil }
+	var evidenceRaw []byte
+	dependencies.publishEvidence = func(path string, raw []byte) (string, error) {
+		if path != "preflight.json" {
+			t.Fatalf("path=%q", path)
+		}
+		evidenceRaw = append([]byte(nil), raw...)
+		return strings.Repeat("c", 64), nil
+	}
+
+	var output bytes.Buffer
+	if err := run([]string{"preflight", "-runtime-bundle", "pinned.json", "-timeout", "1s", "-date", "2026-08-11", "-output", "preflight.json"}, mapLookup(values), &output, dependencies); err != nil {
+		t.Fatal(err)
+	}
+	var evidence marketvalidation.ZerodhaPreflightEvidence
+	if err := json.Unmarshal(evidenceRaw, &evidence); err != nil {
+		t.Fatal(err)
+	}
+	if evidence.ApplicationCommit != strings.Repeat("b", 40) || evidence.RuntimeBundleChecksum != strings.Repeat("a", 64) || evidence.TradingDate != "2026-08-11" || !evidence.AuthenticationPass || !evidence.RESTAuthPass || !evidence.WebSocketAuthPass || evidence.TokenMatches != 2 {
+		t.Fatalf("evidence=%+v", evidence)
+	}
+	if !strings.Contains(output.String(), "EVIDENCE=PASS\nEVIDENCE_PATH=preflight.json\nEVIDENCE_SHA256="+strings.Repeat("c", 64)+"\n") {
+		t.Fatalf("output=%q", output.String())
+	}
+	assertNoCredentialMaterial(t, output.String()+string(evidenceRaw), merge(values, map[string]string{accessTokenEnvironment: "generated-access-token"}), "")
+}
+
+func TestPreflightEvidenceRequiresDateAndOutputTogether(t *testing.T) {
+	dependencies := commandDependencies{loadTokens: func(string) ([]string, error) { t.Fatal("bundle loaded before option validation"); return nil, nil }}
+	var output bytes.Buffer
+	if err := run([]string{"preflight", "-runtime-bundle", "pinned.json", "-output", "preflight.json"}, mapLookup(credentialValues()), &output, dependencies); err == nil {
+		t.Fatal("output without date accepted")
+	}
+	if !strings.Contains(output.String(), "AUTHENTICATION=FAIL") {
+		t.Fatalf("output=%q", output.String())
+	}
 }
 
 func TestPreflightIgnoresTimestampLessIndexQuoteUntilFreshFullPackets(t *testing.T) {
