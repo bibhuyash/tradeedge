@@ -62,6 +62,20 @@ type productionShadow struct {
 	sink          marketdata.ObservationSink
 	streamErr     error
 	readyOnce     sync.Once
+	shutdown      shutdownOperation
+}
+
+// shutdownOperation converges repeated and concurrent shutdown requests onto
+// one authoritative operation. The first result, including any checkpoint
+// conflict or persistence failure, remains authoritative for every caller.
+type shutdownOperation struct {
+	once sync.Once
+	err  error
+}
+
+func (o *shutdownOperation) Run(operation func() error) error {
+	o.once.Do(func() { o.err = operation() })
+	return o.err
 }
 
 type shadowQualityObserver struct{ runtime *shadowruntime.Runtime }
@@ -90,10 +104,14 @@ func runProductionShadow(ctx context.Context, cfg config.Config, logger *slog.Lo
 			composition.evaluator.SetProviderAvailable("zerodha", false)
 		}
 	}()
-	err = RunWithOptions(ctx, cfg, logger, options)
-	shutdownCtx, shutdownCancel := context.WithTimeout(context.Background(), cfg.ShutdownTimeout)
-	defer shutdownCancel()
-	return errors.Join(err, composition.shutdown(shutdownCtx))
+	return runProductionShadowApplication(ctx, cfg, logger, options)
+}
+
+// runProductionShadowApplication is the authoritative owner of application
+// shutdown. RunWithOptions invokes the registered TradingRuntime exactly once;
+// the production wrapper must not perform an independent cleanup publication.
+func runProductionShadowApplication(ctx context.Context, cfg config.Config, logger *slog.Logger, options Options) error {
+	return RunWithOptions(ctx, cfg, logger, options)
 }
 
 func composeProductionShadow(ctx context.Context, cfg config.Config) (*productionShadow, Options, error) {
@@ -301,8 +319,11 @@ func (p *productionShadow) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	_ = json.NewEncoder(w).Encode(map[string]any{"mode": "SHADOW", "read_only": true, "state": p.runtime.Status(), "session": p.session.Snapshot(), "stream": p.stream.Snapshot(), "broker_orders": "DISABLED", "paper_execution": "DISABLED", "real_broker_mutation": "PROHIBITED", "authorization_checksum": p.authorization.Checksum})
 }
 
-func (p *productionShadow) Shutdown(ctx context.Context) error { return p.shutdown(ctx) }
-func (p *productionShadow) shutdown(ctx context.Context) error {
+func (p *productionShadow) Shutdown(ctx context.Context) error {
+	return p.shutdown.Run(func() error { return p.shutdownRuntime(ctx) })
+}
+
+func (p *productionShadow) shutdownRuntime(ctx context.Context) error {
 	p.stream.Shutdown()
 	p.session.Shutdown()
 	var localErr error
