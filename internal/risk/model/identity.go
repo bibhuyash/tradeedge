@@ -34,7 +34,10 @@ func writeFramed(output writer, value string) {
 }
 
 func validParts(parts []string) bool {
-	if len(parts) == 0 || len(parts) > 64 {
+	// A production evaluation includes the base identity plus six framed parts
+	// per configured rule and two per evidence item. The reviewed ten-rule
+	// catalog therefore legitimately exceeds the old 64-part fixture limit.
+	if len(parts) == 0 || len(parts) > 256 {
 		return false
 	}
 	for _, part := range parts {

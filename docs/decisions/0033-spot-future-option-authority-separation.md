@@ -24,3 +24,11 @@ instrument master. Missing, stale, ambiguous, expired, illiquid, or excessively
 wide data fails closed. An open option is never migrated during rollover.
 SHADOW emits decisions and notifications but no fill; PAPER alone may use the
 deterministic simulator. LIVE remains unavailable.
+
+The connected validation uses the production Phase 3 rule catalog, Phase 4
+OMS and scripted PAPER broker, Phase 6 integer accounting/valuation, and Phase
+7 outbound dispatcher. The risk-evaluation identity limit is 256 framed parts
+so the complete ten-rule production catalog and its bounded evidence can be
+encoded without weakening or omitting controls. STOP_NEW_EXPOSURE blocks new
+BUY exposure but does not block an identity-matched reducing SELL, including
+the existing EOD_CLOSE policy.

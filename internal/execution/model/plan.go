@@ -17,22 +17,24 @@ var (
 )
 
 type OrderLegDraft struct {
-	InstrumentID domain.InstrumentID
-	Side         domain.Side
-	Quantity     domain.Quantity
-	LimitPrice   domain.Price
-	Protective   bool
-	DependsOn    []domain.InstrumentID
+	InstrumentID     domain.InstrumentID
+	Side             domain.Side
+	Quantity         domain.Quantity
+	LimitPrice       domain.Price
+	Protective       bool
+	DependsOn        []domain.InstrumentID
+	ReducingExposure bool
 }
 
 type OrderLeg struct {
-	ID           OrderLegID
-	InstrumentID domain.InstrumentID
-	Side         domain.Side
-	Quantity     domain.Quantity
-	LimitPrice   domain.Price
-	Protective   bool
-	DependsOn    []OrderLegID
+	ID               OrderLegID
+	InstrumentID     domain.InstrumentID
+	Side             domain.Side
+	Quantity         domain.Quantity
+	LimitPrice       domain.Price
+	Protective       bool
+	DependsOn        []OrderLegID
+	ReducingExposure bool
 }
 
 type OrderPlanSpec struct {
@@ -75,6 +77,9 @@ func NewOrderPlan(spec OrderPlanSpec) (OrderPlan, error) {
 			(draft.Protective && draft.Side != domain.SideBuy) {
 			return OrderPlan{}, ErrInvalidOrderPlan
 		}
+		if draft.ReducingExposure != approved.ReducingExposure || (draft.ReducingExposure && draft.Side != domain.SideSell) {
+			return OrderPlan{}, ErrInvalidOrderPlan
+		}
 		legIDs[draft.InstrumentID] = OrderLegID(derive("order-leg-id/v1", spec.Intent.ID().String(), draft.InstrumentID.String(), string(draft.Side)))
 		if draft.Protective {
 			protective = append(protective, legIDs[draft.InstrumentID])
@@ -96,7 +101,7 @@ func NewOrderPlan(spec OrderPlanSpec) (OrderPlan, error) {
 			dependencies[depIndex] = id
 		}
 		sort.Slice(dependencies, func(i, j int) bool { return dependencies[i].String() < dependencies[j].String() })
-		if draft.Side == domain.SideSell {
+		if draft.Side == domain.SideSell && !draft.ReducingExposure {
 			if len(protective) == 0 {
 				return OrderPlan{}, ErrUnsafeLegSequence
 			}
@@ -107,7 +112,7 @@ func NewOrderPlan(spec OrderPlanSpec) (OrderPlan, error) {
 			}
 		}
 		legs[index] = OrderLeg{legIDs[draft.InstrumentID], draft.InstrumentID, draft.Side,
-			draft.Quantity, draft.LimitPrice, draft.Protective, dependencies}
+			draft.Quantity, draft.LimitPrice, draft.Protective, dependencies, draft.ReducingExposure}
 		draft.DependsOn = append([]domain.InstrumentID(nil), draft.DependsOn...)
 	}
 	if hasCycle(legs) {
@@ -160,6 +165,7 @@ func canonicalPlan(spec OrderPlanSpec, legs []OrderLeg) ([]byte, error) {
 		Quantity, PriceMinor   int64
 		Currency               string
 		Protective             bool
+		ReducingExposure       bool
 		DependsOn              []string
 	}
 	wire := make([]legWire, len(legs))
@@ -169,7 +175,7 @@ func canonicalPlan(spec OrderPlanSpec, legs []OrderLeg) ([]byte, error) {
 			dependencies[depIndex] = id.String()
 		}
 		wire[index] = legWire{leg.ID.String(), leg.InstrumentID.String(), string(leg.Side), leg.Quantity.Int64(),
-			leg.LimitPrice.MinorUnits(), leg.LimitPrice.Currency().String(), leg.Protective, dependencies}
+			leg.LimitPrice.MinorUnits(), leg.LimitPrice.Currency().String(), leg.Protective, leg.ReducingExposure, dependencies}
 	}
 	return json.Marshal(struct {
 		SchemaVersion, IntentID, CreatedAt, ExpiresAt string

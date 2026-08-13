@@ -174,6 +174,11 @@ func DeriveRiskEvaluationID(spec RiskEvaluationSpec) (RiskEvaluationID, error) {
 		keys = append(keys, string(technical.RuleID), fmt.Sprint(technical.RuleVersion),
 			string(technical.Code), technical.OccurredAt.UTC().Format(time.RFC3339Nano))
 	}
+	for index, key := range keys {
+		if strings.TrimSpace(key) == "" {
+			return RiskEvaluationID{}, fmt.Errorf("%w: empty evaluation identity part %d", ErrInvalidRiskIdentity, index)
+		}
+	}
 	return NewRiskEvaluationID(keys...)
 }
 

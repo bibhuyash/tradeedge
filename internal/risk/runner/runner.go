@@ -232,12 +232,12 @@ func (runner *Runner) EvaluateProposal(ctx context.Context, request Request) (re
 
 	evaluation, err := buildEvaluation(request, proposal, checkpoint.Snapshot, candidate, policy, results, technical)
 	if err != nil {
-		return receipt, err
+		return receipt, fmt.Errorf("build risk evaluation: %w", err)
 	}
 	decision, err := buildDecision(request.LogicalTime.UTC(), proposal, checkpoint.Snapshot,
 		configuration.ID(), policy, candidate, evaluation)
 	if err != nil {
-		return receipt, err
+		return receipt, fmt.Errorf("build risk decision: %w", err)
 	}
 	reservation, next, err := nextCheckpoint(request.LogicalTime.UTC(), checkpoint, candidate, decision, trigger)
 	if err != nil {
