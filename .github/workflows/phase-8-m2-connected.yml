@@ -1,0 +1,48 @@
+name: Phase 8 M2 connected NIFTY derivatives
+
+on:
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  connected-paper-validation:
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+          cache: true
+      - name: Formatting and diff hygiene
+        run: |
+          test -z "$(gofmt -l cmd internal)"
+          git diff --check
+      - name: Phase 1-7, Phase 8 M1, Day-0 and M2 regressions
+        run: go test ./...
+      - name: Connected Phase 8 M2 deterministic replay 20x
+        run: go test ./internal/derivatives -run TestReleasedConnected -count=20
+      - name: Full race suite
+        run: go test -race ./...
+      - name: Connected Phase 8 M2 race replay 20x
+        run: go test -race ./internal/derivatives -run TestReleasedConnected -count=20
+      - name: Released boundary regressions
+        run: |
+          go test ./internal/marketdata/... ./internal/strategy/... ./internal/risk/...
+          go test ./internal/execution/... ./internal/accounting/... ./internal/notification/... ./internal/tradingruntime/...
+          go test ./internal/marketvalidation/... ./internal/releasegate/phase7closure/...
+      - name: Static checks and build
+        run: |
+          go vet ./...
+          go build ./...
+      - name: Credential, authority and dependency scans
+        shell: bash
+        run: |
+          if git grep -nE '\b(sk-(proj-)?[A-Za-z0-9_]{20,}|ghp_[A-Za-z0-9]{20,}|xox[baprs]-[A-Za-z0-9]{20,}|-----BEGIN (RSA |EC |OPENSSH )?PRIVATE KEY-----)' -- ':!go.sum'; then exit 1; fi
+          if grep -RInE --include='*.go' --exclude='*_test.go' 'float32|float64' internal/derivatives; then exit 1; fi
+          if grep -RInE --include='*.go' 'PlaceOrder|ModifyOrder|CancelOrder|KiteConnect' internal/derivatives; then exit 1; fi
+          if grep -RInE --include='*.go' 'LIVE_ENABLED|TradingModeLive' internal/derivatives; then exit 1; fi
+          if grep -RInE --include='*.go' 'internal/adapters/broker/zerodha|internal/broker/zerodha' internal/derivatives; then exit 1; fi

@@ -1,0 +1,178 @@
+{
+  "schema_version": "phase8-m2-connected-nifty-derivatives-evidence/v2",
+  "phase": "8 M2",
+  "result": "COMPLETE",
+  "architecture": "NIFTY_SPOT_TO_NIFTY_FUTURE_TO_NIFTY_OPTION",
+  "composition": {
+    "strategy_proposal": "provider-neutral strategy/model.TradeProposal",
+    "risk": "released Phase 3 runner with complete production rule catalog",
+    "execution": "released Phase 4 intent, plan, OMS, coordinator and scripted PAPER broker",
+    "accounting": "released Phase 6 fill coordinator, integer position accounting and valuation",
+    "notification": "released Phase 7 outbound dispatcher",
+    "replacement_subsystems": false
+  },
+  "candidate": {
+    "id": "nifty-ema-crossover-paper",
+    "role": "REFERENCE_CANDIDATE",
+    "enabled": false,
+    "alpha_qualification": "NOT_QUALIFIED",
+    "approved_underlyings": ["NIFTY", "BANKNIFTY"],
+    "qualified_underlying": "NIFTY"
+  },
+  "mapping": {
+    "spot": {"token":"256265","symbol":"NIFTY 50","role":"SIGNAL_ONLY","result":"PASS"},
+    "future": {"token":"14866434","symbol":"NIFTY26AUGFUT","canonical_id":"13cabe60e56feb01d00e8338edbcca7f35d536b92796eb172d722833454fce5a","expiry":"2026-08-25","lot_size":65,"tick_size_minor":10,"role":"FORWARD_CONTEXT","result":"PASS"},
+    "option": {"token":"11555842","symbol":"NIFTY2681824800CE","canonical_id":"c5d5514dce35685e231ae2e5ac445a87f5f3031aa3377dfdeb99192994a7a87b","expiry":"2026-08-18","strike_minor":2480000,"option_type":"CALL","lot_size":65,"tick_size_minor":5,"role":"EXECUTION_AND_VALUATION_AUTHORITY","result":"PASS"}
+  },
+  "policies": {
+    "mapping": "nifty-bounded-derivative-mapping/v1",
+    "future": "nearest-eligible-nifty-future/v1",
+    "expiry": "nearest-option-expiry-min-one-day/v1",
+    "strike": "forward-atm-nearest-strike-half-up/v1",
+    "universe": "bounded-atm-neighborhood/v1",
+    "execution_price": "option-touch-or-ltp-conservative/v1",
+    "ltp_approximation": "versioned fallback only when bid/ask is unavailable",
+    "exit": "identity-matched reducing SELL; EOD_CLOSE permitted",
+    "greeks": "UNAVAILABLE",
+    "iv": "UNAVAILABLE"
+  },
+  "shadow": {
+    "result": "PASS",
+    "risk_decision_id": "8718a0b4f2b26f846e58785854c968f894113df64fd56d18d4663658dda1ea82",
+    "orders": 0,
+    "fills": 0,
+    "positions_created": 0,
+    "broker_mutations": 0,
+    "terminal_event": "SHADOW_SIGNAL"
+  },
+  "paper": {
+    "result": "PASS",
+    "entry": {
+      "proposal_id": "a48ee05f08f62ae7e36672c72df2fc7aeb76f3093806b7dc2bbefe1d7b59e2de",
+      "risk_decision_id": "8718a0b4f2b26f846e58785854c968f894113df64fd56d18d4663658dda1ea82",
+      "execution_intent_id": "9974cc821fa92040f50735cd5f5d719b0de3881a126df35fcf89480fba1d4d92",
+      "fill_id": "6531ff4eb2830c1f5a1030daec3704b04f124514e21568090ed9b84fd0389b05",
+      "side": "BUY",
+      "quantity": 65,
+      "premium_minor": 10100,
+      "price_source": "SELECTED_OPTION_BEST_ASK",
+      "position_state": "OPEN_LONG",
+      "cost_basis_minor": 656500
+    },
+    "valuation": {
+      "valuation_id": "cd874a4a558fe8e1be0209aba2b843748754bf91f5300cf78d53c5fcfc303b23",
+      "option_mark_minor": 10500,
+      "unrealized_pnl_minor": 26000,
+      "spot_or_future_used_for_pnl": false
+    },
+    "exit": {
+      "fill_id": "86b9c8f39703d1b98c3b0d067babda20bd24f79ee7df636dd14ce3945caf60fc",
+      "side": "SELL",
+      "reducing_exposure": true,
+      "instrument_identity_retained": true,
+      "quantity": 65,
+      "premium_minor": 10400,
+      "price_source": "SELECTED_OPTION_BEST_BID",
+      "open_quantity": 0,
+      "position_state": "FLAT",
+      "realized_pnl_minor": 19500
+    }
+  },
+  "determinism": {
+    "result": "PASS",
+    "complete_replays": 2,
+    "exact_decision_intent_fill_position_valuation_exit": true,
+    "open_position_checksum": "91eba92148c9f42bcdc73d7dc55f2f8f7b6421bf3442faa2e8fe1fd3745cf1be",
+    "closed_position_checksum": "eb9de581008d1eb43c3220dbebde10d05d0925bc4ac247f1ac9a2f5e29acffec"
+  },
+  "restart": {
+    "result": "PASS",
+    "phase2_warmup_before_signal": "PASS_PHASE8_M1_CHECKPOINT_REGRESSION",
+    "after_entry_proposal": "PASS_PHASE3_IDEMPOTENT_PUBLICATION",
+    "open_option_position": "PASS_PHASE6_PUBLICATION_RESTORE",
+    "closed_option_position": "PASS_PHASE6_PUBLICATION_RESTORE",
+    "phase4_checkpoint_boundaries": "PASS_PHASE4_REPLAY_REGRESSION"
+  },
+  "notifications": {
+    "result": "PASS",
+    "outbound_only": true,
+    "trading_commands": false,
+    "mode_labels": ["SHADOW", "PAPER"],
+    "events": ["STRATEGY_READY", "OPTION_SELECTED", "ENTRY_PROPOSAL", "RISK_APPROVED", "RISK_REJECTED", "SHADOW_SIGNAL", "PAPER_FILL", "POSITION_UPDATE", "EXIT_PROPOSAL", "POSITION_CLOSED", "VALIDATION_INCIDENT"],
+    "provider_unavailable_contained": true
+  },
+  "adversarial": {
+    "result": "PASS",
+    "matrix": [
+      {"scenario":"future missing","typed_outcome":"ErrFutureUnavailable","result":"PASS"},
+      {"scenario":"future stale","typed_outcome":"ErrFutureUnavailable","result":"PASS"},
+      {"scenario":"option mapping missing","typed_outcome":"ErrOptionUnavailable","result":"PASS"},
+      {"scenario":"option quote missing","typed_outcome":"ErrQuoteUnavailable","result":"PASS"},
+      {"scenario":"option quote stale","typed_outcome":"ErrQuoteStale","result":"PASS"},
+      {"scenario":"option selection ambiguity","typed_outcome":"ErrOptionUnavailable","result":"PASS"},
+      {"scenario":"duplicate signal","typed_outcome":"ErrDuplicate","result":"PASS"},
+      {"scenario":"duplicate quote","typed_outcome":"IDEMPOTENT","result":"PASS"},
+      {"scenario":"out-of-order quote","typed_outcome":"REJECTED_BY_CANONICAL_MARKET_STATE","result":"PASS"},
+      {"scenario":"late quote","typed_outcome":"ErrFutureUnavailable_OR_ErrQuoteStale","result":"PASS"},
+      {"scenario":"risk rejection","typed_outcome":"DecisionRejected","result":"PASS"},
+      {"scenario":"kill switch","typed_outcome":"KILL_SWITCH_BLOCKING","result":"PASS"},
+      {"scenario":"circuit breaker","typed_outcome":"CIRCUIT_BREAKER_BLOCKING","result":"PASS"},
+      {"scenario":"STOP_NEW_EXPOSURE","typed_outcome":"ErrStopNewExposure_ENTRY_REDUCING_EXIT_ALLOWED","result":"PASS"},
+      {"scenario":"CAS restricted","typed_outcome":"ErrCASRestricted","result":"PASS"},
+      {"scenario":"session closed","typed_outcome":"ErrSessionNotAllowed","result":"PASS"},
+      {"scenario":"execution timeout","typed_outcome":"ErrOutcomeUnknown","result":"PASS"},
+      {"scenario":"execution UNKNOWN","typed_outcome":"UNKNOWN_RECONCILIATION_REQUIRED","result":"PASS"},
+      {"scenario":"duplicate PAPER fill","typed_outcome":"IDEMPOTENT_SINGLE_POSITION_REVISION","result":"PASS"},
+      {"scenario":"late fill","typed_outcome":"MONOTONIC_PHASE4_LATE_FILL_RECONCILIATION","result":"PASS"},
+      {"scenario":"accounting conflict","typed_outcome":"ErrIdentityCollision_ATOMIC","result":"PASS"},
+      {"scenario":"restart with open option","typed_outcome":"EXACT_PHASE6_RESTORE","result":"PASS"},
+      {"scenario":"restart after exit","typed_outcome":"EXACT_PHASE6_RESTORE","result":"PASS"},
+      {"scenario":"Telegram unavailable","typed_outcome":"SUPPRESSED_OR_RETRY_NO_AUTHORITY_EFFECT","result":"PASS"},
+      {"scenario":"EOD_CLOSE","typed_outcome":"FLAT_NO_ORPHAN","result":"PASS"},
+      {"scenario":"shutdown/cancellation","typed_outcome":"context.Canceled","result":"PASS"}
+    ]
+  },
+  "gates": {
+    "execution_mapping": "PASS",
+    "shadow_flow": "PASS",
+    "connected_paper_flow": "PASS",
+    "entry": "PASS",
+    "risk": "PASS_APPROVED_AND_REJECTED",
+    "option_paper_fill": "PASS",
+    "position": "PASS",
+    "valuation_pnl": "PASS",
+    "exit": "PASS",
+    "telegram": "PASS",
+    "deterministic_replay": "PASS",
+    "restart_equivalence": "PASS",
+    "expiry_rollover_containment": "PASS",
+    "adversarial": "PASS"
+  },
+  "safety": {
+    "real_broker_mutation": "UNREACHABLE",
+    "paper_broker": "internal/adapters/broker/paper.ScriptedBroker",
+    "zerodha_mutation_dependency_in_derivatives": false,
+    "floating_point_authority": false,
+    "credentials": "ABSENT",
+    "live_enabled": "ABSENT"
+  },
+  "local_validation": {
+    "gofmt": "PASS",
+    "go_test_all": "PASS",
+    "focused_connected_20x": "PASS",
+    "go_vet": "PASS",
+    "go_build": "PASS",
+    "lint": "PASS_GO_VET",
+    "git_diff_check": "PASS",
+    "secret_scan": "PASS",
+    "race": "REQUIRED_AND_CONFIGURED_ON_UBUNTU_CI"
+  },
+  "ci_workflow": ".github/workflows/phase-8-m2-connected.yml",
+  "known_limitations": [
+    "EMA20/EMA50 remains a reference candidate and has no profitability claim",
+    "IV and Greeks remain unavailable",
+    "PAPER fills approximate neither exchange queue priority nor market impact",
+    "BANKNIFTY uses the parameterized abstraction but is not qualified by this NIFTY evidence"
+  ],
+  "remaining_m2_blockers": []
+}

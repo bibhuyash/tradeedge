@@ -52,6 +52,10 @@ const (
 	KindStrategyActivated      Kind = "STRATEGY_ACTIVATED"
 	KindStrategyRestricted     Kind = "STRATEGY_RESTRICTED"
 	KindStrategyHalted         Kind = "STRATEGY_HALTED"
+	KindStrategyReady          Kind = "STRATEGY_READY"
+	KindOptionSelected         Kind = "OPTION_SELECTED"
+	KindEntryProposal          Kind = "ENTRY_PROPOSAL"
+	KindExitProposal           Kind = "EXIT_PROPOSAL"
 	KindProposalGenerated      Kind = "TRADE_PROPOSAL_GENERATED"
 	KindRiskApproved           Kind = "RISK_APPROVED"
 	KindRiskModified           Kind = "RISK_MODIFIED"
@@ -60,6 +64,10 @@ const (
 	KindPaperPartialFill       Kind = "PAPER_PARTIAL_FILL"
 	KindPaperFill              Kind = "PAPER_FILL"
 	KindShadowTrade            Kind = "SHADOW_TRADE"
+	KindShadowSignal           Kind = "SHADOW_SIGNAL"
+	KindPositionUpdate         Kind = "POSITION_UPDATE"
+	KindPositionClosed         Kind = "POSITION_CLOSED"
+	KindValidationIncident     Kind = "VALIDATION_INCIDENT"
 	KindExecutionUnknown       Kind = "EXECUTION_UNKNOWN"
 	KindReconciliationMismatch Kind = "RECONCILIATION_MISMATCH"
 	KindBrokerOnlyExposure     Kind = "BROKER_ONLY_EXPOSURE"
@@ -100,6 +108,10 @@ type Details struct {
 	CalendarVersion        string `json:"calendar_version,omitempty"`
 	ConfigurationVersion   string `json:"configuration_version,omitempty"`
 	ConfigurationChecksum  string `json:"configuration_checksum,omitempty"`
+	FutureInstrumentID     string `json:"future_instrument_id,omitempty"`
+	Expiry                 string `json:"expiry,omitempty"`
+	OptionType             string `json:"option_type,omitempty"`
+	StrikeMinor            int64  `json:"strike_minor,omitempty"`
 }
 
 type Event struct {
@@ -155,7 +167,7 @@ func validCategory(v Category) bool {
 }
 func validKind(v Kind) bool {
 	switch v {
-	case KindRuntimeReady, KindRuntimeDegraded, KindRuntimeHalted, KindReadinessLost, KindReadinessRestored, KindStrategyActivated, KindStrategyRestricted, KindStrategyHalted, KindProposalGenerated, KindRiskApproved, KindRiskModified, KindRiskRejected, KindPaperSubmitted, KindPaperPartialFill, KindPaperFill, KindShadowTrade, KindExecutionUnknown, KindReconciliationMismatch, KindBrokerOnlyExposure, KindKillSwitch, KindCircuitBreaker, KindPreCAS, KindCASActive, KindPostCAS, KindCASRestricted, KindValuationPartial, KindValuationStale, KindValuationUnavailable, KindFinancialSnapshot, KindDailyPnLWarning, KindEndOfDay:
+	case KindRuntimeReady, KindRuntimeDegraded, KindRuntimeHalted, KindReadinessLost, KindReadinessRestored, KindStrategyActivated, KindStrategyRestricted, KindStrategyHalted, KindStrategyReady, KindOptionSelected, KindEntryProposal, KindExitProposal, KindProposalGenerated, KindRiskApproved, KindRiskModified, KindRiskRejected, KindPaperSubmitted, KindPaperPartialFill, KindPaperFill, KindShadowTrade, KindShadowSignal, KindPositionUpdate, KindPositionClosed, KindValidationIncident, KindExecutionUnknown, KindReconciliationMismatch, KindBrokerOnlyExposure, KindKillSwitch, KindCircuitBreaker, KindPreCAS, KindCASActive, KindPostCAS, KindCASRestricted, KindValuationPartial, KindValuationStale, KindValuationUnavailable, KindFinancialSnapshot, KindDailyPnLWarning, KindEndOfDay:
 		return true
 	}
 	return false

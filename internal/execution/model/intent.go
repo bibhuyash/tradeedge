@@ -21,11 +21,12 @@ var (
 )
 
 type IntentLeg struct {
-	InstrumentID domain.InstrumentID
-	Side         domain.Side
-	Ratio        portfoliomodel.ContractRatio
-	Quantity     domain.Quantity
-	LotSize      domain.Quantity
+	InstrumentID     domain.InstrumentID
+	Side             domain.Side
+	Ratio            portfoliomodel.ContractRatio
+	Quantity         domain.Quantity
+	LotSize          domain.Quantity
+	ReducingExposure bool
 }
 
 type ExecutionIntentSpec struct {
@@ -83,7 +84,8 @@ func NewExecutionIntent(spec ExecutionIntentSpec) (ExecutionIntent, error) {
 		bound, found := approvedByInstrument[leg.InstrumentID]
 		if !found || leg.Side != bound.Side || leg.Ratio != bound.Ratio ||
 			!leg.Quantity.IsValid() || leg.Quantity.Int64() > bound.MaximumUnits.Int64() ||
-			leg.LotSize != bound.LotSize || leg.Quantity.Int64()%leg.LotSize.Int64() != 0 {
+			leg.LotSize != bound.LotSize || leg.Quantity.Int64()%leg.LotSize.Int64() != 0 ||
+			(leg.ReducingExposure && leg.Side != domain.SideSell) {
 			return ExecutionIntent{}, ErrAuthorityEscalation
 		}
 		if _, duplicate := seen[leg.InstrumentID]; duplicate {
@@ -103,15 +105,16 @@ func NewExecutionIntent(spec ExecutionIntentSpec) (ExecutionIntent, error) {
 
 func canonicalIntent(spec ExecutionIntentSpec) ([]byte, error) {
 	type legWire struct {
-		InstrumentID string `json:"instrument_id"`
-		Side         string `json:"side"`
-		Ratio        uint32 `json:"ratio"`
-		Quantity     int64  `json:"quantity"`
-		LotSize      int64  `json:"lot_size"`
+		InstrumentID     string `json:"instrument_id"`
+		Side             string `json:"side"`
+		Ratio            uint32 `json:"ratio"`
+		Quantity         int64  `json:"quantity"`
+		LotSize          int64  `json:"lot_size"`
+		ReducingExposure bool   `json:"reducing_exposure"`
 	}
 	legs := make([]legWire, len(spec.Legs))
 	for index, leg := range spec.Legs {
-		legs[index] = legWire{leg.InstrumentID.String(), string(leg.Side), uint32(leg.Ratio), leg.Quantity.Int64(), leg.LotSize.Int64()}
+		legs[index] = legWire{leg.InstrumentID.String(), string(leg.Side), uint32(leg.Ratio), leg.Quantity.Int64(), leg.LotSize.Int64(), leg.ReducingExposure}
 	}
 	return json.Marshal(struct {
 		SchemaVersion, DecisionID, DecisionChecksum string

@@ -71,3 +71,10 @@ selection.
 No LIVE mode, real order endpoint, broker mutation, risk relaxation,
 microservice split, Kafka, or Kubernetes work belongs to Phase 8. Any live
 pilot remains a separately designed and explicitly approved roadmap branch.
+
+## M2 derivatives amendment
+
+NIFTYBEES is excluded. M2 establishes NIFTY spot for EMA signal authority, a
+checksum-resolved NIFTY future for forward strike context, and one selected
+NIFTY call's own quote for execution and valuation. SHADOW has no fills and
+PAPER is limited to one long option lot. The candidate remains disabled.

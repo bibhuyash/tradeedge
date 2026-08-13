@@ -128,3 +128,8 @@ GET-only integration diagnostics expose aggregate health plus bounded recent
 errors and shadow decisions under `/api/v1/integrations/zerodha/`. Limits
 default to 50 and cannot exceed 100. APIs cannot mutate configuration, session,
 subscriptions, reconciliation, OMS, or broker state.
+
+Phase 8 M2 adds `GET /api/v1/derivatives/status`. Its bounded snapshot includes
+master version, selected future and option, policies, latest signal, risk
+outcome, PAPER fills, position, P&L, and checkpoint. It excludes provider
+tokens, credentials, mutation, activation, and unbounded history.

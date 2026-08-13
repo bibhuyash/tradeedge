@@ -1,0 +1,51 @@
+{
+  "schema_version": "phase8-m2-connected-derivatives-replay/v1",
+  "provider_metadata": {
+    "as_of": "2026-08-11T14:30:41+05:30",
+    "source_sha256": "1403cde24dae6626f7977018dcc9c601ab2c28d222c248d4b12a192957c0a15a"
+  },
+  "spot": {
+    "provider": "zerodha",
+    "token": "256265",
+    "symbol": "NIFTY 50",
+    "role": "SIGNAL_ONLY",
+    "ema_fixture": "../strategy/phase8-ema-replay.json"
+  },
+  "future": {
+    "provider": "zerodha",
+    "token": "14866434",
+    "symbol": "NIFTY26AUGFUT",
+    "canonical_id": "13cabe60e56feb01d00e8338edbcca7f35d536b92796eb172d722833454fce5a",
+    "expiry": "2026-08-25",
+    "lot_size": 65,
+    "tick_size_minor": 10,
+    "role": "FORWARD_SELECTION_REFERENCE"
+  },
+  "selected_option": {
+    "provider": "zerodha",
+    "token": "11555842",
+    "symbol": "NIFTY2681824800CE",
+    "canonical_id": "c5d5514dce35685e231ae2e5ac445a87f5f3031aa3377dfdeb99192994a7a87b",
+    "expiry": "2026-08-18",
+    "strike_minor": 2480000,
+    "option_type": "CALL",
+    "lot_size": 65,
+    "tick_size_minor": 5,
+    "role": "SOLE_EXECUTION_AND_VALUATION_AUTHORITY"
+  },
+  "entry": {
+    "at": "2026-08-11T04:30:00Z",
+    "spot_minor": 2479000,
+    "future_ltp_minor": 2481200,
+    "option_ltp_minor": 10000,
+    "option_bid_minor": 9900,
+    "option_ask_minor": 10100,
+    "expected_fill_minor": 10100,
+    "quantity": 65
+  },
+  "mark": {"option_ltp_minor": 10500, "expected_unrealized_pnl_minor": 26000},
+  "exit": {"option_bid_minor": 10400, "expected_fill_minor": 10400, "expected_realized_pnl_minor": 19500},
+  "greeks": "UNAVAILABLE",
+  "iv": "UNAVAILABLE",
+  "live_broker_mutation": false
+}

@@ -57,6 +57,10 @@ Each phase has objective entry and exit criteria. Passing a technical milestone 
   separately configured tradable PAPER execution instrument. The candidate is
   checked in disabled; missing execution mapping keeps full-pipeline activation
   blocked rather than causing dynamic instrument selection.
+- Phase 8 M2 replaces that generic placeholder with a bounded NIFTY derivatives
+  chain: spot signal, nearest eligible future reference, and one deterministic
+  long-call option whose own quote is execution and P&L authority. EMA remains
+  a reference candidate, not alpha-qualified.
 
 ## Invariants
 

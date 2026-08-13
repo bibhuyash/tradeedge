@@ -33,7 +33,7 @@ func main() {
 
 func run(args []string) error {
 	if len(args) == 0 {
-		return errors.New("usage: tradeedge-validation <readiness|telegram-check|calendar-check|generate-mappings|authorize|day0-gate|day1-gate|close-day0|finalize-day|scorecard>")
+		return errors.New("usage: tradeedge-validation <readiness|telegram-check|calendar-check|generate-mappings|generate-derivatives|authorize|day0-gate|day1-gate|close-day0|finalize-day|scorecard>")
 	}
 	switch args[0] {
 	case "readiness":
@@ -44,6 +44,8 @@ func run(args []string) error {
 		return calendarCheck(args[1:])
 	case "generate-mappings":
 		return generateMappings(args[1:])
+	case "generate-derivatives":
+		return generateDerivativeMappings(args[1:])
 	case "authorize":
 		return authorize(args[1:])
 	case "day0-gate":
@@ -59,6 +61,48 @@ func run(args []string) error {
 	default:
 		return errors.New("unknown market-validation command")
 	}
+}
+
+func generateDerivativeMappings(args []string) error {
+	set := flag.NewFlagSet("generate-derivatives", flag.ContinueOnError)
+	dump := set.String("dump", "", "current Zerodha instruments CSV")
+	reference := set.Int64("forward-reference-minor", 0, "accepted NIFTY future reference in INR minor units")
+	asOfText, fromText, untilText := set.String("as-of", "", "RFC3339 dump time"), set.String("valid-from", "", "RFC3339 mapping start"), set.String("valid-until", "", "RFC3339 mapping expiry")
+	masterOut, watchlistOut, selectionOut := set.String("master-output", "", "instrument master JSON"), set.String("watchlist-output", "", "watchlist JSON"), set.String("selection-output", "", "resolved selection JSON")
+	if err := set.Parse(args); err != nil || *dump == "" || *reference <= 0 || *asOfText == "" || *fromText == "" || *untilText == "" || *masterOut == "" || *watchlistOut == "" || *selectionOut == "" {
+		return errors.New("generate-derivatives requires dump, forward reference, timestamps, and all outputs")
+	}
+	dumpRaw, err := os.ReadFile(*dump)
+	if err != nil {
+		return err
+	}
+	asOf, err := time.Parse(time.RFC3339, *asOfText)
+	if err != nil {
+		return err
+	}
+	validFrom, err := time.Parse(time.RFC3339, *fromText)
+	if err != nil {
+		return err
+	}
+	validUntil, err := time.Parse(time.RFC3339, *untilText)
+	if err != nil {
+		return err
+	}
+	generated, selection, err := marketvalidation.GenerateNIFTYDerivativeMappings(dumpRaw, *reference, asOf, validFrom, validUntil)
+	if err != nil {
+		return err
+	}
+	selectionRaw, err := json.MarshalIndent(selection, "", "  ")
+	if err != nil {
+		return err
+	}
+	if err = writeEvidence(*masterOut, generated.InstrumentMaster); err != nil {
+		return err
+	}
+	if err = writeEvidence(*watchlistOut, generated.Watchlist); err != nil {
+		return err
+	}
+	return writeEvidence(*selectionOut, append(selectionRaw, '\n'))
 }
 
 func closeDay0(args []string) error {

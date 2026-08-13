@@ -47,3 +47,11 @@ outcomes. It defines pure rule inputs/results and typed bounded evidence but
 does not execute rules, reserve capital, mutate a portfolio, or create an
 execution intent. Unknown exposure remains explicitly unknown and therefore
 cannot silently satisfy a future risk rule.
+
+## Phase 8 M2 option validation
+
+The Phase 3 catalog retains authority. Allocation is one long option lot and
+uses option premium, lot size, instrument, and NIFTY underlying exposure.
+STOP_NEW_EXPOSURE blocks entry but not an otherwise authorized close. Missing
+expiry, mapping, freshness, or liquidity blocks before risk and never weakens a
+threshold.

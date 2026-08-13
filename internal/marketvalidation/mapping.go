@@ -96,7 +96,7 @@ func DecodeMappingSelection(raw []byte) (MappingSelection, error) {
 	var value MappingSelection
 	if decoder.Decode(&value) != nil || decoder.Decode(&struct{}{}) != io.EOF ||
 		value.SchemaVersion != MappingSelectionSchemaVersion || strings.TrimSpace(value.WatchlistID) == "" ||
-		len(value.Instruments) < 1 || len(value.Instruments) > 4 {
+		len(value.Instruments) < 1 || len(value.Instruments) > 12 {
 		return MappingSelection{}, ErrInvalidMappingSelection
 	}
 	seenKeys, seenSymbols := map[string]bool{}, map[string]bool{}

@@ -76,3 +76,8 @@ One adapter-owned stream supervisor handles quote subscriptions and text order
 updates with bounded reconnects. Disconnect, overflow, session expiry, stale
 mapping, UNKNOWN orders, or reconciliation disagreement blocks readiness and
 never becomes rejection evidence.
+
+Phase 8 M2 resolves NIFTY futures and options from the checksum-pinned
+instrument dump. Provider tokens remain mapping evidence. Subscription is
+bounded to spot, selected future, and a small option universe; selection adds
+no access to place, modify, or cancel operations.

@@ -59,3 +59,8 @@ tradable execution instrument, authoritative position feedback, fresh
 completed-candle inputs, `NORMAL_TRADING`, non-CAS session state, and existing
 Phase 3 controls. Any missing or inconsistent input produces explicit
 `NO_ACTION` or blocks publication. A strategy proposal remains advisory.
+
+Phase 8 M2 keeps EMA as a `REFERENCE_CANDIDATE`. Direction passes through the
+provider-neutral derivatives selection boundary before an option proposal may
+reach Phase 3. Passing PAPER evidence does not establish alpha or activate the
+disabled instance.

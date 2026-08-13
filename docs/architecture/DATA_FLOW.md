@@ -262,3 +262,20 @@ The signal index and execution instrument are different identities. A missing
 execution mapping or price cannot fall back to the index. EMA input order is
 the canonical completed-candle order already enforced by the Phase 1 and
 Phase 2 frame boundaries; WebSocket arrival order is not an input.
+
+## Phase 8 M2 derivatives authority
+
+```mermaid
+flowchart LR
+    S["NIFTY spot candles"] --> E["EMA reference direction"]
+    F["Resolved NIFTY future quote"] --> O["Versioned expiry and ATM selection"]
+    E --> O
+    M["Checksum instrument master"] --> O
+    O --> Q["Selected option bid / ask / LTP"]
+    Q --> R["Central risk"]
+    R --> P["SHADOW decision or PAPER option fill"]
+    P --> A["Option position and P&L"]
+```
+
+Only the selected option quote may price a fill or valuation. An open position
+retains its original option identity across rollover.

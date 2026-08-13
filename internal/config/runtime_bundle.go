@@ -187,7 +187,7 @@ func decodeWatchlist(raw []byte, master instrumentmaster.Master, keys map[string
 			Required      bool            `json:"required"`
 		} `json:"requirements"`
 	}
-	if strict(raw, &encoded) != nil || encoded.SchemaVersion != 1 || len(encoded.Requirements) < 1 || len(encoded.Requirements) > 4 {
+	if strict(raw, &encoded) != nil || encoded.SchemaVersion != 1 || len(encoded.Requirements) < 1 || len(encoded.Requirements) > 12 {
 		return readiness.Watchlist{}, nil, errors.New("invalid watchlist")
 	}
 	requirements := make([]readiness.Requirement, 0, len(encoded.Requirements))
