@@ -31,7 +31,7 @@ func TestLoadWithLookupOverrides(t *testing.T) {
 		"TRADEEDGE_HTTP_ADDR":                "127.0.0.1:9090",
 		"TRADEEDGE_LOG_LEVEL":                "DEBUG",
 		"TRADEEDGE_SHUTDOWN_TIMEOUT":         "250ms",
-		"TRADEEDGE_TRADING_MODE":             "PAPER",
+		"TRADEEDGE_TRADING_MODE":             "SHADOW",
 		"TRADEEDGE_MARKETDATA_CALENDAR":      "configs/nse-calendar.json",
 		"TRADEEDGE_MARKETDATA_DATASET_ROOT":  "data/marketdata",
 		"TRADEEDGE_STRATEGY_MAX_CONCURRENCY": "8",
@@ -40,11 +40,15 @@ func TestLoadWithLookupOverrides(t *testing.T) {
 		"TRADEEDGE_RISK_TIMEOUT":             "80ms",
 		"TRADEEDGE_ZERODHA_MODE":             "shadow",
 		"TRADEEDGE_ZERODHA_READ_ONLY":        "true",
+		"TRADEEDGE_RUNTIME_BUNDLE":           "runtime-bundle.json",
+		"TRADEEDGE_AUTHORIZATION_MANIFEST":   "authorization.json",
+		"TRADEEDGE_CHECKPOINT_ROOT":          ".cache/checkpoints",
+		"TRADEEDGE_OPERATOR_CONTROL_SOCKET":  ".cache/control.sock",
 	}))
 	if err != nil {
 		t.Fatalf("LoadWithLookup() error = %v", err)
 	}
-	if cfg.LogLevel != "debug" || cfg.ShutdownTimeout != 250*time.Millisecond || cfg.TradingMode != ModePaper ||
+	if cfg.LogLevel != "debug" || cfg.ShutdownTimeout != 250*time.Millisecond || cfg.TradingMode != ModeShadow ||
 		cfg.MarketDataCalendarPath != "configs/nse-calendar.json" ||
 		cfg.MarketDataDatasetRoot != "data/marketdata" {
 		t.Fatalf("unexpected overrides: %#v", cfg)
@@ -100,11 +104,14 @@ func TestLoadWithLookupAcceptsEveryNonMutatingZerodhaMode(t *testing.T) {
 			if mode == ZerodhaModePaper || mode == ZerodhaModeShadow {
 				values["TRADEEDGE_ZERODHA_READ_ONLY"] = "true"
 			}
-			if mode == ZerodhaModePaper {
+			if mode == ZerodhaModePaper || mode == ZerodhaModeShadow {
 				values["TRADEEDGE_RUNTIME_BUNDLE"] = "runtime-bundle.json"
 				values["TRADEEDGE_AUTHORIZATION_MANIFEST"] = "authorization.json"
 				values["TRADEEDGE_CHECKPOINT_ROOT"] = ".cache/checkpoints"
 				values["TRADEEDGE_OPERATOR_CONTROL_SOCKET"] = ".cache/control.sock"
+			}
+			if mode == ZerodhaModeShadow {
+				values["TRADEEDGE_TRADING_MODE"] = ModeShadow
 			}
 			cfg, err := LoadWithLookup(mapLookup(values))
 			if err != nil || cfg.ZerodhaMode != mode {

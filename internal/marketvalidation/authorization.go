@@ -21,7 +21,10 @@ import (
 	"github.com/bibhuyash/tradeedge/internal/risk/rules"
 )
 
-const AuthorizationSchemaVersion = "market-validation-authorization/v2"
+const (
+	AuthorizationSchemaVersion       = "market-validation-authorization/v2"
+	ShadowAuthorizationSchemaVersion = "market-validation-shadow-authorization/v3"
+)
 
 var ErrStrategyBlocked = errors.New("STRATEGY_BLOCKED")
 
@@ -32,17 +35,19 @@ type AuthorizedArtifact struct {
 }
 
 type AuthorizationArtifacts struct {
-	RuntimeBundle        AuthorizedArtifact  `json:"runtime_bundle"`
-	Calendar             AuthorizedArtifact  `json:"calendar"`
-	CalendarApproval     AuthorizedArtifact  `json:"calendar_approval"`
-	InstrumentMaster     AuthorizedArtifact  `json:"instrument_master"`
-	Watchlist            AuthorizedArtifact  `json:"watchlist"`
-	Strategies           AuthorizedArtifact  `json:"strategies"`
-	Portfolio            AuthorizedArtifact  `json:"portfolio"`
-	Risk                 AuthorizedArtifact  `json:"risk"`
-	TelegramEvidence     AuthorizedArtifact  `json:"telegram_evidence"`
-	ZerodhaPreflight     AuthorizedArtifact  `json:"zerodha_preflight"`
-	PrerequisiteDay0Gate *AuthorizedArtifact `json:"prerequisite_day0_gate,omitempty"`
+	RuntimeBundle          AuthorizedArtifact  `json:"runtime_bundle"`
+	Calendar               AuthorizedArtifact  `json:"calendar"`
+	CalendarApproval       AuthorizedArtifact  `json:"calendar_approval"`
+	InstrumentMaster       AuthorizedArtifact  `json:"instrument_master"`
+	Watchlist              AuthorizedArtifact  `json:"watchlist"`
+	Strategies             AuthorizedArtifact  `json:"strategies"`
+	Portfolio              AuthorizedArtifact  `json:"portfolio"`
+	Risk                   AuthorizedArtifact  `json:"risk"`
+	TelegramEvidence       AuthorizedArtifact  `json:"telegram_evidence"`
+	ZerodhaPreflight       AuthorizedArtifact  `json:"zerodha_preflight"`
+	PrerequisiteDay0Gate   *AuthorizedArtifact `json:"prerequisite_day0_gate,omitempty"`
+	QualificationNIFTY     *AuthorizedArtifact `json:"qualification_nifty,omitempty"`
+	QualificationBANKNIFTY *AuthorizedArtifact `json:"qualification_banknifty,omitempty"`
 }
 
 type AuthorizedStrategy struct {
@@ -55,22 +60,26 @@ type AuthorizedStrategy struct {
 }
 
 type AuthorizationManifest struct {
-	SchemaVersion         string                 `json:"schema_version"`
-	Checksum              string                 `json:"checksum"`
-	ApplicationCommit     string                 `json:"application_commit"`
-	Mode                  string                 `json:"mode"`
-	Scope                 Scope                  `json:"scope"`
-	TradingDate           string                 `json:"trading_date"`
-	AuthorizedAt          time.Time              `json:"authorized_at"`
-	ExpiresAt             time.Time              `json:"expires_at"`
-	ApprovedBy            string                 `json:"approved_by"`
-	EvidenceRoot          string                 `json:"evidence_root"`
-	PaperCapitalMinor     int64                  `json:"paper_capital_minor"`
-	Currency              string                 `json:"currency"`
-	PortfolioID           string                 `json:"portfolio_id"`
-	Strategy              AuthorizedStrategy     `json:"strategy"`
-	Artifacts             AuthorizationArtifacts `json:"artifacts"`
-	LiveTradingAuthorized bool                   `json:"live_trading_authorized"`
+	SchemaVersion                string                 `json:"schema_version"`
+	Checksum                     string                 `json:"checksum"`
+	ApplicationCommit            string                 `json:"application_commit"`
+	Mode                         string                 `json:"mode"`
+	Scope                        Scope                  `json:"scope"`
+	TradingDate                  string                 `json:"trading_date"`
+	AuthorizedAt                 time.Time              `json:"authorized_at"`
+	ExpiresAt                    time.Time              `json:"expires_at"`
+	ApprovedBy                   string                 `json:"approved_by"`
+	EvidenceRoot                 string                 `json:"evidence_root"`
+	PaperCapitalMinor            int64                  `json:"paper_capital_minor"`
+	Currency                     string                 `json:"currency"`
+	PortfolioID                  string                 `json:"portfolio_id"`
+	Strategy                     AuthorizedStrategy     `json:"strategy"`
+	Artifacts                    AuthorizationArtifacts `json:"artifacts"`
+	LiveTradingAuthorized        bool                   `json:"live_trading_authorized"`
+	RealBrokerMutationProhibited bool                   `json:"real_broker_mutation_prohibited"`
+	PaperExecutionProhibited     bool                   `json:"paper_execution_prohibited"`
+	QualificationEnabled         bool                   `json:"qualification_enabled"`
+	ApprovedUnderlyings          []string               `json:"approved_underlyings,omitempty"`
 }
 
 func DecodeAuthorization(raw []byte) (AuthorizationManifest, error) {
@@ -85,6 +94,9 @@ func DecodeAuthorization(raw []byte) (AuthorizationManifest, error) {
 
 func FinalizeAuthorization(path string, input AuthorizationManifest) (AuthorizationManifest, error) {
 	input.SchemaVersion, input.Checksum, input.LiveTradingAuthorized = AuthorizationSchemaVersion, "", false
+	if input.Mode == "SHADOW" {
+		input.SchemaVersion, input.RealBrokerMutationProhibited, input.PaperExecutionProhibited, input.QualificationEnabled = ShadowAuthorizationSchemaVersion, true, true, true
+	}
 	if err := validateAuthorizationShape(input); err != nil {
 		return AuthorizationManifest{}, err
 	}
@@ -129,11 +141,12 @@ func LoadAuthorization(path string) (AuthorizationManifest, error) {
 }
 
 func validateAuthorizationShape(value AuthorizationManifest) error {
-	if value.SchemaVersion != AuthorizationSchemaVersion || !validCommit(value.ApplicationCommit) || value.Mode != "PAPER" ||
-		(value.Scope != ScopeOperationsOnly && value.Scope != ScopeFullPipeline) || value.LiveTradingAuthorized ||
+	validSchema := value.Mode == "PAPER" && value.SchemaVersion == AuthorizationSchemaVersion || value.Mode == "SHADOW" && value.SchemaVersion == ShadowAuthorizationSchemaVersion
+	if !validSchema || !validCommit(value.ApplicationCommit) || (value.Mode != "PAPER" && value.Mode != "SHADOW") ||
+		(value.Scope != ScopeOperationsOnly && value.Scope != ScopeFullPipeline && value.Scope != ScopeQualificationOnly) || value.LiveTradingAuthorized || (value.Mode == "SHADOW" && !value.RealBrokerMutationProhibited) ||
 		value.AuthorizedAt.IsZero() || !value.ExpiresAt.After(value.AuthorizedAt) || value.ExpiresAt.Sub(value.AuthorizedAt) > 24*time.Hour ||
 		strings.TrimSpace(value.ApprovedBy) == "" || strings.TrimSpace(value.EvidenceRoot) == "" || unsafeIdentity(value.EvidenceRoot) ||
-		value.PaperCapitalMinor != 100000000 || value.Currency != "INR" || value.PortfolioID == "" {
+		(value.Mode == "PAPER" && value.PaperCapitalMinor != 100000000) || (value.Mode == "SHADOW" && value.PaperCapitalMinor != 0) || value.Currency != "INR" || value.PortfolioID == "" {
 		return ErrInvalidRecord
 	}
 	date, err := time.Parse("2006-01-02", value.TradingDate)
@@ -151,7 +164,16 @@ func validateAuthorizationShape(value AuthorizationManifest) error {
 		}
 	}
 	strategy := value.Strategy
-	if value.Scope == ScopeOperationsOnly {
+	if value.Mode == "SHADOW" {
+		if value.Scope != ScopeQualificationOnly || !value.PaperExecutionProhibited || !value.QualificationEnabled || value.Artifacts.PrerequisiteDay0Gate != nil ||
+			value.Artifacts.QualificationNIFTY == nil || value.Artifacts.QualificationBANKNIFTY == nil || strategy.Name != "EMA_REFERENCE_V1" || strategy.Version != "1" ||
+			strategy.Classification != "REFERENCE_CANDIDATE" || !strategy.Enabled || strategy.CASPolicy != "CAS_RESTRICTED" || !validDigest(strategy.ConfigurationHash) ||
+			len(value.ApprovedUnderlyings) != 2 || value.ApprovedUnderlyings[0] != "BANKNIFTY" || value.ApprovedUnderlyings[1] != "NIFTY" {
+			return ErrStrategyBlocked
+		}
+	} else if value.PaperExecutionProhibited || value.QualificationEnabled || len(value.ApprovedUnderlyings) != 0 || value.Artifacts.QualificationNIFTY != nil || value.Artifacts.QualificationBANKNIFTY != nil {
+		return ErrInvalidRecord
+	} else if value.Scope == ScopeOperationsOnly {
 		if value.Artifacts.PrerequisiteDay0Gate != nil || strategy.Name != "NONE" || strategy.Enabled || strategy.Classification != "NONE" || strategy.Version != "strategies-disabled/v1" || strategy.CASPolicy != "CAS_DISABLED" || !validDigest(strategy.ConfigurationHash) {
 			return ErrInvalidRecord
 		}
@@ -174,7 +196,7 @@ func validateAuthorizationFiles(manifestPath string, value AuthorizationManifest
 	if err != nil {
 		return err
 	}
-	if bundle.Checksum != value.Artifacts.RuntimeBundle.Identity || bundle.Watchlist.Version != value.Artifacts.Watchlist.Identity ||
+	if bundle.Manifest.Mode != value.Mode || bundle.Checksum != value.Artifacts.RuntimeBundle.Identity || bundle.Watchlist.Version != value.Artifacts.Watchlist.Identity ||
 		value.Strategy.ConfigurationHash != strings.ToLower(value.Artifacts.Strategies.SHA256) || value.Strategy.Version != value.Artifacts.Strategies.Identity {
 		return ErrInvalidRecord
 	}
@@ -190,6 +212,20 @@ func validateAuthorizationFiles(manifestPath string, value AuthorizationManifest
 		{"strategies", bundle.Manifest.Strategies, value.Artifacts.Strategies},
 		{"portfolio", bundle.Manifest.Portfolio, value.Artifacts.Portfolio},
 		{"risk", bundle.Manifest.Risk, value.Artifacts.Risk},
+	}
+	if value.Mode == "SHADOW" {
+		checks = append(checks,
+			struct {
+				name string
+				ref  config.FileReference
+				art  AuthorizedArtifact
+			}{"qualification_nifty", *bundle.Manifest.QualificationNIFTY, *value.Artifacts.QualificationNIFTY},
+			struct {
+				name string
+				ref  config.FileReference
+				art  AuthorizedArtifact
+			}{"qualification_banknifty", *bundle.Manifest.QualificationBANKNIFTY, *value.Artifacts.QualificationBANKNIFTY},
+		)
 	}
 	for _, check := range checks {
 		left, _ := filepath.Abs(resolveAuthorizationPath(bundleBase, check.ref.Path))
@@ -217,7 +253,8 @@ func validateAuthorizationFiles(manifestPath string, value AuthorizationManifest
 		return err
 	}
 	portfolio, err := portfolioconfig.Decode(portfolioRaw)
-	if err != nil || portfolio.ID().String() != value.PortfolioID || portfolio.Hash().String() != value.Artifacts.Portfolio.Identity || portfolio.AllocationPolicy().Limits.TotalCapital.MinorUnits() != value.PaperCapitalMinor {
+	capitalMatches := value.Mode == "SHADOW" || portfolio.AllocationPolicy().Limits.TotalCapital.MinorUnits() == value.PaperCapitalMinor
+	if err != nil || portfolio.ID().String() != value.PortfolioID || portfolio.Hash().String() != value.Artifacts.Portfolio.Identity || !capitalMatches {
 		return ErrInvalidRecord
 	}
 	riskRaw, err := os.ReadFile(resolveAuthorizationPath(base, value.Artifacts.Risk.Path))
@@ -267,6 +304,12 @@ func authorizationArtifacts(value AuthorizationManifest) []AuthorizedArtifact {
 	result := []AuthorizedArtifact{value.Artifacts.RuntimeBundle, value.Artifacts.Calendar, value.Artifacts.CalendarApproval, value.Artifacts.InstrumentMaster, value.Artifacts.Watchlist, value.Artifacts.Strategies, value.Artifacts.Portfolio, value.Artifacts.Risk, value.Artifacts.TelegramEvidence, value.Artifacts.ZerodhaPreflight}
 	if value.Artifacts.PrerequisiteDay0Gate != nil {
 		result = append(result, *value.Artifacts.PrerequisiteDay0Gate)
+	}
+	if value.Artifacts.QualificationNIFTY != nil {
+		result = append(result, *value.Artifacts.QualificationNIFTY)
+	}
+	if value.Artifacts.QualificationBANKNIFTY != nil {
+		result = append(result, *value.Artifacts.QualificationBANKNIFTY)
 	}
 	return result
 }

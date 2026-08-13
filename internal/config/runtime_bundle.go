@@ -24,14 +24,16 @@ type FileReference struct {
 	SHA256 string `json:"sha256"`
 }
 type RuntimeBundleManifest struct {
-	SchemaVersion    string        `json:"schema_version"`
-	Mode             string        `json:"mode"`
-	Calendar         FileReference `json:"calendar"`
-	InstrumentMaster FileReference `json:"instrument_master"`
-	Watchlist        FileReference `json:"watchlist"`
-	Strategies       FileReference `json:"strategies"`
-	Portfolio        FileReference `json:"portfolio"`
-	Risk             FileReference `json:"risk"`
+	SchemaVersion          string         `json:"schema_version"`
+	Mode                   string         `json:"mode"`
+	Calendar               FileReference  `json:"calendar"`
+	InstrumentMaster       FileReference  `json:"instrument_master"`
+	Watchlist              FileReference  `json:"watchlist"`
+	Strategies             FileReference  `json:"strategies"`
+	Portfolio              FileReference  `json:"portfolio"`
+	Risk                   FileReference  `json:"risk"`
+	QualificationNIFTY     *FileReference `json:"qualification_nifty,omitempty"`
+	QualificationBANKNIFTY *FileReference `json:"qualification_banknifty,omitempty"`
 }
 type RuntimeBundle struct {
 	Manifest     RuntimeBundleManifest
@@ -51,7 +53,7 @@ func LoadRuntimeBundle(path string) (RuntimeBundle, error) {
 	decoder := json.NewDecoder(bytes.NewReader(raw))
 	decoder.DisallowUnknownFields()
 	var manifest RuntimeBundleManifest
-	if decoder.Decode(&manifest) != nil || decoder.Decode(&struct{}{}) != io.EOF || manifest.SchemaVersion != RuntimeBundleSchemaVersion || manifest.Mode != ZerodhaModePaper {
+	if decoder.Decode(&manifest) != nil || decoder.Decode(&struct{}{}) != io.EOF || manifest.SchemaVersion != RuntimeBundleSchemaVersion || (manifest.Mode != ZerodhaModePaper && manifest.Mode != ZerodhaModeShadow) {
 		return RuntimeBundle{}, errors.New("invalid runtime bundle")
 	}
 	base := filepath.Dir(path)
@@ -60,6 +62,20 @@ func LoadRuntimeBundle(path string) (RuntimeBundle, error) {
 		name string
 		ref  FileReference
 	}{{"calendar", manifest.Calendar}, {"instrument_master", manifest.InstrumentMaster}, {"watchlist", manifest.Watchlist}, {"strategies", manifest.Strategies}, {"portfolio", manifest.Portfolio}, {"risk", manifest.Risk}}
+	if manifest.Mode == ZerodhaModeShadow {
+		if manifest.QualificationNIFTY == nil || manifest.QualificationBANKNIFTY == nil {
+			return RuntimeBundle{}, errors.New("SHADOW bundle requires qualification configurations")
+		}
+		references = append(references, struct {
+			name string
+			ref  FileReference
+		}{"qualification_nifty", *manifest.QualificationNIFTY}, struct {
+			name string
+			ref  FileReference
+		}{"qualification_banknifty", *manifest.QualificationBANKNIFTY})
+	} else if manifest.QualificationNIFTY != nil || manifest.QualificationBANKNIFTY != nil {
+		return RuntimeBundle{}, errors.New("PAPER bundle cannot authorize SHADOW qualification")
+	}
 	for _, item := range references {
 		resolved, data, readErr := verifiedFile(base, item.ref)
 		if readErr != nil {
@@ -79,12 +95,31 @@ func LoadRuntimeBundle(path string) (RuntimeBundle, error) {
 	if err != nil {
 		return RuntimeBundle{}, err
 	}
+	if manifest.Mode == ZerodhaModeShadow {
+		if err := validateShadowStrategies(result.Files["strategies"]); err != nil {
+			return RuntimeBundle{}, err
+		}
+		if err := validateShadowQualification(result.Files["qualification_nifty"], "NIFTY"); err != nil {
+			return RuntimeBundle{}, err
+		}
+		if err := validateShadowQualification(result.Files["qualification_banknifty"], "BANKNIFTY"); err != nil {
+			return RuntimeBundle{}, err
+		}
+	} else if err := validatePaperStrategies(result.Files["strategies"]); err != nil {
+		return RuntimeBundle{}, err
+	}
+	sum := sha256.Sum256(raw)
+	result.Checksum, result.Master, result.Watchlist, result.Tokens = hex.EncodeToString(sum[:]), master, watchlist, tokens
+	return result, nil
+}
+
+func validatePaperStrategies(raw []byte) error {
 	var strategies struct {
 		SchemaVersion string            `json:"schema_version"`
 		Instances     []json.RawMessage `json:"instances"`
 	}
-	if strict(result.Files["strategies"], &strategies) != nil || strategies.SchemaVersion != "market-validation-strategies/v1" || len(strategies.Instances) > 1 {
-		return RuntimeBundle{}, errors.New("production composition permits at most one strategy candidate")
+	if strict(raw, &strategies) != nil || strategies.SchemaVersion != "market-validation-strategies/v1" || len(strategies.Instances) > 1 {
+		return errors.New("production composition permits at most one strategy candidate")
 	}
 	if len(strategies.Instances) == 1 {
 		var candidate struct {
@@ -99,7 +134,7 @@ func LoadRuntimeBundle(path string) (RuntimeBundle, error) {
 		if strict(strategies.Instances[0], &candidate) != nil || candidate.StrategyID != "nifty-ema-crossover-paper" ||
 			candidate.Version != "1" || candidate.Classification != "PRODUCTION_CANDIDATE" || candidate.Enabled ||
 			candidate.CASPolicy != "CAS_RESTRICTED" || candidate.ConfigurationSchema != "nifty-ema-crossover-config/v1" || len(candidate.Configuration) == 0 {
-			return RuntimeBundle{}, errors.New("invalid disabled production strategy candidate")
+			return errors.New("invalid disabled production strategy candidate")
 		}
 		var strategyConfiguration struct {
 			StrategyID          string   `json:"strategy_id"`
@@ -129,12 +164,82 @@ func LoadRuntimeBundle(path string) (RuntimeBundle, error) {
 			strategyConfiguration.CooldownSeconds < 0 || strategyConfiguration.MaximumPositions != 1 || strategyConfiguration.QuantityLots != 1 ||
 			strategyConfiguration.SizingBPS != 1000 || strategyConfiguration.ExitRule != "BEARISH_CROSSOVER_OR_EOD_CLOSE" ||
 			strategyConfiguration.CalculationPolicy != "fixed-point-ema-half-away-from-zero/v1" {
-			return RuntimeBundle{}, errors.New("invalid disabled production strategy configuration")
+			return errors.New("invalid disabled production strategy configuration")
 		}
 	}
-	sum := sha256.Sum256(raw)
-	result.Checksum, result.Master, result.Watchlist, result.Tokens = hex.EncodeToString(sum[:]), master, watchlist, tokens
-	return result, nil
+	return nil
+}
+
+func validateShadowStrategies(raw []byte) error {
+	var document struct {
+		SchemaVersion string `json:"schema_version"`
+		Instances     []struct {
+			StrategyID          string `json:"strategy_id"`
+			Version             string `json:"version"`
+			Classification      string `json:"classification"`
+			Underlying          string `json:"underlying"`
+			CASPolicy           string `json:"cas_policy"`
+			ConfigurationSchema string `json:"configuration_schema"`
+			Enabled             bool   `json:"enabled"`
+			Configuration       struct {
+				StrategyID        string   `json:"strategy_id"`
+				Version           string   `json:"version"`
+				Underlying        string   `json:"underlying"`
+				Timeframe         string   `json:"timeframe"`
+				ExitRule          string   `json:"exit_rule"`
+				CalculationPolicy string   `json:"calculation_policy"`
+				Enabled           bool     `json:"enabled"`
+				FastPeriod        int      `json:"fast_ema_period"`
+				SlowPeriod        int      `json:"slow_ema_period"`
+				MinimumWarmup     int      `json:"minimum_warmup_samples"`
+				FreshnessSeconds  int64    `json:"freshness_threshold_seconds"`
+				AllowedSessions   []string `json:"allowed_session_regimes"`
+				MaximumPositions  int      `json:"max_simultaneous_qualification_position"`
+				QuantityLots      int64    `json:"quantity_lots"`
+				SizingBPS         int32    `json:"sizing_bps"`
+			} `json:"configuration"`
+		} `json:"instances"`
+	}
+	if strict(raw, &document) != nil || document.SchemaVersion != "market-validation-strategies/v1" || len(document.Instances) != 2 {
+		return errors.New("SHADOW bundle requires two reference candidates")
+	}
+	seen := map[string]bool{}
+	for _, candidate := range document.Instances {
+		configuration := candidate.Configuration
+		if candidate.StrategyID != "EMA_REFERENCE_V1" || candidate.Version != "1" || candidate.Classification != "REFERENCE_CANDIDATE" || !candidate.Enabled ||
+			(candidate.Underlying != "NIFTY" && candidate.Underlying != "BANKNIFTY") || seen[candidate.Underlying] || candidate.CASPolicy != "CAS_RESTRICTED" ||
+			candidate.ConfigurationSchema != "ema-reference-config/v1" || configuration.StrategyID != candidate.StrategyID || configuration.Version != candidate.Version ||
+			configuration.Underlying != candidate.Underlying || !configuration.Enabled || configuration.Timeframe != "1m" || configuration.FastPeriod != 20 ||
+			configuration.SlowPeriod != 50 || configuration.MinimumWarmup != 50 || configuration.FreshnessSeconds <= 0 || len(configuration.AllowedSessions) != 1 ||
+			configuration.AllowedSessions[0] != "NORMAL_TRADING" || configuration.MaximumPositions != 1 || configuration.QuantityLots != 1 || configuration.SizingBPS != 1000 ||
+			configuration.ExitRule != "BEARISH_CROSSOVER_OR_EOD_CLOSE" || configuration.CalculationPolicy != "fixed-point-ema-half-away-from-zero/v1" {
+			return errors.New("invalid SHADOW reference candidate")
+		}
+		seen[candidate.Underlying] = true
+	}
+	return nil
+}
+
+func validateShadowQualification(raw []byte, underlying string) error {
+	var document struct {
+		SchemaVersion          string  `json:"schema_version"`
+		StrategyID             string  `json:"strategy_id"`
+		StrategyVersion        string  `json:"strategy_version"`
+		Underlying             string  `json:"underlying"`
+		Mode                   string  `json:"mode"`
+		Enabled                bool    `json:"enabled"`
+		MinimumCompletedTrades int     `json:"minimum_completed_trades"`
+		MinimumSessions        int     `json:"minimum_sessions"`
+		HorizonsSeconds        []int64 `json:"horizons_seconds"`
+		AutomaticPromotion     bool    `json:"automatic_promotion"`
+		BrokerMutation         bool    `json:"broker_mutation"`
+	}
+	if strict(raw, &document) != nil || document.SchemaVersion != "phase8-m3-shadow-qualification-config/v1" || document.StrategyID != "EMA_REFERENCE_V1" ||
+		document.StrategyVersion != "1" || document.Underlying != underlying || document.Mode != "SHADOW" || !document.Enabled ||
+		document.MinimumCompletedTrades < 1 || document.MinimumSessions < 1 || len(document.HorizonsSeconds) == 0 || document.AutomaticPromotion || document.BrokerMutation {
+		return errors.New("invalid SHADOW qualification configuration")
+	}
+	return nil
 }
 
 func verifiedFile(base string, ref FileReference) (string, []byte, error) {
@@ -187,7 +292,7 @@ func decodeWatchlist(raw []byte, master instrumentmaster.Master, keys map[string
 			Required      bool            `json:"required"`
 		} `json:"requirements"`
 	}
-	if strict(raw, &encoded) != nil || encoded.SchemaVersion != 1 || len(encoded.Requirements) < 1 || len(encoded.Requirements) > 12 {
+	if strict(raw, &encoded) != nil || encoded.SchemaVersion != 1 || len(encoded.Requirements) < 1 || len(encoded.Requirements) > 16 {
 		return readiness.Watchlist{}, nil, errors.New("invalid watchlist")
 	}
 	requirements := make([]readiness.Requirement, 0, len(encoded.Requirements))

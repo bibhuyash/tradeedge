@@ -69,3 +69,9 @@ Phase 8 M3 introduces `REFERENCE -> SHADOW_COLLECTING ->
 INSUFFICIENT_SAMPLE -> ELIGIBLE_FOR_REVIEW -> QUALIFIED|REJECTED` independently
 for NIFTY and BANKNIFTY. Eligibility is evidence readiness only. The final two
 states require an identified operator review and do not authorize execution.
+
+Phase 8 M4 connects `EMA_REFERENCE_V1` to real accepted NIFTY and BANKNIFTY
+observations in explicitly authorized SHADOW mode. Each underlying owns its own
+50-completed-candle warmup, EMA state, open qualification observation, session
+scorecard, and cumulative scorecard. `APPROVED` Phase 3 risk still produces no
+order. No automatic transition can establish alpha qualification.

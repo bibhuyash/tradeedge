@@ -86,3 +86,10 @@ Phase 8 M3 permits the same read-only market-data path for exactly NIFTY and
 BANKNIFTY qualification. Canonical instrument IDs and checksum-pinned mappings
 are recorded; provider tokens are never strategy identity. Qualification code
 cannot import or call Zerodha place, modify, or cancel capabilities.
+
+Phase 8 M4 gives SHADOW a distinct runtime authorization and trading-mode
+value. The stream initially subscribes to exactly two spots, two eligible
+futures, and two bounded five-option universes. Replacement subscriptions are
+serialized, capped at 16 instruments, and limited to once per five minutes.
+Expiry or mapping changes require checksum-pinned metadata and fail closed.
+SHADOW composes no Zerodha mutation port; PAPER authorization cannot start it.

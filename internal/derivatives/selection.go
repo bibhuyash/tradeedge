@@ -147,6 +147,16 @@ func Resolve(master instrumentmaster.Master, at time.Time, reference domain.Pric
 	return Selection{Future: future, Expiry: expiry, Universe: universe, Option: selected, ReferencePrice: reference, StrikeIntervalMinor: interval}, nil
 }
 
+// ResolveFuture exposes the same deterministic future policy for read-only
+// live subscription/readiness composition before an option strike reference is
+// available. It grants no execution authority.
+func ResolveFuture(master instrumentmaster.Master, at time.Time, policy Policy) (Contract, error) {
+	if master.Version() == "" || at.IsZero() || policy.validate() != nil {
+		return Contract{}, ErrInvalidPolicy
+	}
+	return resolveFuture(master, at, policy)
+}
+
 func resolveFuture(master instrumentmaster.Master, at time.Time, policy Policy) (Contract, error) {
 	eligible := matching(master, domain.InstrumentFuture, domain.OptionNone, policy.Underlying)
 	cutoff := civil(at.AddDate(0, 0, policy.MinimumExpiryDays))

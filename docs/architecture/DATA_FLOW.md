@@ -285,3 +285,21 @@ qualification sink: canonical spot/future/selected-option evidence -> SHADOW
 record -> timestamped option observations -> horizons and MFE/MAE -> same-option
 exit -> independent underlying scorecard -> atomic SHADOW checkpoint. This
 branch has no edge to BrokerPort mutation or authoritative accounting.
+
+## Phase 8 M4 live read-only SHADOW flow
+
+```mermaid
+flowchart LR
+    Z["Read-only Zerodha stream"] --> A["Phase 1 canonical admission"]
+    A --> C["Exchange-time completed 1m candles"]
+    C --> E["EMA_REFERENCE_V1 per underlying"]
+    E --> D["Pinned future and bounded option universe"]
+    D --> R["Released Phase 3 risk"]
+    R --> Q["Qualification and scorecards"]
+    Q --> T["Telegram and GET-only APIs"]
+```
+
+There is intentionally no edge from risk to execution in SHADOW. An approved
+risk decision is analytical evidence only and always reports `Broker Order:
+NONE`. PAPER remains a different authorized runtime mode, and LIVE remains
+unavailable.

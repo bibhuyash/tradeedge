@@ -65,6 +65,11 @@ Each phase has objective entry and exit criteria. Passing a technical milestone 
   series, durable forward-outcome evidence, and transparent scorecards. The
   engineering machine is releasable before real-market collection; EMA remains
   disabled and not alpha-qualified.
+- Phase 8 M4 makes that candidate a first-class, explicitly authorized
+  production SHADOW composition. Real read-only ticks feed completed one-minute
+  candles, fixed-point EMA, bounded derivatives selection, released Phase 3
+  risk, qualification, Telegram, and immutable session scorecards. PAPER and
+  broker mutation remain unreachable; real-market collection is operator-run.
 
 ## Invariants
 

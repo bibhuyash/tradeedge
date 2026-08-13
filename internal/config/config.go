@@ -12,6 +12,7 @@ import (
 
 const (
 	ModePaper               = "paper"
+	ModeShadow              = "shadow"
 	ZerodhaModeOffline      = "OFFLINE"
 	ZerodhaModePaper        = "PAPER"
 	ZerodhaModeShadow       = "SHADOW"
@@ -144,8 +145,8 @@ func (c Config) Validate() error {
 	if c.ShutdownTimeout <= 0 {
 		return errors.New("TRADEEDGE_SHUTDOWN_TIMEOUT must be positive")
 	}
-	if c.TradingMode != ModePaper {
-		return fmt.Errorf("TRADEEDGE_TRADING_MODE must be %q; live trading is unavailable", ModePaper)
+	if c.TradingMode != ModePaper && c.TradingMode != ModeShadow {
+		return fmt.Errorf("TRADEEDGE_TRADING_MODE must be %q or %q; live trading is unavailable", ModePaper, ModeShadow)
 	}
 	if c.StrategyMaxConcurrency <= 0 || c.StrategyMaxConcurrency > 64 {
 		return errors.New("TRADEEDGE_STRATEGY_MAX_CONCURRENCY must be between 1 and 64")
@@ -167,8 +168,11 @@ func (c Config) Validate() error {
 	if (c.ZerodhaMode == ZerodhaModePaper || c.ZerodhaMode == ZerodhaModeShadow) && !c.ZerodhaReadOnly {
 		return errors.New("TRADEEDGE_ZERODHA_READ_ONLY=true is required for PAPER or SHADOW")
 	}
-	if c.ZerodhaMode == ZerodhaModePaper && (strings.TrimSpace(c.RuntimeBundlePath) == "" || strings.TrimSpace(c.AuthorizationManifestPath) == "" || strings.TrimSpace(c.CheckpointRoot) == "" || strings.TrimSpace(c.OperatorControlSocket) == "") {
-		return errors.New("PAPER market observation requires authorization manifest, runtime bundle, checkpoint root, and operator control socket")
+	if (c.ZerodhaMode == ZerodhaModePaper || c.ZerodhaMode == ZerodhaModeShadow) && (strings.TrimSpace(c.RuntimeBundlePath) == "" || strings.TrimSpace(c.AuthorizationManifestPath) == "" || strings.TrimSpace(c.CheckpointRoot) == "" || strings.TrimSpace(c.OperatorControlSocket) == "") {
+		return errors.New("connected market observation requires authorization manifest, runtime bundle, checkpoint root, and operator control socket")
+	}
+	if (c.ZerodhaMode == ZerodhaModePaper && c.TradingMode != ModePaper) || (c.ZerodhaMode == ZerodhaModeShadow && c.TradingMode != ModeShadow) {
+		return errors.New("trading mode and authorized Zerodha mode must match")
 	}
 	if c.TelegramEnabled && (c.telegramBotToken == "" || c.telegramChatID == "" || strings.ContainsAny(c.telegramBotToken, " \t\r\n/?#") || strings.ContainsAny(c.telegramChatID, " \t\r\n")) {
 		return errors.New("invalid Telegram configuration")

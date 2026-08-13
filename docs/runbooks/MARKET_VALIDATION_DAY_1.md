@@ -23,7 +23,9 @@ Current blockers are:
 ## Approved modes and secrets
 
 Only `OFFLINE`, `PAPER`, `SHADOW`, and `LIVE_DISABLED` exist. Day 1 begins in
-PAPER. `TRADEEDGE_TRADING_MODE` remains `paper` in both PAPER and SHADOW.
+PAPER. Phase 8 M4 binds `TRADEEDGE_TRADING_MODE=paper` to PAPER authorization
+and `TRADEEDGE_TRADING_MODE=shadow` to separate `QUALIFICATION_ONLY` SHADOW
+authorization; neither mode authorizes the other.
 
 For read-only Zerodha operation, inject these names through the approved secret
 mechanism; never put their values in a file, evidence, log, metric, command

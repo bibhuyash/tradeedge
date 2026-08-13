@@ -33,6 +33,12 @@ func Run(ctx context.Context, cfg config.Config, logger *slog.Logger) error {
 		}
 		return runProductionPaper(ctx, cfg, logger)
 	}
+	if cfg.ZerodhaMode == config.ZerodhaModeShadow {
+		if err := cfg.Validate(); err != nil {
+			return fmt.Errorf("validate configuration: %w", err)
+		}
+		return runProductionShadow(ctx, cfg, logger)
+	}
 	return RunWithOptions(ctx, cfg, logger, Options{})
 }
 
@@ -52,6 +58,7 @@ type Options struct {
 	OperationalOperations   http.Handler
 	NotificationRuntime     interface{ Shutdown(context.Context) error }
 	QualificationOperations http.Handler
+	ShadowOperations        http.Handler
 }
 
 func RunWithMarketReadiness(
@@ -173,6 +180,7 @@ func RunWithOptions(
 		RuntimeOperations:       options.RuntimeOperations,
 		OperationalOperations:   operationalOperations,
 		QualificationOperations: qualificationOperations,
+		ShadowOperations:        options.ShadowOperations,
 	})
 	if err != nil {
 		return fmt.Errorf("create HTTP server: %w", err)

@@ -106,7 +106,7 @@ func composeProductionPaper(ctx context.Context, cfg config.Config) (*production
 	if err != nil {
 		return nil, Options{}, err
 	}
-	if err := validateRuntimeAuthorization(authorization, bundle.Checksum, time.Now()); err != nil {
+	if err := validateRuntimeAuthorization(authorization, bundle.Checksum, config.ZerodhaModePaper, time.Now()); err != nil {
 		return nil, Options{}, err
 	}
 	schedule, err := calendarfile.Load(bundle.CalendarPath)
@@ -205,10 +205,13 @@ func composeProductionPaper(ctx context.Context, cfg config.Config) (*production
 	return value, Options{MarketReadiness: evaluator, LatestObservations: latestObservations, StrategyOperations: strategyStatus.Handler(), RuntimeReadiness: runtime, RuntimeOperations: runtimeops.New(runtime), TradingRuntime: runtime, ExecutionOperations: executionOperations, IntegrationOperations: value, IntegrationRuntime: value, OperationalOperations: operational.Handler(), NotificationRuntime: operational}, nil
 }
 
-func validateRuntimeAuthorization(value marketvalidation.AuthorizationManifest, runtimeBundleChecksum string, now time.Time) error {
+func validateRuntimeAuthorization(value marketvalidation.AuthorizationManifest, runtimeBundleChecksum, mode string, now time.Time) error {
 	commit, ok := runtimeCommit()
 	location := time.FixedZone("IST", 5*60*60+30*60)
-	if !ok || value.ApplicationCommit != commit || value.Mode != "PAPER" || value.Scope != marketvalidation.ScopeOperationsOnly ||
+	scopeOK := mode == config.ZerodhaModePaper && value.Scope == marketvalidation.ScopeOperationsOnly || mode == config.ZerodhaModeShadow && value.Scope == marketvalidation.ScopeQualificationOnly
+	if !ok || value.ApplicationCommit != commit || value.Mode != mode || !scopeOK ||
+		(mode == config.ZerodhaModeShadow && !value.RealBrokerMutationProhibited) ||
+		(mode == config.ZerodhaModeShadow && (!value.PaperExecutionProhibited || !value.QualificationEnabled)) ||
 		value.Artifacts.RuntimeBundle.Identity != runtimeBundleChecksum ||
 		now.Before(value.AuthorizedAt) || !now.Before(value.ExpiresAt) || now.In(location).Format("2006-01-02") != value.TradingDate {
 		return errors.New("runtime authorization mismatch")

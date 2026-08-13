@@ -139,3 +139,11 @@ scorecard views. Records expose policy versions, data quality, typed unavailable
 horizons, and decision-time regime. Telegram identifies SHADOW qualification
 and results with `Broker Order: NONE`; notification failure cannot affect the
 qualification state machine.
+
+Phase 8 M4 adds GET-only `/api/v1/shadow/runtime`, `/warmup`, `/strategies`,
+`/sessions`, `/scorecards`, and `/multi-session`. System readiness is distinct
+from strategy warmup: an operational stream may report strategy `WARMING
+37/50`. Telegram emits session-ready, genuine-signal, and session-closed events;
+all state broker orders as disabled and contain no imperative trade language.
+Per-session `NET_PNL` remains `NOT_AVAILABLE` until an approved cost model
+exists.

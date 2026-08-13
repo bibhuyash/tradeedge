@@ -1,0 +1,13 @@
+{
+  "schema_version": "phase8-m3-shadow-qualification-config/v1",
+  "strategy_id": "EMA_REFERENCE_V1",
+  "strategy_version": "1",
+  "underlying": "NIFTY",
+  "mode": "SHADOW",
+  "enabled": true,
+  "minimum_completed_trades": 20,
+  "minimum_sessions": 5,
+  "horizons_seconds": [60, 300, 900, 1800],
+  "automatic_promotion": false,
+  "broker_mutation": false
+}
