@@ -1,4 +1,4 @@
-// Package derivatives contains provider-neutral, deterministic NIFTY
+// Package derivatives contains provider-neutral, deterministic approved-index
 // derivatives selection and market-readiness policy. Provider tokens are
 // evidence returned from the instrument master; they are never canonical IDs.
 package derivatives
@@ -50,8 +50,17 @@ func DefaultPolicy() Policy {
 	return Policy{Underlying: "NIFTY", Provider: "zerodha", MinimumExpiryDays: 1, MaximumExpiryDays: 14, StrikesEachSide: 2, MaximumSpreadBPS: 500, MinimumBookQuantity: 1, MaximumQuoteAge: 5 * time.Second, AllowLTPFallback: true}
 }
 
+func PolicyFor(underlying domain.UnderlyingID) (Policy, error) {
+	if underlying != "NIFTY" && underlying != "BANKNIFTY" {
+		return Policy{}, ErrInvalidPolicy
+	}
+	value := DefaultPolicy()
+	value.Underlying = underlying
+	return value, nil
+}
+
 func (p Policy) validate() error {
-	if p.Underlying == "" || p.Provider == "" || p.MinimumExpiryDays < 0 || p.MaximumExpiryDays < p.MinimumExpiryDays || p.MaximumExpiryDays > 62 || p.StrikesEachSide < 0 || p.StrikesEachSide > 10 || p.MaximumSpreadBPS < 0 || p.MaximumSpreadBPS > 10_000 || p.MinimumBookQuantity <= 0 || p.MaximumQuoteAge <= 0 {
+	if (p.Underlying != "NIFTY" && p.Underlying != "BANKNIFTY") || p.Provider == "" || p.MinimumExpiryDays < 0 || p.MaximumExpiryDays < p.MinimumExpiryDays || p.MaximumExpiryDays > 62 || p.StrikesEachSide < 0 || p.StrikesEachSide > 10 || p.MaximumSpreadBPS < 0 || p.MaximumSpreadBPS > 10_000 || p.MinimumBookQuantity <= 0 || p.MaximumQuoteAge <= 0 {
 		return ErrInvalidPolicy
 	}
 	return nil
@@ -134,7 +143,7 @@ func Resolve(master instrumentmaster.Master, at time.Time, reference domain.Pric
 	sort.Slice(universe, func(i, j int) bool {
 		return universe[i].Instrument.Strike().MinorUnits() < universe[j].Instrument.Strike().MinorUnits()
 	})
-	selected.Policy, selected.Reason = StrikePolicyVersion, "ATM call selected from NIFTY future using nearest strike with half-up ties"
+	selected.Policy, selected.Reason = strikePolicy(policy.Underlying), "ATM option selected from approved-underlying future using nearest strike with half-up ties"
 	return Selection{Future: future, Expiry: expiry, Universe: universe, Option: selected, ReferencePrice: reference, StrikeIntervalMinor: interval}, nil
 }
 
@@ -159,7 +168,20 @@ func resolveFuture(master instrumentmaster.Master, at time.Time, policy Policy) 
 	if err != nil {
 		return Contract{}, ErrFutureUnavailable
 	}
-	return Contract{Instrument: chosen, Mapping: mapping, Policy: FuturePolicyVersion, Reason: "nearest uniquely mapped non-expired NIFTY future"}, nil
+	return Contract{Instrument: chosen, Mapping: mapping, Policy: futurePolicy(policy.Underlying), Reason: "nearest uniquely mapped non-expired approved-underlying future"}, nil
+}
+
+func futurePolicy(underlying domain.UnderlyingID) string {
+	if underlying == "NIFTY" {
+		return FuturePolicyVersion
+	}
+	return "nearest-eligible-banknifty-future/v1"
+}
+func strikePolicy(underlying domain.UnderlyingID) string {
+	if underlying == "NIFTY" {
+		return StrikePolicyVersion
+	}
+	return "banknifty-forward-atm-nearest-strike-half-up/v1"
 }
 
 func resolveExpiry(master instrumentmaster.Master, at time.Time, policy Policy) (domain.CivilDate, []domain.Instrument, error) {

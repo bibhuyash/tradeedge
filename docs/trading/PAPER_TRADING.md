@@ -34,6 +34,11 @@ Conservative simulation may understate performance but produces safer readiness 
 
 Fill models, fee schedules, slippage assumptions, and persisted replay formats belong to later phases.
 
+Phase 8 M3 qualification is not PAPER accounting. Its explicitly named shadow
+position estimates the selected option using ask for long entry and bid for
+exit; LTP-only evidence is labelled partial. Gross P&L is separate from net P&L,
+which is unavailable until a sourced cost configuration is approved.
+
 ## Acceptance Criteria
 
 - No network or credential is needed for Phase 0 paper broker operations.

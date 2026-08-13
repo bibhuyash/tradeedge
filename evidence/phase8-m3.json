@@ -1,0 +1,42 @@
+{
+  "schema_version": "phase8-m3-shadow-qualification-evidence/v1",
+  "phase": "8 M3",
+  "result": "COMPLETE",
+  "baseline_commit": "32badd439680d384cf23ef77f0e09e193459b571",
+  "release_commit": "SELF_COMMIT_CONTAINING_THIS_EVIDENCE",
+  "strategy": {"id":"EMA_REFERENCE_V1","version":"1","role":"REFERENCE_CANDIDATE","enabled":false,"alpha_qualification":"NOT_QUALIFIED"},
+  "business_universe": ["NIFTY", "BANKNIFTY"],
+  "configurations": {
+    "NIFTY": {"path":"configs/validation/qualification.nifty.shadow.json","sha256":"373921290bc113d59dba43857e39626987fe93ee21f00a5a6c5cbaea6e505490","independent_series":true},
+    "BANKNIFTY": {"path":"configs/validation/qualification.banknifty.shadow.json","sha256":"289f63c8e3cbdecdaca4341a08b831a8fa834610aff786888ab14de7d9416298","independent_series":true}
+  },
+  "policies": {
+    "regime": "transparent-ema-range-regime/v1",
+    "shadow_price": "option-executable-side-or-ltp/v1",
+    "cost": "qualification-cost-boundary/v1",
+    "qualification": "operator-reviewed-minimum-evidence/v1",
+    "minimum_completed_trades": 20,
+    "minimum_sessions": 5,
+    "automatic_promotion": false,
+    "net_pnl": "NOT_AVAILABLE"
+  },
+  "deterministic_replay_evidence": {
+    "result": "PASS", "runs": 2, "authoritative_equivalence": "EXACT",
+    "datasets": {
+      "NIFTY": {"path":"internal/qualification/testdata/nifty-replay-v1.json","sha256":"535997940112059e3f9ca8f3cd5c2e51ab80c36f6659a4af352603ef0de11714"},
+      "BANKNIFTY": {"path":"internal/qualification/testdata/banknifty-replay-v1.json","sha256":"5203d62148f27212a130c94357ec65f9c7183e02c7554570bd41353cbb37c0e1"}
+    },
+    "NIFTY_scorecard": {"signals":1,"accepted_signals":1,"completed_shadow_trades":1,"wins":1,"gross_pnl_minor":26000,"net_pnl":"NOT_AVAILABLE","maximum_favorable_excursion_minor":400,"maximum_adverse_excursion_minor":0,"forward_horizons":["+1m","+5m","+15m","+30m"],"production_policy_state":"INSUFFICIENT_SAMPLE"},
+    "BANKNIFTY_scorecard": {"signals":1,"accepted_signals":1,"completed_shadow_trades":1,"wins":1,"gross_pnl_minor":6000,"net_pnl":"NOT_AVAILABLE","maximum_favorable_excursion_minor":400,"maximum_adverse_excursion_minor":0,"forward_horizons":["+1m","+5m","+15m","+30m"],"production_policy_state":"INSUFFICIENT_SAMPLE"},
+    "restart_equivalence": "PASS", "checkpoint_equivalence": "PASS"
+  },
+  "real_market_evidence": "NONE",
+  "telegram_evidence": {"result":"PASS","entry_kind":"SHADOW_QUALIFICATION","result_kind":"SHADOW_QUALIFICATION_RESULT","broker_order":"NONE","outage_containment":"PASS"},
+  "adversarial_results": {
+    "result": "PASS",
+    "covered": ["duplicate_signal","duplicate_option_quote","late_quote","out_of_order_quote","spot_stale","future_stale","option_stale","option_mapping_rollover","future_rollover","option_expiry","market_close_during_horizon","restart_before_5m","restart_with_open_shadow_trade","telegram_outage","checkpoint_failure","scorecard_replay","CAS_restriction","STOP_NEW_EXPOSURE","risk_rejection","kill_switch","circuit_breaker"],
+    "fail_closed": true, "duplicate_evidence": 0
+  },
+  "zero_broker_mutation_proof": {"result":"UNREACHABLE","orders":0,"fills":0,"authoritative_positions":0,"place_modify_cancel_dependencies":0,"LIVE_ENABLED":false},
+  "engineering_gates": {"NIFTY_qualification_pipeline":"PASS","BANKNIFTY_qualification_pipeline":"PASS","shadow_qualification":"PASS","scorecard":"PASS","regime_tagging":"PASS","forward_horizons":"PASS","MFE_MAE":"PASS","persistence":"PASS","restart_equivalence":"PASS","deterministic_replay":"PASS","real_broker_mutation":"UNREACHABLE"}
+}

@@ -36,16 +36,17 @@ type RuntimeReadinessSource interface {
 }
 
 type Options struct {
-	MarketReadiness       MarketReadinessSource
-	RuntimeReadiness      RuntimeReadinessSource
-	Operations            http.Handler
-	StrategyOperations    http.Handler
-	RiskOperations        http.Handler
-	ExecutionOperations   http.Handler
-	IntegrationOperations http.Handler
-	RuntimeOperations     http.Handler
-	OperationalOperations http.Handler
-	Metrics               http.Handler
+	MarketReadiness         MarketReadinessSource
+	RuntimeReadiness        RuntimeReadinessSource
+	Operations              http.Handler
+	StrategyOperations      http.Handler
+	RiskOperations          http.Handler
+	ExecutionOperations     http.Handler
+	IntegrationOperations   http.Handler
+	RuntimeOperations       http.Handler
+	OperationalOperations   http.Handler
+	QualificationOperations http.Handler
+	Metrics                 http.Handler
 }
 
 func New(address string, logger *slog.Logger, readiness *Readiness) (*Server, error) {
@@ -139,6 +140,9 @@ func NewHandlerWithOptions(process *Readiness, options Options) http.Handler {
 	if options.OperationalOperations != nil {
 		mux.Handle("/api/v1/notifications/", options.OperationalOperations)
 		mux.Handle("/api/v1/operations/", options.OperationalOperations)
+	}
+	if options.QualificationOperations != nil {
+		mux.Handle("/api/v1/qualification/", options.QualificationOperations)
 	}
 	return mux
 }

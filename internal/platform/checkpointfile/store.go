@@ -51,7 +51,7 @@ type Generation struct {
 func NewGeneration(value Generation) (Generation, error) {
 	value.Checksum = ""
 	value.CreatedAt = value.CreatedAt.UTC()
-	if value.SchemaVersion != SchemaVersion || value.Sequence == 0 || value.Mode != "PAPER" || value.CalendarVersion == "" || !digest(value.ConfigurationChecksum) || value.CreatedAt.IsZero() || len(value.Components) == 0 {
+	if value.SchemaVersion != SchemaVersion || value.Sequence == 0 || (value.Mode != "PAPER" && value.Mode != "SHADOW") || value.CalendarVersion == "" || !digest(value.ConfigurationChecksum) || value.CreatedAt.IsZero() || len(value.Components) == 0 {
 		return Generation{}, ErrCorrupt
 	}
 	value.Components = append([]Component(nil), value.Components...)

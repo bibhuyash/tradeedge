@@ -1,0 +1,8 @@
+{
+  "schema_version": "phase8-m3-qualification-replay/v1",
+  "underlying": "BANKNIFTY",
+  "signal_id": "banknifty-deterministic-replay-1",
+  "signal_time": "2026-08-17T05:30:00Z",
+  "option_marks_minor": [10200, 10300, 10400, 10500],
+  "exit_mark_minor": 10500
+}

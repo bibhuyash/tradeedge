@@ -55,3 +55,8 @@ uses option premium, lot size, instrument, and NIFTY underlying exposure.
 STOP_NEW_EXPOSURE blocks entry but not an otherwise authorized close. Missing
 expiry, mapping, freshness, or liquidity blocks before risk and never weakens a
 threshold.
+
+Phase 8 M3 records the released Phase 3 outcome and typed reason in SHADOW
+evidence. Risk rejection creates no hypothetical open position. CAS,
+STOP_NEW_EXPOSURE, kill switch, circuit-breaker, stale data, and mapping failures
+remain fail-closed counters; qualification never weakens or replaces risk.

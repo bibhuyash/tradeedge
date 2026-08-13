@@ -132,3 +132,11 @@ Additional packages and contracts create ceremony but make unsafe coupling visib
 - Strategy storage contracts do not import the in-memory adapter.
 - Runner, replay, and the engineering fixture import no broker, execution,
   account, risk, allocation, order, position, or provider SDK package.
+
+## Phase 8 M3 qualification component
+
+`internal/qualification` consumes already-accepted canonical decision evidence
+and owns isolated NIFTY/BANKNIFTY records, analytical shadow positions, forward
+horizons, regime tags, and scorecards. Its checkpoint adapter reuses atomic
+generation storage in SHADOW mode. The component imports no OMS, accounting,
+broker adapter, or Zerodha SDK and exposes only bounded GET operations.

@@ -32,6 +32,10 @@ func Render(event Event) RenderedMessage {
 		body = "Readiness restored"
 	case KindEndOfDay:
 		body = "End-of-day summary: " + d.State + reasonSuffix(d.Reason)
+	case KindShadowQualification:
+		body = "TRADEEDGE SHADOW — " + d.Subject + "; qualification=" + d.State
+	case KindShadowQualificationResult:
+		body = "TRADEEDGE SHADOW RESULT — " + d.Subject + "; qualification=" + d.State
 	default:
 		body = strings.ReplaceAll(string(event.Kind), "_", " ") + reasonSuffix(d.Reason)
 	}

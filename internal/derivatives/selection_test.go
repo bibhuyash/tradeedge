@@ -28,6 +28,29 @@ func TestResolveUsesForwardAndBoundedMappedOptionUniverse(t *testing.T) {
 	}
 }
 
+func TestResolveBANKNIFTYIndependentlyAndRejectsOtherUnderlyings(t *testing.T) {
+	master, future, option := bankFixtureMaster(t)
+	policy, err := PolicyFor("BANKNIFTY")
+	if err != nil {
+		t.Fatal(err)
+	}
+	selection, err := Resolve(master, testAt, price(t, 52_120_00), domain.OptionCall, policy)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if selection.Future.Instrument.ID() != future.ID() || selection.Option.Instrument.ID() != option.ID() || selection.StrikeIntervalMinor != 10_000 || len(selection.Universe) != 5 {
+		t.Fatalf("bad BANKNIFTY selection: %#v", selection)
+	}
+	if selection.Future.Policy == FuturePolicyVersion || selection.Option.Policy == StrikePolicyVersion {
+		t.Fatalf("NIFTY policy leaked: %#v", selection)
+	}
+	for _, unsupported := range []domain.UnderlyingID{"FINNIFTY", "NIFTYBEES", "RELIANCE"} {
+		if _, err := PolicyFor(unsupported); !errors.Is(err, ErrInvalidPolicy) {
+			t.Fatalf("%s accepted: %v", unsupported, err)
+		}
+	}
+}
+
 func TestResolveFailsClosedForRolloverAmbiguityAndMissingMapping(t *testing.T) {
 	master, _, _ := fixtureMaster(t)
 	p := DefaultPolicy()
@@ -215,6 +238,41 @@ func fixtureMaster(t *testing.T) (instrumentmaster.Master, domain.Instrument, do
 }
 func fixtureMasterWithoutSelectedMapping(t *testing.T) (instrumentmaster.Master, domain.Instrument, domain.Instrument) {
 	return buildMaster(t, false)
+}
+
+func bankFixtureMaster(t *testing.T) (instrumentmaster.Master, domain.Instrument, domain.Instrument) {
+	t.Helper()
+	underlying, _ := domain.NewUnderlyingID("BANKNIFTY")
+	expiry, _ := domain.NewCivilDate(2026, 8, 18)
+	futureExpiry, _ := domain.NewCivilDate(2026, 8, 25)
+	lot, _ := domain.NewQuantity(15)
+	future, err := domain.NewInstrument(domain.InstrumentSpec{Exchange: domain.ExchangeNSE, Segment: domain.SegmentFutures, UnderlyingID: underlying, Type: domain.InstrumentFuture, ExchangeSymbol: "BANKNIFTY26AUGFUT", Derivative: &domain.DerivativeSpec{Expiry: futureExpiry, OptionType: domain.OptionNone}, LotSize: lot, TickSize: price(t, 10), Currency: "INR"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	instruments := []domain.Instrument{future}
+	mappings := []domain.ProviderInstrumentRef{mapping(future, "bank-future-token")}
+	var selected domain.Instrument
+	for strike := int64(51_900_00); strike <= 52_300_00; strike += 10_000 {
+		for _, kind := range []domain.OptionType{domain.OptionCall, domain.OptionPut} {
+			suffix := map[domain.OptionType]string{domain.OptionCall: "CE", domain.OptionPut: "PE"}[kind]
+			symbol := "BANKNIFTY26818" + fmtStrike(strike) + suffix
+			instrument, makeErr := domain.NewInstrument(domain.InstrumentSpec{Exchange: domain.ExchangeNSE, Segment: domain.SegmentOptions, UnderlyingID: underlying, Type: domain.InstrumentOption, ExchangeSymbol: symbol, Derivative: &domain.DerivativeSpec{Expiry: expiry, Strike: price(t, strike), OptionType: kind}, LotSize: lot, TickSize: price(t, 5), Currency: "INR"})
+			if makeErr != nil {
+				t.Fatal(makeErr)
+			}
+			instruments = append(instruments, instrument)
+			mappings = append(mappings, mapping(instrument, hash("bank-token", symbol)[:8]))
+			if strike == 52_100_00 && kind == domain.OptionCall {
+				selected = instrument
+			}
+		}
+	}
+	master, err := instrumentmaster.New(testAt.Add(-time.Hour), instruments, mappings)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return master, future, selected
 }
 func buildMaster(t *testing.T, includeSelected bool) (instrumentmaster.Master, domain.Instrument, domain.Instrument) {
 	t.Helper()

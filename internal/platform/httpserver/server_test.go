@@ -99,6 +99,16 @@ func TestExecutionOperationsAreMountedUnderExecutionPrefix(t *testing.T) {
 	}
 }
 
+func TestQualificationOperationsAreMountedUnderReadOnlyPrefix(t *testing.T) {
+	operations := http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) { w.WriteHeader(http.StatusOK) })
+	handler := NewHandlerWithOptions(&Readiness{}, Options{QualificationOperations: operations})
+	response := httptest.NewRecorder()
+	handler.ServeHTTP(response, httptest.NewRequest(http.MethodGet, "/api/v1/qualification/scorecards", nil))
+	if response.Code != http.StatusOK {
+		t.Fatalf("status = %d", response.Code)
+	}
+}
+
 func TestZerodhaIntegrationOperationsAreMountedUnderReadOnlyPrefix(t *testing.T) {
 	operations := http.HandlerFunc(func(writer http.ResponseWriter, request *http.Request) { writer.WriteHeader(http.StatusNoContent) })
 	handler := NewHandlerWithOptions(&Readiness{}, Options{IntegrationOperations: operations})

@@ -133,3 +133,9 @@ Phase 8 M2 adds `GET /api/v1/derivatives/status`. Its bounded snapshot includes
 master version, selected future and option, policies, latest signal, risk
 outcome, PAPER fills, position, P&L, and checkpoint. It excludes provider
 tokens, credentials, mutation, activation, and unbounded history.
+
+Phase 8 M3 adds bounded GET-only qualification strategy, recent-signal, and
+scorecard views. Records expose policy versions, data quality, typed unavailable
+horizons, and decision-time regime. Telegram identifies SHADOW qualification
+and results with `Broker Order: NONE`; notification failure cannot affect the
+qualification state machine.
