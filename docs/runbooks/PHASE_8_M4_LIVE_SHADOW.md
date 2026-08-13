@@ -50,6 +50,19 @@ Confirm `/api/v1/integrations/zerodha/status` reports read-only SHADOW and
 a system failure. Stop on mapping conflict, checkpoint failure, unexpected order
 frame, or authorization expiry.
 
+## Shutdown ownership
+
+The application lifecycle in `RunWithOptions` is the sole owner of production
+SHADOW shutdown. It invokes the registered SHADOW trading runtime, which stops
+the read-only stream and session, closes local controls, publishes one clean
+final checkpoint, and drains risk resources. Repeated or concurrent shutdown
+requests converge on that same operation and receive its original result.
+
+An EOD close finalizes the qualification session but does not create a second
+shutdown owner. The subsequent process shutdown persists the already-closed
+state once. A real checkpoint revision conflict or persistence failure remains
+fatal and must not be ignored or retried as a blind idempotent write.
+
 ## Evidence
 
 Engineering tests never create real-market evidence. After an actual authorized
