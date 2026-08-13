@@ -35,7 +35,7 @@ func main() {
 
 func run(args []string) error {
 	if len(args) == 0 {
-		return errors.New("usage: tradeedge-validation <readiness|telegram-check|calendar-check|generate-mappings|generate-derivatives|generate-shadow-derivatives|authorize|day0-gate|day1-gate|close-day0|finalize-day|scorecard>")
+		return errors.New("usage: tradeedge-validation <readiness|telegram-check|calendar-check|generate-calendar|generate-mappings|generate-derivatives|generate-shadow-derivatives|authorize|day0-gate|day1-gate|close-day0|finalize-day|scorecard>")
 	}
 	switch args[0] {
 	case "readiness":
@@ -44,6 +44,8 @@ func run(args []string) error {
 		return telegramCheck(args[1:])
 	case "calendar-check":
 		return calendarCheck(args[1:])
+	case "generate-calendar":
+		return generateCalendar(args[1:])
 	case "generate-mappings":
 		return generateMappings(args[1:])
 	case "generate-derivatives":
@@ -69,6 +71,36 @@ func run(args []string) error {
 	default:
 		return errors.New("unknown market-validation command")
 	}
+}
+
+func generateCalendar(args []string) error {
+	set := flag.NewFlagSet("generate-calendar", flag.ContinueOnError)
+	policy := set.String("policy", "", "checksum-verified NSE trading-calendar policy")
+	date := set.String("date", "", "target date YYYY-MM-DD")
+	calendarOutput := set.String("calendar-output", "", "generated exact-date calendar JSON")
+	sourcesOutput := set.String("sources-output", "", "generated source references JSON")
+	if err := set.Parse(args); err != nil || *policy == "" || *date == "" || *calendarOutput == "" || *sourcesOutput == "" {
+		return errors.New("generate-calendar requires policy, date, calendar-output, and sources-output")
+	}
+	calendarRaw, sources, classification, err := marketvalidation.GenerateTradingCalendar(*policy, *calendarOutput, *date)
+	if err != nil {
+		return err
+	}
+	sourcesRaw, err := json.MarshalIndent(sources, "", "  ")
+	if err != nil {
+		return err
+	}
+	if err = writeEvidence(*sourcesOutput, append(sourcesRaw, '\n')); err != nil {
+		return err
+	}
+	if err = writeEvidence(*calendarOutput, calendarRaw); err != nil {
+		return err
+	}
+	fmt.Println("CALENDAR_" + string(classification))
+	if classification == marketvalidation.CalendarNonTradingDay {
+		return errors.New("target date is a non-trading day; authorization prohibited")
+	}
+	return nil
 }
 
 func finalizeShadowSession(args []string) error {

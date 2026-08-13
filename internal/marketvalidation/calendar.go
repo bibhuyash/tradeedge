@@ -18,7 +18,44 @@ import (
 	"github.com/bibhuyash/tradeedge/internal/marketdata/calendar"
 )
 
-const CalendarSourcesSchemaVersion = "market-validation-calendar-sources/v1"
+const (
+	CalendarSourcesSchemaVersion       = "market-validation-calendar-sources/v1"
+	TradingCalendarPolicySchemaVersion = "market-validation-calendar-policy/v1"
+)
+
+type TradingCalendarPolicy struct {
+	SchemaVersion string                    `json:"schema_version"`
+	PolicyID      string                    `json:"policy_id"`
+	Exchange      string                    `json:"exchange"`
+	Timezone      string                    `json:"timezone"`
+	PublishedAt   time.Time                 `json:"published_at"`
+	EffectiveFrom string                    `json:"effective_from"`
+	EffectiveTo   string                    `json:"effective_to"`
+	Holidays      []string                  `json:"holidays"`
+	Sessions      []CalendarPolicySession   `json:"sessions"`
+	Regimes       []CalendarPolicyRegime    `json:"regimes"`
+	Sources       []CalendarSourceReference `json:"sources"`
+}
+
+type CalendarPolicySession struct {
+	Open  string `json:"open"`
+	Close string `json:"close"`
+	Kind  string `json:"kind"`
+	Note  string `json:"note,omitempty"`
+}
+
+type CalendarPolicyRegime struct {
+	Open   string `json:"open"`
+	Close  string `json:"close"`
+	Regime string `json:"regime"`
+}
+
+type CalendarClassification string
+
+const (
+	CalendarTradingDay    CalendarClassification = "TRADING_DAY"
+	CalendarNonTradingDay CalendarClassification = "NON_TRADING_DAY"
+)
 
 type CalendarSourceSet struct {
 	SchemaVersion string                    `json:"schema_version"`
@@ -45,6 +82,102 @@ type CalendarApproval struct {
 	Sources               []CalendarSourceReference `json:"sources"`
 	Approved              bool                      `json:"approved"`
 	LiveTradingAuthorized bool                      `json:"live_trading_authorized"`
+}
+
+// GenerateTradingCalendar emits exact one-day calendar and source artifacts
+// from a checksum-verified policy. It never infers absent policy coverage.
+func GenerateTradingCalendar(policyPath, calendarOutputPath, targetDate string) ([]byte, CalendarSourceSet, CalendarClassification, error) {
+	raw, err := os.ReadFile(policyPath)
+	if err != nil {
+		return nil, CalendarSourceSet{}, "", err
+	}
+	decoder := json.NewDecoder(bytes.NewReader(raw))
+	decoder.DisallowUnknownFields()
+	var policy TradingCalendarPolicy
+	if decoder.Decode(&policy) != nil || decoder.Decode(&struct{}{}) != io.EOF {
+		return nil, CalendarSourceSet{}, "", ErrInvalidRecord
+	}
+	date, err := time.Parse("2006-01-02", targetDate)
+	if err != nil || validateCalendarPolicy(policy, date) != nil {
+		return nil, CalendarSourceSet{}, "", ErrInvalidRecord
+	}
+	policyBase := filepath.Dir(policyPath)
+	calendarBase := filepath.Dir(calendarOutputPath)
+	sources := CalendarSourceSet{SchemaVersion: CalendarSourcesSchemaVersion, Sources: append([]CalendarSourceReference(nil), policy.Sources...)}
+	for index := range sources.Sources {
+		source := &sources.Sources[index]
+		resolved := source.Path
+		if !filepath.IsAbs(resolved) {
+			resolved = filepath.Join(policyBase, filepath.Clean(resolved))
+		}
+		sourceRaw, readErr := os.ReadFile(resolved)
+		if readErr != nil {
+			return nil, CalendarSourceSet{}, "", readErr
+		}
+		sum := sha256.Sum256(sourceRaw)
+		if hex.EncodeToString(sum[:]) != strings.ToLower(source.SHA256) {
+			return nil, CalendarSourceSet{}, "", ErrInvalidRecord
+		}
+		relative, relErr := filepath.Rel(calendarBase, resolved)
+		if relErr != nil {
+			return nil, CalendarSourceSet{}, "", relErr
+		}
+		source.Path = filepath.ToSlash(relative)
+	}
+	sourcesRaw, err := json.Marshal(sources)
+	if err != nil {
+		return nil, CalendarSourceSet{}, "", err
+	}
+	sources, err = DecodeCalendarSources(sourcesRaw)
+	if err != nil {
+		return nil, CalendarSourceSet{}, "", err
+	}
+	holiday := date.Weekday() == time.Saturday || date.Weekday() == time.Sunday
+	for _, item := range policy.Holidays {
+		holiday = holiday || item == targetDate
+	}
+	classification := CalendarTradingDay
+	day := map[string]any{"exchange": policy.Exchange, "date": targetDate, "status": "TRADING", "sessions": policy.Sessions, "regimes": policy.Regimes}
+	if holiday {
+		classification = CalendarNonTradingDay
+		day = map[string]any{"exchange": policy.Exchange, "date": targetDate, "status": "HOLIDAY"}
+	}
+	encoded := map[string]any{
+		"schema_version": 2, "source": policy.PolicyID, "published_at": policy.PublishedAt.UTC(), "timezone": policy.Timezone,
+		"effective_from": targetDate, "effective_to": targetDate, "days": []any{day},
+	}
+	calendarRaw, err := json.MarshalIndent(encoded, "", "  ")
+	if err != nil {
+		return nil, CalendarSourceSet{}, "", err
+	}
+	calendarRaw = append(calendarRaw, '\n')
+	if _, err = calendarfile.Decode(calendarRaw); err != nil {
+		return nil, CalendarSourceSet{}, "", err
+	}
+	return calendarRaw, sources, classification, nil
+}
+
+func validateCalendarPolicy(policy TradingCalendarPolicy, target time.Time) error {
+	if policy.SchemaVersion != TradingCalendarPolicySchemaVersion || strings.TrimSpace(policy.PolicyID) == "" || policy.Exchange != "NSE" || policy.Timezone != "Asia/Kolkata" || policy.PublishedAt.IsZero() || len(policy.Sources) == 0 || len(policy.Sessions) == 0 || len(policy.Regimes) != 3 {
+		return ErrInvalidRecord
+	}
+	from, fromErr := time.Parse("2006-01-02", policy.EffectiveFrom)
+	to, toErr := time.Parse("2006-01-02", policy.EffectiveTo)
+	if fromErr != nil || toErr != nil || target.Before(from) || target.After(to) {
+		return ErrInvalidRecord
+	}
+	seen := map[string]bool{}
+	for _, holiday := range policy.Holidays {
+		parsed, err := time.Parse("2006-01-02", holiday)
+		if err != nil || parsed.Before(from) || parsed.After(to) || seen[holiday] {
+			return ErrInvalidRecord
+		}
+		seen[holiday] = true
+	}
+	if policy.Regimes[0].Regime != "PRE_CAS" || policy.Regimes[1].Regime != "CAS_ACTIVE" || policy.Regimes[2].Regime != "POST_CAS" {
+		return ErrInvalidRecord
+	}
+	return nil
 }
 
 func DecodeCalendarSources(raw []byte) (CalendarSourceSet, error) {

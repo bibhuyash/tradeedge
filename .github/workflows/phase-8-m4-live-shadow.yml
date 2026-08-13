@@ -25,8 +25,12 @@ jobs:
         run: go test ./...
       - name: Live SHADOW deterministic composition 20x
         run: go test ./internal/shadowruntime/... ./internal/adapters/shadowruntime/checkpointfile ./internal/marketvalidation -count=20
+      - name: Auth persistence and calendar regressions 20x
+        run: go test ./cmd/tradeedge-zerodha-auth ./internal/adapters/broker/zerodha ./internal/marketvalidation -count=20
       - name: Full Ubuntu race suite
         run: go test -race ./...
+      - name: Auth persistence and calendar race suite
+        run: go test -race ./cmd/tradeedge-zerodha-auth ./internal/adapters/broker/zerodha ./internal/marketvalidation
       - name: Live SHADOW race replay 20x
         run: go test -race ./internal/shadowruntime/... ./internal/adapters/shadowruntime/checkpointfile -count=20
       - name: Released boundary regressions

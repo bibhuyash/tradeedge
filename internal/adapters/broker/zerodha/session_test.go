@@ -68,6 +68,22 @@ func TestSessionAuthenticationFailureAndRestartRestoration(t *testing.T) {
 	}
 }
 
+func TestValidRestoredAccessTokenPrecedesRequestTokenExchange(t *testing.T) {
+	now := time.Date(2026, 8, 13, 8, 0, 0, 0, time.UTC)
+	exchanger := &fakeExchanger{result: TokenExchangeResult{accessToken: "unexpected", expiresAt: now.Add(time.Hour)}}
+	manager := NewSessionManager(CredentialMaterial{apiKey: "key", apiSecret: "secret", requestToken: "unconsumed-or-consumed", accessToken: "restored", expiresAt: now.Add(time.Hour)}, exchanger, &fixedClock{now: now}, nil)
+	if err := manager.Authenticate(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	if exchanger.calls != 0 {
+		t.Fatalf("request-token exchanges=%d", exchanger.calls)
+	}
+	header, err := manager.Authorization()
+	if err != nil || header != "token key:restored" {
+		t.Fatalf("authorization=%q err=%v", header, err)
+	}
+}
+
 func TestSessionAuthenticationPreservesSanitizedProviderFailure(t *testing.T) {
 	now := time.Date(2026, 8, 11, 3, 0, 0, 0, time.UTC)
 	providerFailure := AuthenticationFailure{ErrorType: "TokenException", Message: "Invalid checksum", HTTPStatus: 403}

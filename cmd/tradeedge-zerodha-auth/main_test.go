@@ -9,6 +9,9 @@ import (
 	"fmt"
 	"io"
 	"net/http"
+	"os"
+	"path/filepath"
+	"strconv"
 	"strings"
 	"sync"
 	"testing"
@@ -347,11 +350,16 @@ func TestPreflightReusesOneAuthenticatedSession(t *testing.T) {
 func TestPreflightPublishesSafeCommitBoundEvidence(t *testing.T) {
 	now := time.Date(2026, 8, 11, 10, 0, 0, 0, time.UTC)
 	values := credentialValues()
-	connection := &fakeMarketConnection{frames: []brokerzerodha.MarketFrame{
-		{Binary: true, Data: quoteFrame(256265, now)},
-		{Binary: true, Data: quoteFrame(260105, now)},
-	}}
+	var frames []brokerzerodha.MarketFrame
+	var tokens []string
+	for index := 1; index <= 14; index++ {
+		token := uint32(100000 + index)
+		tokens = append(tokens, strconv.FormatUint(uint64(token), 10))
+		frames = append(frames, brokerzerodha.MarketFrame{Binary: true, Data: quoteFrame(token, now)})
+	}
+	connection := &fakeMarketConnection{frames: frames}
 	dependencies := websocketDependencies(now, &fakeMarketDialer{connection: connection})
+	dependencies.loadTokens = func(string) ([]string, error) { return tokens, nil }
 	dependencies.roundTripper = preflightRoundTripper(t)
 	dependencies.currentCommit = func() (string, error) { return strings.Repeat("b", 40), nil }
 	dependencies.loadBundleChecksum = func(string) (string, error) { return strings.Repeat("a", 64), nil }
@@ -363,22 +371,119 @@ func TestPreflightPublishesSafeCommitBoundEvidence(t *testing.T) {
 		evidenceRaw = append([]byte(nil), raw...)
 		return strings.Repeat("c", 64), nil
 	}
+	credentialsFile := filepath.Join(t.TempDir(), ".env")
+	if err := os.WriteFile(credentialsFile, []byte("UNCHANGED=value\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
 
 	var output bytes.Buffer
-	if err := run([]string{"preflight", "-runtime-bundle", "pinned.json", "-timeout", "1s", "-date", "2026-08-11", "-output", "preflight.json"}, mapLookup(values), &output, dependencies); err != nil {
-		t.Fatal(err)
+	if err := run([]string{"preflight", "-runtime-bundle", "pinned.json", "-timeout", "1s", "-mode", "SHADOW", "-credentials-file", credentialsFile, "-date", "2026-08-11", "-output", "preflight.json"}, mapLookup(values), &output, dependencies); err != nil {
+		t.Fatalf("err=%v output=%q", err, output.String())
 	}
 	var evidence marketvalidation.ZerodhaPreflightEvidence
 	if err := json.Unmarshal(evidenceRaw, &evidence); err != nil {
 		t.Fatal(err)
 	}
-	if evidence.ApplicationCommit != strings.Repeat("b", 40) || evidence.RuntimeBundleChecksum != strings.Repeat("a", 64) || evidence.TradingDate != "2026-08-11" || !evidence.AuthenticationPass || !evidence.RESTAuthPass || !evidence.WebSocketAuthPass || evidence.TokenMatches != 2 {
+	if evidence.ApplicationCommit != strings.Repeat("b", 40) || evidence.RuntimeBundleChecksum != strings.Repeat("a", 64) || evidence.TradingDate != "2026-08-11" || evidence.Mode != "SHADOW" || !evidence.AuthenticationPass || !evidence.RESTAuthPass || !evidence.WebSocketAuthPass || evidence.TokenMatches != 14 {
 		t.Fatalf("evidence=%+v", evidence)
 	}
 	if !strings.Contains(output.String(), "EVIDENCE=PASS\nEVIDENCE_PATH=preflight.json\nEVIDENCE_SHA256="+strings.Repeat("c", 64)+"\n") {
 		t.Fatalf("output=%q", output.String())
 	}
 	assertNoCredentialMaterial(t, output.String()+string(evidenceRaw), merge(values, map[string]string{accessTokenEnvironment: "generated-access-token"}), "")
+}
+
+func TestPreflightPersistsAndReusesAccessTokenWithoutSecondExchange(t *testing.T) {
+	now := time.Date(2026, 8, 13, 8, 0, 0, 0, time.UTC)
+	credentialsFile := filepath.Join(t.TempDir(), ".env")
+	if err := os.WriteFile(credentialsFile, []byte("KEEP=this\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	values := credentialValues()
+	exchanges := 0
+	roundTripper := roundTripFunc(func(request *http.Request) (*http.Response, error) {
+		switch request.URL.Path {
+		case "/session/token":
+			exchanges++
+			return response(http.StatusOK, `{"status":"success","data":{"access_token":"persisted-access-token"}}`), nil
+		case "/user/profile":
+			if got := request.Header.Get("Authorization"); got != "token public-key:persisted-access-token" {
+				t.Fatalf("authorization=%q", got)
+			}
+			return response(http.StatusOK, `{"status":"success","data":{"exchanges":["NSE"],"products":["CNC"],"order_types":["LIMIT"]}}`), nil
+		default:
+			t.Fatalf("unexpected request %s", request.URL.Path)
+			return nil, errors.New("unexpected request")
+		}
+	})
+	for attempt := 0; attempt < 2; attempt++ {
+		connection := &fakeMarketConnection{frames: []brokerzerodha.MarketFrame{
+			{Binary: true, Data: quoteFrame(256265, now)},
+			{Binary: true, Data: quoteFrame(260105, now)},
+		}}
+		dependencies := websocketDependencies(now, &fakeMarketDialer{connection: connection})
+		dependencies.roundTripper = roundTripper
+		var output bytes.Buffer
+		if err := run([]string{"preflight", "-runtime-bundle", "pinned.json", "-timeout", "1s", "-credentials-file", credentialsFile}, mapLookup(values), &output, dependencies); err != nil {
+			t.Fatalf("attempt %d: %v output=%q", attempt+1, err, output.String())
+		}
+		assertNoCredentialMaterial(t, output.String(), merge(values, map[string]string{accessTokenEnvironment: "persisted-access-token"}), "")
+	}
+	if exchanges != 1 {
+		t.Fatalf("request-token exchanges=%d", exchanges)
+	}
+	raw, err := os.ReadFile(credentialsFile)
+	if err != nil {
+		t.Fatal(err)
+	}
+	text := string(raw)
+	if !strings.Contains(text, "KEEP=this\n") || strings.Count(text, accessTokenEnvironment+"=") != 1 || strings.Count(text, accessExpiryEnvironment+"=") != 1 {
+		t.Fatalf("persisted dotenv shape invalid")
+	}
+}
+
+func TestPreflightExpiredAccessTokenReauthenticatesAndMalformedSessionFailsClosed(t *testing.T) {
+	now := time.Date(2026, 8, 13, 8, 0, 0, 0, time.UTC)
+	t.Run("expired reauthenticates", func(t *testing.T) {
+		credentialsFile := filepath.Join(t.TempDir(), ".env")
+		raw := accessTokenEnvironment + "=expired-token\n" + accessExpiryEnvironment + "=" + now.Add(-time.Minute).Format(time.RFC3339) + "\n"
+		if err := os.WriteFile(credentialsFile, []byte(raw), 0o600); err != nil {
+			t.Fatal(err)
+		}
+		exchanges := 0
+		connection := &fakeMarketConnection{frames: []brokerzerodha.MarketFrame{{Binary: true, Data: quoteFrame(256265, now)}, {Binary: true, Data: quoteFrame(260105, now)}}}
+		dependencies := websocketDependencies(now, &fakeMarketDialer{connection: connection})
+		dependencies.roundTripper = roundTripFunc(func(request *http.Request) (*http.Response, error) {
+			switch request.URL.Path {
+			case "/session/token":
+				exchanges++
+				return response(http.StatusOK, `{"status":"success","data":{"access_token":"renewed-token"}}`), nil
+			case "/user/profile":
+				return response(http.StatusOK, `{"status":"success","data":{"exchanges":["NSE"],"products":["CNC"],"order_types":["LIMIT"]}}`), nil
+			default:
+				return nil, errors.New("unexpected request")
+			}
+		})
+		if err := run([]string{"preflight", "-runtime-bundle", "pinned.json", "-timeout", "1s", "-credentials-file", credentialsFile}, mapLookup(credentialValues()), io.Discard, dependencies); err != nil {
+			t.Fatal(err)
+		}
+		if exchanges != 1 {
+			t.Fatalf("exchanges=%d", exchanges)
+		}
+	})
+	t.Run("malformed fails closed", func(t *testing.T) {
+		credentialsFile := filepath.Join(t.TempDir(), ".env")
+		if err := os.WriteFile(credentialsFile, []byte(accessTokenEnvironment+"=orphan-token\n"), 0o600); err != nil {
+			t.Fatal(err)
+		}
+		called := false
+		dependencies := commandDependencies{loadTokens: func(string) ([]string, error) { called = true; return nil, nil }}
+		var output bytes.Buffer
+		err := run([]string{"preflight", "-runtime-bundle", "pinned.json", "-credentials-file", credentialsFile}, mapLookup(credentialValues()), &output, dependencies)
+		if err == nil || called || !strings.Contains(output.String(), "Invalid persisted Zerodha session") || strings.Contains(output.String(), "orphan-token") {
+			t.Fatalf("err=%v called=%t output=%q", err, called, output.String())
+		}
+	})
 }
 
 func TestPreflightEvidenceRequiresDateAndOutputTogether(t *testing.T) {
@@ -730,6 +835,27 @@ func TestCommandSurfaceHasNoMutationCapability(t *testing.T) {
 		if err := run([]string{command}, mapLookup(nil), io.Discard, commandDependencies{}); !errors.Is(err, errInvalidCommand) {
 			t.Fatalf("command %q error = %v", command, err)
 		}
+	}
+}
+
+func TestShadowComposePassesRestoredSessionEnvironment(t *testing.T) {
+	raw, err := os.ReadFile(filepath.Join("..", "..", "compose.yaml"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	text := string(raw)
+	shadow := strings.Index(text, "  tradeedge-shadow:")
+	if shadow < 0 {
+		t.Fatal("tradeedge-shadow service missing")
+	}
+	section := text[shadow:]
+	for _, name := range []string{accessTokenEnvironment, accessExpiryEnvironment} {
+		if !strings.Contains(section, name+": ${"+name+":-}") {
+			t.Fatalf("SHADOW Compose does not pass %s", name)
+		}
+	}
+	if !strings.Contains(text, "[ -z \"$${"+accessTokenEnvironment+":-}\" ] || [ -z \"$${"+accessExpiryEnvironment+":-}\" ]") {
+		t.Fatal("Compose credential gate does not accept a complete restored session")
 	}
 }
 
