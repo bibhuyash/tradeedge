@@ -279,3 +279,9 @@ flowchart LR
 
 Only the selected option quote may price a fill or valuation. An open position
 retains its original option identity across rollover.
+
+Phase 8 M3 branches after mapping, strategy, and risk into a non-authoritative
+qualification sink: canonical spot/future/selected-option evidence -> SHADOW
+record -> timestamped option observations -> horizons and MFE/MAE -> same-option
+exit -> independent underlying scorecard -> atomic SHADOW checkpoint. This
+branch has no edge to BrokerPort mutation or authoritative accounting.

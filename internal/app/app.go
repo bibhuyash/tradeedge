@@ -20,6 +20,8 @@ import (
 	"github.com/bibhuyash/tradeedge/internal/notification"
 	"github.com/bibhuyash/tradeedge/internal/operations"
 	"github.com/bibhuyash/tradeedge/internal/platform/httpserver"
+	"github.com/bibhuyash/tradeedge/internal/qualification"
+	qualificationopshttp "github.com/bibhuyash/tradeedge/internal/qualification/opshttp"
 	strategyopshttp "github.com/bibhuyash/tradeedge/internal/strategy/opshttp"
 	strategyrunner "github.com/bibhuyash/tradeedge/internal/strategy/runner"
 )
@@ -35,20 +37,21 @@ func Run(ctx context.Context, cfg config.Config, logger *slog.Logger) error {
 }
 
 type Options struct {
-	MarketReadiness       httpserver.MarketReadinessSource
-	RuntimeReadiness      httpserver.RuntimeReadinessSource
-	Metrics               *prometheusmetrics.Recorder
-	Quality               opshttp.QualitySource
-	LatestObservations    opshttp.LatestSource
-	StrategyOperations    http.Handler
-	ExecutionOperations   http.Handler
-	IntegrationOperations http.Handler
-	IntegrationRuntime    interface{ Shutdown(context.Context) error }
-	StrategyRunner        interface{ Shutdown(context.Context) error }
-	RuntimeOperations     http.Handler
-	TradingRuntime        interface{ Shutdown(context.Context) error }
-	OperationalOperations http.Handler
-	NotificationRuntime   interface{ Shutdown(context.Context) error }
+	MarketReadiness         httpserver.MarketReadinessSource
+	RuntimeReadiness        httpserver.RuntimeReadinessSource
+	Metrics                 *prometheusmetrics.Recorder
+	Quality                 opshttp.QualitySource
+	LatestObservations      opshttp.LatestSource
+	StrategyOperations      http.Handler
+	ExecutionOperations     http.Handler
+	IntegrationOperations   http.Handler
+	IntegrationRuntime      interface{ Shutdown(context.Context) error }
+	StrategyRunner          interface{ Shutdown(context.Context) error }
+	RuntimeOperations       http.Handler
+	TradingRuntime          interface{ Shutdown(context.Context) error }
+	OperationalOperations   http.Handler
+	NotificationRuntime     interface{ Shutdown(context.Context) error }
+	QualificationOperations http.Handler
 }
 
 func RunWithMarketReadiness(
@@ -130,6 +133,17 @@ func RunWithOptions(
 			store, value, 2*cfg.ShutdownTimeout/10,
 		)
 	}
+	qualificationOperations := options.QualificationOperations
+	if qualificationOperations == nil {
+		engine, qualificationErr := qualification.New(qualification.DefaultPolicy(), nil)
+		if qualificationErr != nil {
+			return fmt.Errorf("compose qualification engine: %w", qualificationErr)
+		}
+		qualificationOperations, qualificationErr = qualificationopshttp.New(engine)
+		if qualificationErr != nil {
+			return fmt.Errorf("compose qualification operations: %w", qualificationErr)
+		}
+	}
 	operations := opshttp.Dependencies{Timeout: 2 * cfg.ShutdownTimeout / 10}
 	if options.MarketReadiness != nil {
 		operations.Readiness = options.MarketReadiness
@@ -149,15 +163,16 @@ func RunWithOptions(
 		}
 	}
 	server, err := httpserver.NewWithOptions(cfg.HTTPAddress, logger, readiness, httpserver.Options{
-		MarketReadiness:       options.MarketReadiness,
-		RuntimeReadiness:      options.RuntimeReadiness,
-		Metrics:               metrics.Handler(),
-		Operations:            opshttp.New(operations),
-		StrategyOperations:    strategyOperations,
-		ExecutionOperations:   options.ExecutionOperations,
-		IntegrationOperations: integrationOperations,
-		RuntimeOperations:     options.RuntimeOperations,
-		OperationalOperations: operationalOperations,
+		MarketReadiness:         options.MarketReadiness,
+		RuntimeReadiness:        options.RuntimeReadiness,
+		Metrics:                 metrics.Handler(),
+		Operations:              opshttp.New(operations),
+		StrategyOperations:      strategyOperations,
+		ExecutionOperations:     options.ExecutionOperations,
+		IntegrationOperations:   integrationOperations,
+		RuntimeOperations:       options.RuntimeOperations,
+		OperationalOperations:   operationalOperations,
+		QualificationOperations: qualificationOperations,
 	})
 	if err != nil {
 		return fmt.Errorf("create HTTP server: %w", err)

@@ -61,6 +61,10 @@ Each phase has objective entry and exit criteria. Passing a technical milestone 
   chain: spot signal, nearest eligible future reference, and one deterministic
   long-call option whose own quote is execution and P&L authority. EMA remains
   a reference candidate, not alpha-qualified.
+- Phase 8 M3 adds separate NIFTY and BANKNIFTY real-market SHADOW qualification
+  series, durable forward-outcome evidence, and transparent scorecards. The
+  engineering machine is releasable before real-market collection; EMA remains
+  disabled and not alpha-qualified.
 
 ## Invariants
 

@@ -1,0 +1,56 @@
+name: Phase 8 M3 shadow qualification
+
+on:
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  qualification-validation:
+    runs-on: ubuntu-latest
+    timeout-minutes: 55
+    steps:
+      - uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10 # v6
+      - uses: actions/setup-go@924ae3a1cded613372ab5595356fb5720e22ba16 # v6
+        with:
+          go-version-file: go.mod
+          cache: false
+      - name: Formatting and diff hygiene
+        run: |
+          test -z "$(gofmt -l .)"
+          git diff --check
+      - name: Phase 1-8, Day-0 and M1/M2 regressions
+        run: go test ./...
+      - name: Qualification deterministic replay 20x
+        run: go test ./internal/qualification/... ./internal/adapters/qualification/checkpointfile -count=20
+      - name: Full Ubuntu race suite
+        run: go test -race ./...
+      - name: Qualification race replay 20x
+        run: go test -race ./internal/qualification/... ./internal/adapters/qualification/checkpointfile -count=20
+      - name: Released boundary regressions
+        run: |
+          go test ./internal/marketdata/... ./internal/strategy/... ./internal/risk/...
+          go test ./internal/derivatives/... ./internal/execution/... ./internal/accounting/...
+          go test ./internal/notification/... ./internal/tradingruntime/... ./internal/marketvalidation/...
+          go test ./internal/platform/checkpointfile ./internal/releasegate/phase7closure/...
+      - name: Static checks and build
+        run: |
+          go vet ./...
+          go build ./...
+      - name: Credential scan
+        shell: bash
+        run: if git grep -nE '\b(sk-(proj-)?[A-Za-z0-9_]{20,}|ghp_[A-Za-z0-9]{20,}|gho_[A-Za-z0-9]{20,}|xox[baprs]-[A-Za-z0-9]{20,}|-----BEGIN (RSA |EC |OPENSSH )?PRIVATE KEY-----)' -- ':!go.sum'; then exit 1; fi
+      - name: Dependency-boundary scan
+        shell: bash
+        run: if grep -RInE --include='*.go' 'internal/(execution|accounting|adapters/broker|broker/zerodha)|kiteconnect' internal/qualification; then exit 1; fi
+      - name: Floating-point authority scan
+        shell: bash
+        run: if grep -RInE --include='*.go' --exclude='*_test.go' 'float32|float64' internal/qualification; then exit 1; fi
+      - name: Broker-mutation scan
+        shell: bash
+        run: if grep -RInE --include='*.go' 'PlaceOrder|ModifyOrder|CancelOrder|BrokerPort' internal/qualification internal/adapters/qualification; then exit 1; fi
+      - name: LIVE_ENABLED scan
+        shell: bash
+        run: if grep -RInE --include='*.go' 'LIVE_ENABLED|TradingModeLive|ModeLive' internal/qualification internal/adapters/qualification; then exit 1; fi

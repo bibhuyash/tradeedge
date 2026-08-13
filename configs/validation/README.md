@@ -6,6 +6,10 @@ M2 policy inputs. They do not authorize a session. `day1.example.json` and the
 Day-0 evidence example deliberately contain placeholders and must not pass
 unchanged.
 
+The `qualification.*.shadow.json` files are disabled Phase 8 M3 policy
+fixtures. They isolate NIFTY and BANKNIFTY and grant no PAPER, LIVE, or broker
+mutation authority.
+
 Keep the current calendar, source approval, Zerodha dump-derived instrument
 master/watchlist, runtime bundle, checksum-bound Telegram and Zerodha preflight
 evidence, finalized authorization manifest, and

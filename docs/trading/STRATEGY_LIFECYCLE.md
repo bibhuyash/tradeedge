@@ -64,3 +64,8 @@ Phase 8 M2 keeps EMA as a `REFERENCE_CANDIDATE`. Direction passes through the
 provider-neutral derivatives selection boundary before an option proposal may
 reach Phase 3. Passing PAPER evidence does not establish alpha or activate the
 disabled instance.
+
+Phase 8 M3 introduces `REFERENCE -> SHADOW_COLLECTING ->
+INSUFFICIENT_SAMPLE -> ELIGIBLE_FOR_REVIEW -> QUALIFIED|REJECTED` independently
+for NIFTY and BANKNIFTY. Eligibility is evidence readiness only. The final two
+states require an identified operator review and do not authorize execution.

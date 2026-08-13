@@ -78,3 +78,15 @@ NIFTYBEES is excluded. M2 establishes NIFTY spot for EMA signal authority, a
 checksum-resolved NIFTY future for forward strike context, and one selected
 NIFTY call's own quote for execution and valuation. SHADOW has no fills and
 PAPER is limited to one long option lot. The candidate remains disabled.
+
+## M3 shadow qualification amendment
+
+M3 generalizes the checksum-mapped derivatives boundary to exactly NIFTY and
+BANKNIFTY and records their evidence independently. `EMA_REFERENCE_V1` remains
+a disabled reference candidate. The qualification engine records conservative
+option-side entry/exit references, +1/+5/+15/+30 minute horizons, MFE/MAE,
+typed data-quality failures, transparent decision-time regime tags, and integer
+scorecards in durable SHADOW checkpoints. It cannot create OMS orders, fills,
+authoritative positions, or broker calls. Sample eligibility never promotes the
+candidate; `QUALIFIED` requires an explicit reviewed transition and still grants
+no PAPER or LIVE authority.
