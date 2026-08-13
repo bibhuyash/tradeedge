@@ -46,6 +46,7 @@ type Options struct {
 	RuntimeOperations       http.Handler
 	OperationalOperations   http.Handler
 	QualificationOperations http.Handler
+	ShadowOperations        http.Handler
 	Metrics                 http.Handler
 }
 
@@ -143,6 +144,9 @@ func NewHandlerWithOptions(process *Readiness, options Options) http.Handler {
 	}
 	if options.QualificationOperations != nil {
 		mux.Handle("/api/v1/qualification/", options.QualificationOperations)
+	}
+	if options.ShadowOperations != nil {
+		mux.Handle("/api/v1/shadow/", options.ShadowOperations)
 	}
 	return mux
 }

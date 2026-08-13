@@ -90,3 +90,22 @@ scorecards in durable SHADOW checkpoints. It cannot create OMS orders, fills,
 authoritative positions, or broker calls. Sample eligibility never promotes the
 candidate; `QUALIFIED` requires an explicit reviewed transition and still grants
 no PAPER or LIVE authority.
+
+## M4 live read-only SHADOW integration checklist
+
+- [x] First-class, commit/date/artifact-bound `SHADOW` authorization with
+  `QUALIFICATION_ONLY` scope and explicit PAPER/broker mutation prohibition.
+- [x] Separate completed one-minute candle and EMA state for NIFTY/BANKNIFTY.
+- [x] Checksum-derived current futures and bounded five-option universes.
+- [x] Released Phase 3 risk connected without Phase 4/OMS/paper/accounting edges.
+- [x] Qualification, Telegram, full-state restart, immutable session, and
+  separate multi-session scorecards.
+- [x] GET-only runtime/warmup/scorecard APIs and `tradeedge-shadow` Compose
+  service with a VCS-stamped binary.
+- [x] Operator mapping/bundle/authorization and later evidence tooling.
+- [ ] Real-market collection (requires explicit operator approval; not started
+  by engineering or CI).
+
+M4 engineering readiness does not establish alpha and does not authorize a
+market session. The candidate remains `REFERENCE_CANDIDATE` and
+`NOT_ALPHA_QUALIFIED`.

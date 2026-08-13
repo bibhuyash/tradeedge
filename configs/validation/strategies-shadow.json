@@ -1,0 +1,57 @@
+{
+  "schema_version": "market-validation-strategies/v1",
+  "instances": [
+    {
+      "strategy_id": "EMA_REFERENCE_V1",
+      "version": "1",
+      "classification": "REFERENCE_CANDIDATE",
+      "underlying": "NIFTY",
+      "enabled": true,
+      "cas_policy": "CAS_RESTRICTED",
+      "configuration_schema": "ema-reference-config/v1",
+      "configuration": {
+        "strategy_id": "EMA_REFERENCE_V1",
+        "version": "1",
+        "underlying": "NIFTY",
+        "enabled": true,
+        "timeframe": "1m",
+        "fast_ema_period": 20,
+        "slow_ema_period": 50,
+        "minimum_warmup_samples": 50,
+        "freshness_threshold_seconds": 90,
+        "allowed_session_regimes": ["NORMAL_TRADING"],
+        "max_simultaneous_qualification_position": 1,
+        "quantity_lots": 1,
+        "sizing_bps": 1000,
+        "exit_rule": "BEARISH_CROSSOVER_OR_EOD_CLOSE",
+        "calculation_policy": "fixed-point-ema-half-away-from-zero/v1"
+      }
+    },
+    {
+      "strategy_id": "EMA_REFERENCE_V1",
+      "version": "1",
+      "classification": "REFERENCE_CANDIDATE",
+      "underlying": "BANKNIFTY",
+      "enabled": true,
+      "cas_policy": "CAS_RESTRICTED",
+      "configuration_schema": "ema-reference-config/v1",
+      "configuration": {
+        "strategy_id": "EMA_REFERENCE_V1",
+        "version": "1",
+        "underlying": "BANKNIFTY",
+        "enabled": true,
+        "timeframe": "1m",
+        "fast_ema_period": 20,
+        "slow_ema_period": 50,
+        "minimum_warmup_samples": 50,
+        "freshness_threshold_seconds": 90,
+        "allowed_session_regimes": ["NORMAL_TRADING"],
+        "max_simultaneous_qualification_position": 1,
+        "quantity_lots": 1,
+        "sizing_bps": 1000,
+        "exit_rule": "BEARISH_CROSSOVER_OR_EOD_CLOSE",
+        "calculation_policy": "fixed-point-ema-half-away-from-zero/v1"
+      }
+    }
+  ]
+}

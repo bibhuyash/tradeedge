@@ -15,7 +15,7 @@ services:
           echo "zerodha runtime credential is unavailable" >&2
           exit 1
         fi
-        go build -o /tmp/tradeedge ./cmd/tradeedge
+        go build -buildvcs=true -o /tmp/tradeedge ./cmd/tradeedge
         exec /tmp/tradeedge
     ports:
       - "127.0.0.1:8080:8080"
@@ -60,3 +60,39 @@ services:
     cap_drop:
       - ALL
     stop_grace_period: 30s
+
+  tradeedge-shadow:
+    extends:
+      service: tradeedge-day0
+    ports:
+      - "127.0.0.1:8080:8080"
+    volumes:
+      - type: bind
+        source: .
+        target: /workspace
+        read_only: true
+      - type: bind
+        source: ./.cache/market-validation/shadow-checkpoint
+        target: /var/lib/tradeedge/checkpoint
+      - type: tmpfs
+        target: /run/tradeedge
+        tmpfs:
+          mode: 448
+    environment:
+      TRADEEDGE_ENV: production
+      TRADEEDGE_HTTP_ADDR: :8080
+      TRADEEDGE_TRADING_MODE: shadow
+      TRADEEDGE_ZERODHA_MODE: SHADOW
+      TRADEEDGE_ZERODHA_READ_ONLY: "true"
+      TRADEEDGE_RUNTIME_BUNDLE: /workspace/.cache/market-validation/config/runtime-bundle.shadow.json
+      TRADEEDGE_AUTHORIZATION_MANIFEST: /workspace/${TRADEEDGE_AUTHORIZATION_MANIFEST_HOST:?set the checksum-bound SHADOW manifest path}
+      TRADEEDGE_CHECKPOINT_ROOT: /var/lib/tradeedge/checkpoint
+      TRADEEDGE_OPERATOR_CONTROL_SOCKET: /run/tradeedge/operator.sock
+      TRADEEDGE_ZERODHA_API_KEY: ${TRADEEDGE_ZERODHA_API_KEY:?required}
+      TRADEEDGE_ZERODHA_API_SECRET: ${TRADEEDGE_ZERODHA_API_SECRET:?required}
+      TRADEEDGE_ZERODHA_REQUEST_TOKEN: ${TRADEEDGE_ZERODHA_REQUEST_TOKEN:-}
+      TRADEEDGE_ZERODHA_ACCESS_TOKEN: ${TRADEEDGE_ZERODHA_ACCESS_TOKEN:-}
+      TRADEEDGE_ZERODHA_ACCESS_TOKEN_EXPIRES_AT: ${TRADEEDGE_ZERODHA_ACCESS_TOKEN_EXPIRES_AT:-}
+      TRADEEDGE_TELEGRAM_ENABLED: "true"
+      TRADEEDGE_TELEGRAM_BOT_TOKEN: ${TRADEEDGE_TELEGRAM_BOT_TOKEN:?required}
+      TRADEEDGE_TELEGRAM_CHAT_ID: ${TRADEEDGE_TELEGRAM_CHAT_ID:?required}

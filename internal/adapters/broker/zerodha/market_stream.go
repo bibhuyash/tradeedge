@@ -43,23 +43,24 @@ const (
 )
 
 type MarketStreamConfig struct {
-	URL              string
-	MaxSubscriptions int
-	BufferCapacity   int
-	MaxReconnects    int
-	InitialBackoff   time.Duration
-	MaximumBackoff   time.Duration
-	LivenessTimeout  time.Duration
-	OrderTextPolicy  OrderTextPolicy
+	URL                 string
+	MaxSubscriptions    int
+	BufferCapacity      int
+	MaxReconnects       int
+	InitialBackoff      time.Duration
+	MaximumBackoff      time.Duration
+	LivenessTimeout     time.Duration
+	ResubscribeInterval time.Duration
+	OrderTextPolicy     OrderTextPolicy
 }
 
 func DefaultMarketStreamConfig() MarketStreamConfig {
-	return MarketStreamConfig{URL: defaultWebSocketURL, MaxSubscriptions: 250, BufferCapacity: 1024, MaxReconnects: 5, InitialBackoff: 250 * time.Millisecond, MaximumBackoff: 5 * time.Second, LivenessTimeout: 10 * time.Second, OrderTextPolicy: OrderTextFailClosed}
+	return MarketStreamConfig{URL: defaultWebSocketURL, MaxSubscriptions: 250, BufferCapacity: 1024, MaxReconnects: 5, InitialBackoff: 250 * time.Millisecond, MaximumBackoff: 5 * time.Second, LivenessTimeout: 10 * time.Second, ResubscribeInterval: 5 * time.Minute, OrderTextPolicy: OrderTextFailClosed}
 }
 
 func (c MarketStreamConfig) Validate() error {
 	parsed, err := url.Parse(c.URL)
-	if err != nil || parsed.Scheme != "wss" || parsed.Host == "" || parsed.User != nil || parsed.RawQuery != "" || parsed.Fragment != "" || c.MaxSubscriptions < 1 || c.MaxSubscriptions > 3000 || c.BufferCapacity < 1 || c.BufferCapacity > 65536 || c.MaxReconnects < 0 || c.MaxReconnects > 20 || c.InitialBackoff <= 0 || c.MaximumBackoff < c.InitialBackoff || c.MaximumBackoff > time.Minute || c.LivenessTimeout <= 0 || c.LivenessTimeout > time.Minute || (c.OrderTextPolicy != OrderTextFailClosed && c.OrderTextPolicy != OrderTextObserveOnly) {
+	if err != nil || parsed.Scheme != "wss" || parsed.Host == "" || parsed.User != nil || parsed.RawQuery != "" || parsed.Fragment != "" || c.MaxSubscriptions < 1 || c.MaxSubscriptions > 3000 || c.BufferCapacity < 1 || c.BufferCapacity > 65536 || c.MaxReconnects < 0 || c.MaxReconnects > 20 || c.InitialBackoff <= 0 || c.MaximumBackoff < c.InitialBackoff || c.MaximumBackoff > time.Minute || c.LivenessTimeout <= 0 || c.LivenessTimeout > time.Minute || c.ResubscribeInterval <= 0 || c.ResubscribeInterval > time.Hour || (c.OrderTextPolicy != OrderTextFailClosed && c.OrderTextPolicy != OrderTextObserveOnly) {
 		return ErrInvalidConfiguration
 	}
 	return nil
@@ -89,6 +90,7 @@ type MarketStreamSnapshot struct {
 	UnknownTextMessages   uint64            `json:"unknown_text_messages"`
 	Observations          uint64            `json:"observations"`
 	UnexpectedOrderFrames uint64            `json:"unexpected_order_frames"`
+	Resubscriptions       uint64            `json:"resubscriptions"`
 	LastFrameAt           time.Time         `json:"last_frame_at,omitempty"`
 	LastObservationAt     time.Time         `json:"last_observation_at,omitempty"`
 	LastError             string            `json:"last_error,omitempty"`
@@ -236,17 +238,26 @@ func (c *gorillaMarketConnection) Close() error {
 }
 
 type MarketStream struct {
-	config   MarketStreamConfig
-	dialer   MarketDialer
-	session  *SessionManager
-	clock    Clock
-	recorder brokertelemetry.Recorder
-	mu       sync.RWMutex
-	snapshot MarketStreamSnapshot
-	cancel   context.CancelFunc
-	running  bool
-	closed   bool
-	position int64
+	config          MarketStreamConfig
+	dialer          MarketDialer
+	session         *SessionManager
+	clock           Clock
+	recorder        brokertelemetry.Recorder
+	mu              sync.RWMutex
+	snapshot        MarketStreamSnapshot
+	cancel          context.CancelFunc
+	running         bool
+	closed          bool
+	position        int64
+	updates         chan subscriptionUpdate
+	desiredTokens   []string
+	desiredNumeric  []uint32
+	lastResubscribe time.Time
+}
+
+type subscriptionUpdate struct {
+	tokens  []string
+	numeric []uint32
 }
 
 func NewMarketStream(config MarketStreamConfig, dialer MarketDialer, session *SessionManager, clock Clock, recorder brokertelemetry.Recorder) (*MarketStream, error) {
@@ -256,7 +267,31 @@ func NewMarketStream(config MarketStreamConfig, dialer MarketDialer, session *Se
 	if clock == nil {
 		clock = RealClock{}
 	}
-	return &MarketStream{config: config, dialer: dialer, session: session, clock: clock, recorder: brokertelemetry.Safe(recorder), snapshot: MarketStreamSnapshot{State: StreamStopped}}, nil
+	return &MarketStream{config: config, dialer: dialer, session: session, clock: clock, recorder: brokertelemetry.Safe(recorder), snapshot: MarketStreamSnapshot{State: StreamStopped}, updates: make(chan subscriptionUpdate, 1)}, nil
+}
+
+// UpdateSubscriptions replaces the bounded desired universe. It is rate
+// limited and serialized onto the active read-only websocket connection.
+func (s *MarketStream) UpdateSubscriptions(tokens []string) error {
+	normalized, numeric, err := normalizeTokens(tokens, s.config.MaxSubscriptions)
+	if err != nil {
+		return err
+	}
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	now := s.clock.Now().UTC()
+	if !s.running || s.closed || (!s.lastResubscribe.IsZero() && now.Sub(s.lastResubscribe) < s.config.ResubscribeInterval) {
+		return ErrUnavailable
+	}
+	update := subscriptionUpdate{tokens: normalized, numeric: numeric}
+	select {
+	case s.updates <- update:
+		s.desiredTokens, s.desiredNumeric = append([]string(nil), normalized...), append([]uint32(nil), numeric...)
+		s.lastResubscribe = now
+		return nil
+	default:
+		return ErrMarketStreamOverflow
+	}
 }
 
 func (s *MarketStream) Stream(ctx context.Context, tokens []string, sink marketdata.ObservationSink) error {
@@ -274,12 +309,9 @@ func (s *MarketStream) Stream(ctx context.Context, tokens []string, sink marketd
 	}
 	runCtx, cancel := context.WithCancel(ctx)
 	s.running, s.cancel = true, cancel
+	s.desiredTokens, s.desiredNumeric = append([]string(nil), tokens...), append([]uint32(nil), numeric...)
 	s.snapshot.Subscriptions = len(tokens)
 	s.mu.Unlock()
-	expectedTokens := make(map[string]struct{}, len(tokens))
-	for _, token := range tokens {
-		expectedTokens[token] = struct{}{}
-	}
 	defer func() {
 		cancel()
 		s.mu.Lock()
@@ -288,8 +320,15 @@ func (s *MarketStream) Stream(ctx context.Context, tokens []string, sink marketd
 	}()
 
 	backoff := s.config.InitialBackoff
-	matchedTokens := make(map[string]struct{}, len(expectedTokens))
+	matchedTokens := make(map[string]struct{}, len(tokens))
 	for attempt := 0; attempt <= s.config.MaxReconnects; attempt++ {
+		s.mu.RLock()
+		attemptTokens, attemptNumeric := append([]string(nil), s.desiredTokens...), append([]uint32(nil), s.desiredNumeric...)
+		s.mu.RUnlock()
+		expectedTokens := make(map[string]struct{}, len(attemptTokens))
+		for _, token := range attemptTokens {
+			expectedTokens[token] = struct{}{}
+		}
 		endpoint, endpointErr := s.endpoint()
 		if endpointErr != nil {
 			s.setFailure(StreamExpired, attempt, endpointErr)
@@ -307,7 +346,7 @@ func (s *MarketStream) Stream(ctx context.Context, tokens []string, sink marketd
 			s.mu.Unlock()
 		}
 		if connectErr == nil {
-			connectErr = subscribe(runCtx, connection, numeric)
+			connectErr = subscribe(runCtx, connection, attemptNumeric)
 			if connectErr == nil {
 				s.mu.Lock()
 				s.snapshot.SubscribeSent = true
@@ -366,6 +405,33 @@ func subscribe(ctx context.Context, connection MarketConnection, tokens []uint32
 	return connection.WriteJSON(ctx, map[string]any{"a": "mode", "v": []any{"full", tokens}})
 }
 
+func replaceSubscriptions(ctx context.Context, connection MarketConnection, expected map[string]struct{}, update subscriptionUpdate) error {
+	old := make([]uint32, 0, len(expected))
+	for token := range expected {
+		value, err := strconv.ParseUint(token, 10, 32)
+		if err != nil {
+			return ErrInvalidConfiguration
+		}
+		old = append(old, uint32(value))
+	}
+	sort.Slice(old, func(i, j int) bool { return old[i] < old[j] })
+	if len(old) > 0 {
+		if err := connection.WriteJSON(ctx, map[string]any{"a": "unsubscribe", "v": old}); err != nil {
+			return err
+		}
+	}
+	if err := subscribe(ctx, connection, update.numeric); err != nil {
+		return err
+	}
+	for token := range expected {
+		delete(expected, token)
+	}
+	for _, token := range update.tokens {
+		expected[token] = struct{}{}
+	}
+	return nil
+}
+
 func (s *MarketStream) consume(ctx context.Context, connection MarketConnection, expectedTokens, matchedTokens map[string]struct{}, sink marketdata.ObservationSink) error {
 	frames := make(chan MarketFrame, s.config.BufferCapacity)
 	errorsCh := make(chan error, 1)
@@ -395,6 +461,14 @@ func (s *MarketStream) consume(ctx context.Context, connection MarketConnection,
 		case err := <-errorsCh:
 			s.recordReadFailure(err)
 			return err
+		case update := <-s.updates:
+			if err := replaceSubscriptions(ctx, connection, expectedTokens, update); err != nil {
+				return err
+			}
+			s.mu.Lock()
+			s.snapshot.Subscriptions = len(update.tokens)
+			s.snapshot.Resubscriptions++
+			s.mu.Unlock()
 		case frame := <-frames:
 			now := s.clock.Now().UTC()
 			messageType := marketFrameType(frame)

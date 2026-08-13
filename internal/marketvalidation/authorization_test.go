@@ -31,3 +31,31 @@ func TestFullPipelineAuthorizationWithNoneIsStrategyBlocked(t *testing.T) {
 		t.Fatalf("got %v", err)
 	}
 }
+
+func TestShadowAuthorizationShapeIsQualificationOnlyAndCannotAuthorizePaper(t *testing.T) {
+	value := authorizationShape(ScopeQualificationOnly)
+	digest := strings.Repeat("a", 64)
+	artifact := AuthorizedArtifact{Path: "qualification.json", SHA256: digest, Identity: digest}
+	value.SchemaVersion = ShadowAuthorizationSchemaVersion
+	value.Mode = "SHADOW"
+	value.PaperCapitalMinor = 0
+	value.RealBrokerMutationProhibited = true
+	value.PaperExecutionProhibited = true
+	value.QualificationEnabled = true
+	value.ApprovedUnderlyings = []string{"BANKNIFTY", "NIFTY"}
+	value.Artifacts.QualificationNIFTY = &artifact
+	value.Artifacts.QualificationBANKNIFTY = &artifact
+	value.Strategy = AuthorizedStrategy{Name: "EMA_REFERENCE_V1", Version: "1", Classification: "REFERENCE_CANDIDATE", ConfigurationHash: digest, CASPolicy: "CAS_RESTRICTED", Enabled: true}
+	if err := validateAuthorizationShape(value); err != nil {
+		t.Fatalf("valid SHADOW shape rejected: %v", err)
+	}
+	value.Scope = ScopeOperationsOnly
+	if err := validateAuthorizationShape(value); !errors.Is(err, ErrStrategyBlocked) {
+		t.Fatalf("SHADOW PAPER scope = %v", err)
+	}
+	value.Scope = ScopeQualificationOnly
+	value.Mode = "PAPER"
+	if err := validateAuthorizationShape(value); err == nil {
+		t.Fatal("SHADOW authorization accepted as PAPER")
+	}
+}

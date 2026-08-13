@@ -140,3 +140,14 @@ and owns isolated NIFTY/BANKNIFTY records, analytical shadow positions, forward
 horizons, regime tags, and scorecards. Its checkpoint adapter reuses atomic
 generation storage in SHADOW mode. The component imports no OMS, accounting,
 broker adapter, or Zerodha SDK and exposes only bounded GET operations.
+
+## Phase 8 M4 live SHADOW composition
+
+`internal/shadowruntime` owns exchange-time completed-candle aggregation,
+separate NIFTY/BANKNIFTY EMA state, bounded future/option selection, the released
+Phase 3 gateway, qualification coordination, session and multi-session
+scorecards, and full-state checkpoints. `internal/app/shadow_runtime.go` composes
+only read-only Zerodha market data and outbound Telegram around it. The object
+graph deliberately has no Phase 4 coordinator, OMS, paper broker, fill store, or
+Phase 6 accounting dependency. The GET-only `/api/v1/shadow/` surface exposes
+warmup, selections, risk status, and scorecards without mutation routes.

@@ -36,6 +36,12 @@ func Render(event Event) RenderedMessage {
 		body = "TRADEEDGE SHADOW — " + d.Subject + "; qualification=" + d.State
 	case KindShadowQualificationResult:
 		body = "TRADEEDGE SHADOW RESULT — " + d.Subject + "; qualification=" + d.State
+	case KindShadowSessionReady:
+		body = "TRADEEDGE SHADOW SESSION READY — Mode: SHADOW; " + d.Subject + "; Zerodha: CONNECTED; Strategy: EMA_REFERENCE_V1; Qualification: SHADOW_COLLECTING; Broker Orders: DISABLED"
+	case KindShadowSessionClosed:
+		body = "TRADEEDGE SHADOW SESSION CLOSED — " + d.Subject + "; Broker Orders: DISABLED"
+	case KindShadowSignal:
+		body = fmt.Sprintf("TRADEEDGE SHADOW SIGNAL — Underlying: %s; Signal: %s; Spot: %d; Future: %s @ %d; Option: %s strike=%d %s bid=%d ask=%d ltp=%d; EMA20=%d; EMA50=%d; Regime=%s; Risk=%s; Qualification=SHADOW_COLLECTING; Broker Order=NONE", d.Underlying, d.Subject, d.SpotMinor, d.FutureInstrumentID, d.FutureMinor, d.Expiry, d.StrikeMinor, d.OptionType, d.BidMinor, d.AskMinor, d.LTPMinor, d.EMA20Scaled, d.EMA50Scaled, d.Regime, d.State)
 	default:
 		body = strings.ReplaceAll(string(event.Kind), "_", " ") + reasonSuffix(d.Reason)
 	}

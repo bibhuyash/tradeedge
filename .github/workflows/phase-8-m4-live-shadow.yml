@@ -1,0 +1,63 @@
+name: Phase 8 M4 live read-only SHADOW
+
+on:
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  live-shadow-validation:
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+    steps:
+      - uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10 # v6
+      - uses: actions/setup-go@924ae3a1cded613372ab5595356fb5720e22ba16 # v6
+        with:
+          go-version-file: go.mod
+          cache: false
+      - name: Formatting and diff hygiene
+        run: |
+          test -z "$(gofmt -l .)"
+          git diff --check
+      - name: Phase 1-8 and Day-0 regressions
+        run: go test ./...
+      - name: Live SHADOW deterministic composition 20x
+        run: go test ./internal/shadowruntime/... ./internal/adapters/shadowruntime/checkpointfile ./internal/marketvalidation -count=20
+      - name: Full Ubuntu race suite
+        run: go test -race ./...
+      - name: Live SHADOW race replay 20x
+        run: go test -race ./internal/shadowruntime/... ./internal/adapters/shadowruntime/checkpointfile -count=20
+      - name: Released boundary regressions
+        run: |
+          go test ./internal/marketdata/... ./internal/derivatives/... ./internal/risk/...
+          go test ./internal/qualification/... ./internal/notification/... ./internal/platform/checkpointfile
+          go test ./internal/execution/... ./internal/accounting/... ./internal/tradingruntime/... ./internal/marketvalidation/...
+      - name: Static checks and build
+        run: |
+          go vet ./...
+          go build ./...
+      - name: Compose validation
+        env:
+          TRADEEDGE_AUTHORIZATION_MANIFEST_HOST: .cache/market-validation/authorization.json
+          TRADEEDGE_ZERODHA_API_KEY: compose-validation-only
+          TRADEEDGE_ZERODHA_API_SECRET: compose-validation-only
+          TRADEEDGE_TELEGRAM_BOT_TOKEN: compose-validation-only
+          TRADEEDGE_TELEGRAM_CHAT_ID: compose-validation-only
+        run: docker compose --env-file .env.example config --quiet
+      - name: Credential scan
+        shell: bash
+        run: if git grep -nE '\b(sk-(proj-)?[A-Za-z0-9_]{20,}|ghp_[A-Za-z0-9]{20,}|gho_[A-Za-z0-9]{20,}|xox[baprs]-[A-Za-z0-9]{20,}|-----BEGIN (RSA |EC |OPENSSH )?PRIVATE KEY-----)' -- ':!go.sum'; then exit 1; fi
+      - name: SHADOW dependency-boundary scan
+        shell: bash
+        run: if grep -RInE --include='*.go' 'internal/(execution|accounting|adapters/broker/paper)|PaperBroker|ExecutionCoordinator|BrokerPort' internal/shadowruntime internal/adapters/shadowruntime; then exit 1; fi
+      - name: Floating-point authority scan
+        shell: bash
+        run: if grep -RInE --include='*.go' --exclude='*_test.go' 'float32|float64' internal/shadowruntime internal/qualification; then exit 1; fi
+      - name: Broker-mutation scan
+        shell: bash
+        run: if grep -RInE --include='*.go' 'PlaceOrder|ModifyOrder|CancelOrder|SubmitOrder|PaperBroker' internal/shadowruntime internal/adapters/shadowruntime internal/app/shadow_runtime.go; then exit 1; fi
+      - name: LIVE_ENABLED scan
+        shell: bash
+        run: if grep -RInE --include='*.go' 'LIVE_ENABLED|TradingModeLive|ModeLive' internal/shadowruntime internal/adapters/shadowruntime internal/app/shadow_runtime.go; then exit 1; fi

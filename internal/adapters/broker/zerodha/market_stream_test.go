@@ -245,6 +245,73 @@ func TestMarketStreamReconnectsAndResubscribes(t *testing.T) {
 	}
 }
 
+func TestMarketStreamReplacesBoundedSubscriptionsDeterministically(t *testing.T) {
+	now := time.Date(2026, 8, 10, 4, 0, 0, 0, time.UTC)
+	credentials, err := (EnvCredentialSource{Lookup: func(key string) (string, bool) {
+		values := map[string]string{"TRADEEDGE_ZERODHA_API_KEY": "key", "TRADEEDGE_ZERODHA_API_SECRET": "secret", "TRADEEDGE_ZERODHA_ACCESS_TOKEN": "access", "TRADEEDGE_ZERODHA_ACCESS_TOKEN_EXPIRES_AT": now.Add(time.Hour).Format(time.RFC3339)}
+		value, ok := values[key]
+		return value, ok
+	}}).Load(context.Background())
+	if err != nil {
+		t.Fatal(err)
+	}
+	clock := fixedClock{now}
+	session := NewSessionManager(credentials, nil, &clock, nil)
+	connection := &fakeMarketConnection{}
+	dialer := &fakeMarketDialer{connections: []*fakeMarketConnection{connection}}
+	cfg := DefaultMarketStreamConfig()
+	cfg.MaxSubscriptions = 3
+	cfg.ResubscribeInterval = time.Nanosecond
+	cfg.LivenessTimeout = time.Second
+	stream, err := NewMarketStream(cfg, dialer, session, &clock, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	ctx, cancel := context.WithCancel(context.Background())
+	done := make(chan error, 1)
+	go func() {
+		done <- stream.Stream(ctx, []string{"2", "1"}, func(context.Context, marketdata.Observation) error { return nil })
+	}()
+	deadline := time.Now().Add(time.Second)
+	for {
+		connection.mu.Lock()
+		writes := len(connection.writes)
+		connection.mu.Unlock()
+		if writes >= 2 {
+			break
+		}
+		if time.Now().After(deadline) {
+			t.Fatal("initial subscription not written")
+		}
+		time.Sleep(time.Millisecond)
+	}
+	if err = stream.UpdateSubscriptions([]string{"3", "2"}); err != nil {
+		t.Fatal(err)
+	}
+	deadline = time.Now().Add(time.Second)
+	for {
+		connection.mu.Lock()
+		writes := append([]any(nil), connection.writes...)
+		connection.mu.Unlock()
+		if len(writes) >= 5 {
+			wantUnsubscribe := map[string]any{"a": "unsubscribe", "v": []uint32{1, 2}}
+			if !reflect.DeepEqual(writes[2], wantUnsubscribe) {
+				t.Fatalf("unsubscribe = %#v", writes[2])
+			}
+			break
+		}
+		if time.Now().After(deadline) {
+			t.Fatalf("replacement writes = %#v", writes)
+		}
+		time.Sleep(time.Millisecond)
+	}
+	cancel()
+	<-done
+	if snapshot := stream.Snapshot(); snapshot.Resubscriptions != 1 || snapshot.Subscriptions != 2 {
+		t.Fatalf("snapshot = %#v", snapshot)
+	}
+}
+
 func TestMarketStreamBlocksUnexpectedOrderFrame(t *testing.T) {
 	stream := &MarketStream{config: MarketStreamConfig{OrderTextPolicy: OrderTextFailClosed}}
 	messageType, err := parseTextMessage([]byte(`{"type":"order","data":{}}`))

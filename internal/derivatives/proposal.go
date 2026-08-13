@@ -2,6 +2,7 @@ package derivatives
 
 import (
 	"errors"
+	"strings"
 	"time"
 
 	"github.com/bibhuyash/tradeedge/internal/domain"
@@ -43,17 +44,23 @@ func NewOptionProposal(input ProposalInput) (strategymodel.TradeProposal, error)
 	if input.Side == domain.SideSell && (input.ExistingOption.IsZero() || input.ExistingOption != input.Option.Instrument.ID()) {
 		return strategymodel.TradeProposal{}, errors.New("exit must retain authoritative open option identity")
 	}
-	definitionID, _ := strategymodel.NewDefinitionID("nifty-ema-crossover-paper")
-	manifest := strategymodel.VersionManifest{DefinitionID: definitionID, ImplementationVersion: "nifty-ema-crossover/v1", InputContractVersion: ProposalBridgeVersion, ConfigurationSchemaVersion: "nifty-ema-crossover-config/v1", StateSchemaVersion: "nifty-ema-crossover-state/v1", ResultSchemaVersion: "strategy-result/v1", ProposalSchemaVersion: "proposal/v1"}
+	underlying := strings.ToLower(string(input.Future.Instrument.UnderlyingID()))
+	if underlying != "nifty" && underlying != "banknifty" || input.Option.Instrument.UnderlyingID() != input.Future.Instrument.UnderlyingID() {
+		return strategymodel.TradeProposal{}, ErrInvalidPolicy
+	}
+	definitionID, _ := strategymodel.NewDefinitionID("ema-reference-v1")
+	manifest := strategymodel.VersionManifest{DefinitionID: definitionID, ImplementationVersion: "ema-reference-v1", InputContractVersion: ProposalBridgeVersion, ConfigurationSchemaVersion: "ema-reference-config/v1", StateSchemaVersion: "ema-reference-state/v1", ResultSchemaVersion: "strategy-result/v1", ProposalSchemaVersion: "proposal/v1"}
 	versionID, err := strategymodel.NewVersionID(manifest)
 	if err != nil {
 		return strategymodel.TradeProposal{}, err
 	}
-	configuration, err := strategymodel.NewStrategyConfiguration("nifty-ema-crossover-config/v1", []byte(`{"phase8_m2":"connected-option"}`))
+	configuration, err := strategymodel.NewStrategyConfiguration("ema-reference-config/v1", []byte(`{"phase8_m4":"live-read-only-shadow"}`))
 	if err != nil {
 		return strategymodel.TradeProposal{}, err
 	}
-	instanceID, _ := domain.NewStrategyID("nifty-ema-crossover-paper")
+	// Qualification state is partitioned by underlying. The Phase 3 portfolio
+	// allocation deliberately remains one bounded reference-candidate budget.
+	instanceID, _ := domain.NewStrategyID("ema-reference-v1")
 	instanceRevision, err := strategymodel.NewInstanceRevisionID(instanceID, versionID, configuration.Hash(), 1)
 	if err != nil {
 		return strategymodel.TradeProposal{}, err
@@ -69,10 +76,10 @@ func NewOptionProposal(input ProposalInput) (strategymodel.TradeProposal, error)
 		Legs:          []strategymodel.ProposalLeg{{InstrumentID: input.Option.Instrument.ID(), Side: input.Side, Ratio: input.QuantityLots, ReferencePrice: input.OptionPrice, MaxDeviationBPS: 500}},
 		Sizing:        strategymodel.SizingIntent{Kind: strategymodel.SizingStrategyBudgetBPS, ValueBPS: input.SizingBPS},
 		ValidFrom:     input.At, ExpiresAt: input.At.Add(5 * time.Second), RationaleCode: rationale,
-		Explanation: "EMA reference direction with NIFTY future context and selected-option execution authority",
+		Explanation: "EMA reference direction with futures context and selected-option qualification authority",
 		Evidence: []strategymodel.Evidence{
-			{Code: "NIFTY_SPOT", SourceEventIDs: []marketmodel.EventID{input.SignalEventID}, Value: input.Spot.MinorUnits(), Unit: "INR_MINOR", Explanation: "signal authority only"},
-			{Code: "NIFTY_FUTURE", SourceEventIDs: []marketmodel.EventID{input.SignalEventID}, Value: input.FuturePrice.MinorUnits(), Unit: "INR_MINOR", Explanation: "forward selection context only"},
+			{Code: strings.ToUpper(underlying) + "_SPOT", SourceEventIDs: []marketmodel.EventID{input.SignalEventID}, Value: input.Spot.MinorUnits(), Unit: "INR_MINOR", Explanation: "signal authority only"},
+			{Code: strings.ToUpper(underlying) + "_FUTURE", SourceEventIDs: []marketmodel.EventID{input.SignalEventID}, Value: input.FuturePrice.MinorUnits(), Unit: "INR_MINOR", Explanation: "forward selection context only"},
 			{Code: "OPTION_MARKET", SourceEventIDs: []marketmodel.EventID{input.SignalEventID}, Value: input.OptionPrice.MinorUnits(), Unit: "INR_MINOR", Explanation: "sole execution and valuation authority"},
 			{Code: "FAST_EMA", SourceEventIDs: []marketmodel.EventID{input.SignalEventID}, Value: input.FastEMAScaled, Unit: "PRICE_MINOR_UNITS_X1E6", Explanation: "reference signal"},
 			{Code: "SLOW_EMA", SourceEventIDs: []marketmodel.EventID{input.SignalEventID}, Value: input.SlowEMAScaled, Unit: "PRICE_MINOR_UNITS_X1E6", Explanation: "reference signal"},

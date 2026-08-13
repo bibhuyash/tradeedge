@@ -20,8 +20,10 @@ import (
 	"time"
 
 	telegramadapter "github.com/bibhuyash/tradeedge/internal/adapters/notification/telegram"
+	"github.com/bibhuyash/tradeedge/internal/config"
 	"github.com/bibhuyash/tradeedge/internal/marketvalidation"
 	"github.com/bibhuyash/tradeedge/internal/notification"
+	"github.com/bibhuyash/tradeedge/internal/shadowruntime"
 )
 
 func main() {
@@ -33,7 +35,7 @@ func main() {
 
 func run(args []string) error {
 	if len(args) == 0 {
-		return errors.New("usage: tradeedge-validation <readiness|telegram-check|calendar-check|generate-mappings|generate-derivatives|authorize|day0-gate|day1-gate|close-day0|finalize-day|scorecard>")
+		return errors.New("usage: tradeedge-validation <readiness|telegram-check|calendar-check|generate-mappings|generate-derivatives|generate-shadow-derivatives|authorize|day0-gate|day1-gate|close-day0|finalize-day|scorecard>")
 	}
 	switch args[0] {
 	case "readiness":
@@ -46,6 +48,12 @@ func run(args []string) error {
 		return generateMappings(args[1:])
 	case "generate-derivatives":
 		return generateDerivativeMappings(args[1:])
+	case "generate-shadow-derivatives":
+		return generateShadowDerivativeMappings(args[1:])
+	case "build-shadow-bundle":
+		return buildShadowBundle(args[1:])
+	case "finalize-shadow-session":
+		return finalizeShadowSession(args[1:])
 	case "authorize":
 		return authorize(args[1:])
 	case "day0-gate":
@@ -61,6 +69,118 @@ func run(args []string) error {
 	default:
 		return errors.New("unknown market-validation command")
 	}
+}
+
+func finalizeShadowSession(args []string) error {
+	set := flag.NewFlagSet("finalize-shadow-session", flag.ContinueOnError)
+	input, output := set.String("input", "", "closed real SHADOW session draft"), set.String("output", "", "evidence/real-market/YYYY-MM-DD/shadow-session.json")
+	if err := set.Parse(args); err != nil || *input == "" || *output == "" {
+		return errors.New("finalize-shadow-session requires input and output")
+	}
+	clean := filepath.ToSlash(filepath.Clean(*output))
+	if !strings.Contains(clean, "evidence/real-market/") || !strings.HasSuffix(clean, "/shadow-session.json") {
+		return errors.New("real SHADOW evidence output path required")
+	}
+	var draft shadowruntime.RealMarketEvidence
+	if err := decodeFile(*input, &draft); err != nil {
+		return err
+	}
+	value, err := shadowruntime.FinalizeRealMarketEvidence(draft)
+	if err != nil {
+		return err
+	}
+	raw, err := json.MarshalIndent(value, "", "  ")
+	if err != nil {
+		return err
+	}
+	return writeEvidence(*output, append(raw, '\n'))
+}
+
+func buildShadowBundle(args []string) error {
+	set := flag.NewFlagSet("build-shadow-bundle", flag.ContinueOnError)
+	calendar := set.String("calendar", "", "approved calendar")
+	master := set.String("instrument-master", "", "generated instrument master")
+	watchlist := set.String("watchlist", "", "generated bounded watchlist")
+	strategies := set.String("strategies", "", "SHADOW strategy configuration")
+	portfolio := set.String("portfolio", "", "portfolio configuration")
+	risk := set.String("risk", "", "Phase 3 risk configuration")
+	nifty := set.String("qualification-nifty", "", "NIFTY qualification configuration")
+	bank := set.String("qualification-banknifty", "", "BANKNIFTY qualification configuration")
+	output := set.String("output", "", "runtime bundle output")
+	if err := set.Parse(args); err != nil || *calendar == "" || *master == "" || *watchlist == "" || *strategies == "" || *portfolio == "" || *risk == "" || *nifty == "" || *bank == "" || *output == "" {
+		return errors.New("build-shadow-bundle requires all checksum-pinned input paths and output")
+	}
+	base := filepath.Dir(*output)
+	ref := func(path string) (config.FileReference, error) {
+		raw, err := os.ReadFile(path)
+		if err != nil {
+			return config.FileReference{}, err
+		}
+		sum := sha256.Sum256(raw)
+		relative, err := filepath.Rel(base, path)
+		if err != nil {
+			return config.FileReference{}, err
+		}
+		return config.FileReference{Path: filepath.ToSlash(relative), SHA256: hex.EncodeToString(sum[:])}, nil
+	}
+	paths := []string{*calendar, *master, *watchlist, *strategies, *portfolio, *risk, *nifty, *bank}
+	refs := make([]config.FileReference, len(paths))
+	for index, path := range paths {
+		value, err := ref(path)
+		if err != nil {
+			return err
+		}
+		refs[index] = value
+	}
+	manifest := config.RuntimeBundleManifest{SchemaVersion: config.RuntimeBundleSchemaVersion, Mode: config.ZerodhaModeShadow, Calendar: refs[0], InstrumentMaster: refs[1], Watchlist: refs[2], Strategies: refs[3], Portfolio: refs[4], Risk: refs[5], QualificationNIFTY: &refs[6], QualificationBANKNIFTY: &refs[7]}
+	raw, err := json.MarshalIndent(manifest, "", "  ")
+	if err != nil {
+		return err
+	}
+	return writeEvidence(*output, append(raw, '\n'))
+}
+
+func generateShadowDerivativeMappings(args []string) error {
+	set := flag.NewFlagSet("generate-shadow-derivatives", flag.ContinueOnError)
+	dump := set.String("dump", "", "current Zerodha instruments CSV")
+	nifty := set.Int64("nifty-forward-minor", 0, "accepted NIFTY future reference in INR minor units")
+	bank := set.Int64("banknifty-forward-minor", 0, "accepted BANKNIFTY future reference in INR minor units")
+	asOfText, fromText, untilText := set.String("as-of", "", "RFC3339 dump time"), set.String("valid-from", "", "RFC3339 mapping start"), set.String("valid-until", "", "RFC3339 mapping expiry")
+	masterOut, watchlistOut, selectionOut := set.String("master-output", "", "instrument master JSON"), set.String("watchlist-output", "", "watchlist JSON"), set.String("selection-output", "", "resolved selection JSON")
+	if err := set.Parse(args); err != nil || *dump == "" || *nifty <= 0 || *bank <= 0 || *asOfText == "" || *fromText == "" || *untilText == "" || *masterOut == "" || *watchlistOut == "" || *selectionOut == "" {
+		return errors.New("generate-shadow-derivatives requires dump, both forward references, timestamps, and all outputs")
+	}
+	dumpRaw, err := os.ReadFile(*dump)
+	if err != nil {
+		return err
+	}
+	asOf, err := time.Parse(time.RFC3339, *asOfText)
+	if err != nil {
+		return err
+	}
+	validFrom, err := time.Parse(time.RFC3339, *fromText)
+	if err != nil {
+		return err
+	}
+	validUntil, err := time.Parse(time.RFC3339, *untilText)
+	if err != nil {
+		return err
+	}
+	generated, selection, err := marketvalidation.GenerateShadowDerivativeMappings(dumpRaw, *nifty, *bank, asOf, validFrom, validUntil)
+	if err != nil {
+		return err
+	}
+	selectionRaw, err := json.MarshalIndent(selection, "", "  ")
+	if err != nil {
+		return err
+	}
+	if err = writeEvidence(*masterOut, generated.InstrumentMaster); err != nil {
+		return err
+	}
+	if err = writeEvidence(*watchlistOut, generated.Watchlist); err != nil {
+		return err
+	}
+	return writeEvidence(*selectionOut, append(selectionRaw, '\n'))
 }
 
 func generateDerivativeMappings(args []string) error {

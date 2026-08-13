@@ -29,8 +29,9 @@ const (
 type Scope string
 
 const (
-	ScopeOperationsOnly Scope = "OPERATIONS_ONLY"
-	ScopeFullPipeline   Scope = "FULL_PIPELINE"
+	ScopeOperationsOnly    Scope = "OPERATIONS_ONLY"
+	ScopeFullPipeline      Scope = "FULL_PIPELINE"
+	ScopeQualificationOnly Scope = "QUALIFICATION_ONLY"
 )
 
 type EvidenceReference struct {
@@ -207,7 +208,7 @@ func Verify(value Record) error {
 func validateShape(value Record) error {
 	if _, err := time.Parse("2006-01-02", value.Date); err != nil ||
 		(value.Mode != "PAPER" && value.Mode != "SHADOW") ||
-		(value.Scope != ScopeOperationsOnly && value.Scope != ScopeFullPipeline) ||
+		(value.Scope != ScopeOperationsOnly && value.Scope != ScopeFullPipeline && value.Scope != ScopeQualificationOnly) ||
 		!validCommit(value.ReleaseCommit) {
 		return ErrInvalidRecord
 	}
