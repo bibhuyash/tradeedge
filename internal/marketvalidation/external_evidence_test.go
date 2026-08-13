@@ -45,7 +45,7 @@ func TestZerodhaPreflightEvidenceAcceptsBoundedShadowUniverse(t *testing.T) {
 	value.FreshObservations = 14
 	value.BinaryFramesReceived = 14
 	value.PacketsReceived = 14
-	value.IndexPacketsReceived = 14
+	value.IndexPacketsReceived = 2
 	value.PacketsDecoded = 14
 	value.TokenMatches = 14
 	raw, err := EncodeZerodhaPreflightEvidence(value)

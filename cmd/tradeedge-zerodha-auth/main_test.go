@@ -355,7 +355,11 @@ func TestPreflightPublishesSafeCommitBoundEvidence(t *testing.T) {
 	for index := 1; index <= 14; index++ {
 		token := uint32(100000 + index)
 		tokens = append(tokens, strconv.FormatUint(uint64(token), 10))
-		frames = append(frames, brokerzerodha.MarketFrame{Binary: true, Data: quoteFrame(token, now)})
+		frame := derivativeFullFrame(token, now)
+		if index <= 2 {
+			frame = quoteFrame(token, now)
+		}
+		frames = append(frames, brokerzerodha.MarketFrame{Binary: true, Data: frame})
 	}
 	connection := &fakeMarketConnection{frames: frames}
 	dependencies := websocketDependencies(now, &fakeMarketDialer{connection: connection})
@@ -384,7 +388,7 @@ func TestPreflightPublishesSafeCommitBoundEvidence(t *testing.T) {
 	if err := json.Unmarshal(evidenceRaw, &evidence); err != nil {
 		t.Fatal(err)
 	}
-	if evidence.ApplicationCommit != strings.Repeat("b", 40) || evidence.RuntimeBundleChecksum != strings.Repeat("a", 64) || evidence.TradingDate != "2026-08-11" || evidence.Mode != "SHADOW" || !evidence.AuthenticationPass || !evidence.RESTAuthPass || !evidence.WebSocketAuthPass || evidence.TokenMatches != 14 {
+	if evidence.ApplicationCommit != strings.Repeat("b", 40) || evidence.RuntimeBundleChecksum != strings.Repeat("a", 64) || evidence.TradingDate != "2026-08-11" || evidence.Mode != "SHADOW" || !evidence.AuthenticationPass || !evidence.RESTAuthPass || !evidence.WebSocketAuthPass || evidence.IndexPacketsReceived != 2 || evidence.TokenMatches != 14 {
 		t.Fatalf("evidence=%+v", evidence)
 	}
 	if !strings.Contains(output.String(), "EVIDENCE=PASS\nEVIDENCE_PATH=preflight.json\nEVIDENCE_SHA256="+strings.Repeat("c", 64)+"\n") {
@@ -927,6 +931,24 @@ func quoteFrame(token uint32, at time.Time) []byte {
 	binary.BigEndian.PutUint32(packet[16:20], 9950)
 	binary.BigEndian.PutUint32(packet[20:24], 9980)
 	binary.BigEndian.PutUint32(packet[28:32], uint32(at.Unix()))
+	frame := make([]byte, 4+len(packet))
+	binary.BigEndian.PutUint16(frame[0:2], 1)
+	binary.BigEndian.PutUint16(frame[2:4], uint16(len(packet)))
+	copy(frame[4:], packet)
+	return frame
+}
+
+func derivativeFullFrame(token uint32, at time.Time) []byte {
+	packet := make([]byte, 184)
+	binary.BigEndian.PutUint32(packet[0:4], token)
+	binary.BigEndian.PutUint32(packet[4:8], 10000)
+	binary.BigEndian.PutUint32(packet[16:20], 100)
+	binary.BigEndian.PutUint32(packet[28:32], 9950)
+	binary.BigEndian.PutUint32(packet[32:36], 10100)
+	binary.BigEndian.PutUint32(packet[36:40], 9900)
+	binary.BigEndian.PutUint32(packet[40:44], 9980)
+	binary.BigEndian.PutUint32(packet[48:52], 75)
+	binary.BigEndian.PutUint32(packet[60:64], uint32(at.Unix()))
 	frame := make([]byte, 4+len(packet))
 	binary.BigEndian.PutUint16(frame[0:2], 1)
 	binary.BigEndian.PutUint16(frame[2:4], uint16(len(packet)))
