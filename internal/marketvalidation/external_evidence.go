@@ -133,9 +133,13 @@ func validateTelegramEvidenceRaw(raw []byte, date, mode string) error {
 
 func validateZerodhaPreflightEvidence(value ZerodhaPreflightEvidence) error {
 	location := time.FixedZone("IST", 5*60*60+30*60)
-	if value.SchemaVersion != ZerodhaPreflightEvidenceSchemaVersion || !validCommit(value.ApplicationCommit) || value.Mode != "PAPER" || !validDigest(strings.ToLower(value.RuntimeBundleChecksum)) || value.Timestamp.IsZero() ||
-		!value.AuthenticationPass || !value.RESTAuthPass || !value.WebSocketAuthPass || value.ExpectedTokenCount != 2 || !value.ExpectedTokensValid || value.ObservationsReceived != 2 || value.FreshObservations != 2 || !value.ShutdownPass ||
-		value.BinaryFramesReceived == 0 || value.PacketsReceived < 2 || value.IndexPacketsReceived < 2 || value.PacketsDecoded < 2 || value.PacketsRejected != 0 || value.TokenMatches != 2 || value.LastFailureStage != "NONE" || !value.AccessTokenExpiresAt.After(value.Timestamp) || value.Timestamp.In(location).Format("2006-01-02") != value.TradingDate {
+	expected := 2
+	if value.Mode == "SHADOW" {
+		expected = 14
+	}
+	if value.SchemaVersion != ZerodhaPreflightEvidenceSchemaVersion || !validCommit(value.ApplicationCommit) || (value.Mode != "PAPER" && value.Mode != "SHADOW") || !validDigest(strings.ToLower(value.RuntimeBundleChecksum)) || value.Timestamp.IsZero() ||
+		!value.AuthenticationPass || !value.RESTAuthPass || !value.WebSocketAuthPass || value.ExpectedTokenCount != expected || !value.ExpectedTokensValid || value.ObservationsReceived != expected || value.FreshObservations != uint64(expected) || !value.ShutdownPass ||
+		value.BinaryFramesReceived == 0 || value.PacketsReceived < uint64(expected) || value.IndexPacketsReceived < uint64(expected) || value.PacketsDecoded < uint64(expected) || value.PacketsRejected != 0 || value.TokenMatches != uint64(expected) || value.LastFailureStage != "NONE" || !value.AccessTokenExpiresAt.After(value.Timestamp) || value.Timestamp.In(location).Format("2006-01-02") != value.TradingDate {
 		return ErrInvalidRecord
 	}
 	if _, err := time.Parse("2006-01-02", value.TradingDate); err != nil {

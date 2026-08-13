@@ -37,6 +37,23 @@ func TestZerodhaPreflightEvidenceRejectsNonPassingEvidence(t *testing.T) {
 	}
 }
 
+func TestZerodhaPreflightEvidenceAcceptsBoundedShadowUniverse(t *testing.T) {
+	value := validPreflightEvidence()
+	value.Mode = "SHADOW"
+	value.ExpectedTokenCount = 14
+	value.ObservationsReceived = 14
+	value.FreshObservations = 14
+	value.BinaryFramesReceived = 14
+	value.PacketsReceived = 14
+	value.IndexPacketsReceived = 14
+	value.PacketsDecoded = 14
+	value.TokenMatches = 14
+	raw, err := EncodeZerodhaPreflightEvidence(value)
+	if err != nil || len(raw) == 0 {
+		t.Fatalf("EncodeZerodhaPreflightEvidence() bytes=%d err=%v", len(raw), err)
+	}
+}
+
 func TestPublishEvidenceCreateOnce(t *testing.T) {
 	path := filepath.Join(t.TempDir(), "preflight.json")
 	raw := []byte("safe-evidence")

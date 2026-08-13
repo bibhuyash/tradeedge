@@ -34,6 +34,7 @@ const (
 	requestTokenEnvironment  = "TRADEEDGE_ZERODHA_REQUEST_TOKEN"
 	readOnlyEnvironment      = "TRADEEDGE_ZERODHA_READ_ONLY"
 	day0WatchlistID          = "day0-index-observation/v1"
+	shadowWatchlistID        = "phase8-m4-live-shadow/v1"
 	defaultOperatorTimeout   = 10 * time.Second
 	defaultObservationMaxAge = 5 * time.Second
 )
@@ -186,10 +187,12 @@ func verifyWebSocket(args []string, lookup lookupEnv, output io.Writer, dependen
 		return errInvalidConfiguration
 	}
 	loader := dependencies.loadTokens
+	var tokens []string
 	if loader == nil {
-		loader = loadDay0Tokens
+		tokens, err = loadPreflightTokens(options.bundlePath, options.mode)
+	} else {
+		tokens, err = loader(options.bundlePath)
 	}
-	tokens, err := loader(options.bundlePath)
 	if err != nil {
 		writeWebSocketResult(output, false, 0, false)
 		return errWebSocketVerification
@@ -211,11 +214,13 @@ func verifyWebSocket(args []string, lookup lookupEnv, output io.Writer, dependen
 }
 
 type streamOptions struct {
-	bundlePath  string
-	timeout     time.Duration
-	maxAge      time.Duration
-	outputPath  string
-	tradingDate string
+	bundlePath      string
+	timeout         time.Duration
+	maxAge          time.Duration
+	outputPath      string
+	tradingDate     string
+	credentialsFile string
+	mode            string
 }
 
 type webSocketResult struct {
@@ -254,10 +259,12 @@ func parseStreamOptions(name string, args []string, lookup lookupEnv) (streamOpt
 	maxAge := set.Duration("max-age", defaultObservationMaxAge, "maximum observation age")
 	outputPath := set.String("output", "", "create-once safe preflight evidence JSON")
 	tradingDate := set.String("date", "", "target trading date YYYY-MM-DD")
+	credentialsFile := set.String("credentials-file", "", "untracked dotenv file for atomic restored-session persistence")
+	mode := set.String("mode", "", "preflight mode PAPER or SHADOW")
 	if err := set.Parse(args); err != nil || set.NArg() != 0 || *timeout <= 0 || *timeout > 30*time.Second || *maxAge <= 0 || *maxAge > time.Minute {
 		return streamOptions{}, errInvalidConfiguration
 	}
-	if name != "preflight" && (*outputPath != "" || *tradingDate != "") {
+	if name != "preflight" && (*outputPath != "" || *tradingDate != "" || *credentialsFile != "" || *mode != "") {
 		return streamOptions{}, errInvalidConfiguration
 	}
 	if (*outputPath == "") != (*tradingDate == "") {
@@ -268,10 +275,26 @@ func parseStreamOptions(name string, args []string, lookup lookupEnv) (streamOpt
 			return streamOptions{}, errInvalidConfiguration
 		}
 	}
+	if strings.TrimSpace(*credentialsFile) == "" {
+		*credentialsFile, _ = lookup("TRADEEDGE_ZERODHA_CREDENTIALS_FILE")
+	}
+	if *outputPath != "" && strings.TrimSpace(*credentialsFile) == "" {
+		return streamOptions{}, errInvalidConfiguration
+	}
+	if strings.TrimSpace(*mode) == "" {
+		*mode, _ = lookup("TRADEEDGE_ZERODHA_MODE")
+	}
+	*mode = strings.ToUpper(strings.TrimSpace(*mode))
+	if *mode == "" {
+		*mode = "PAPER"
+	}
+	if *mode != "PAPER" && *mode != "SHADOW" {
+		return streamOptions{}, errInvalidConfiguration
+	}
 	if strings.TrimSpace(*bundlePath) == "" {
 		*bundlePath, _ = lookup("TRADEEDGE_RUNTIME_BUNDLE")
 	}
-	return streamOptions{bundlePath: strings.TrimSpace(*bundlePath), timeout: *timeout, maxAge: *maxAge, outputPath: strings.TrimSpace(*outputPath), tradingDate: *tradingDate}, nil
+	return streamOptions{bundlePath: strings.TrimSpace(*bundlePath), timeout: *timeout, maxAge: *maxAge, outputPath: strings.TrimSpace(*outputPath), tradingDate: *tradingDate, credentialsFile: strings.TrimSpace(*credentialsFile), mode: *mode}, nil
 }
 
 func verifyWebSocketSession(ctx context.Context, tokens []string, maxAge time.Duration, session *brokerzerodha.SessionManager, dependencies commandDependencies) webSocketResult {
@@ -342,7 +365,7 @@ func verifyWebSocketSession(ctx context.Context, tokens []string, maxAge time.Du
 }
 
 func validExpectedTokens(tokens []string) bool {
-	if len(tokens) != 2 {
+	if len(tokens) != 2 && len(tokens) != 14 {
 		return false
 	}
 	seen := make(map[uint64]struct{}, len(tokens))
@@ -425,17 +448,27 @@ func preflight(args []string, lookup lookupEnv, output io.Writer, dependencies c
 	if err != nil {
 		return writePreflightFailure(output, "AUTHENTICATION", "ConfigurationError", "Invalid preflight configuration", 0, 0, false)
 	}
-	if failure, failed := exchangePreflightFailure(lookup); failed {
+	if options.credentialsFile != "" {
+		persistedLookup, loadErr := brokerzerodha.LookupWithPersistedSession(brokerzerodha.LookupEnv(lookup), options.credentialsFile)
+		err = loadErr
+		if err != nil {
+			return writePreflightFailure(output, "AUTHENTICATION", "ConfigurationError", "Invalid persisted Zerodha session", 0, 0, false)
+		}
+		lookup = lookupEnv(persistedLookup)
+	}
+	if failure, failed := preflightCredentialFailure(lookup); failed {
 		if writeErr := writeAuthenticationFailure(output, failure); writeErr != nil {
 			return writeErr
 		}
 		return errors.Join(errAuthentication, errDiagnosticReported)
 	}
 	loader := dependencies.loadTokens
+	var tokens []string
 	if loader == nil {
-		loader = loadDay0Tokens
+		tokens, err = loadPreflightTokens(options.bundlePath, options.mode)
+	} else {
+		tokens, err = loader(options.bundlePath)
 	}
-	tokens, err := loader(options.bundlePath)
 	if err != nil {
 		return writePreflightFailure(output, "AUTHENTICATION", "ConfigurationError", "Invalid checksum-pinned runtime bundle", 0, 0, false)
 	}
@@ -460,7 +493,7 @@ func preflight(args []string, lookup lookupEnv, output io.Writer, dependencies c
 
 	ctx, cancel := context.WithTimeout(context.Background(), options.timeout)
 	defer cancel()
-	session, err := authenticatedSession(ctx, withoutRestoredToken(lookup), dependencies)
+	session, err := authenticatedSession(ctx, lookup, dependencies)
 	if err != nil {
 		var failure brokerzerodha.AuthenticationFailure
 		if errors.As(err, &failure) {
@@ -475,6 +508,12 @@ func preflight(args []string, lookup lookupEnv, output io.Writer, dependencies c
 	if snapshot.State != brokerzerodha.SessionAuthenticated || snapshot.ExpiresAt.IsZero() {
 		session.Shutdown()
 		return writePreflightFailure(output, "AUTHENTICATION", "AuthenticationError", "Zerodha authentication failed", 0, 0, true)
+	}
+	if options.credentialsFile != "" {
+		if err = session.PersistAccessToken(options.credentialsFile); err != nil {
+			session.Shutdown()
+			return writePreflightFailure(output, "AUTHENTICATION", "CredentialPersistenceError", "Unable to persist restored Zerodha session", 0, 0, true)
+		}
 	}
 
 	client, err := readOnlyClient(lookup, session, dependencies)
@@ -504,7 +543,7 @@ func preflight(args []string, lookup lookupEnv, output io.Writer, dependencies c
 	}
 	if options.outputPath != "" {
 		evidence := marketvalidation.ZerodhaPreflightEvidence{
-			SchemaVersion: marketvalidation.ZerodhaPreflightEvidenceSchemaVersion, ApplicationCommit: applicationCommit, TradingDate: options.tradingDate, Mode: "PAPER", RuntimeBundleChecksum: bundleChecksum,
+			SchemaVersion: marketvalidation.ZerodhaPreflightEvidenceSchemaVersion, ApplicationCommit: applicationCommit, TradingDate: options.tradingDate, Mode: options.mode, RuntimeBundleChecksum: bundleChecksum,
 			Timestamp: operatorClock(dependencies).Now().UTC(), AuthenticationPass: true, RESTAuthPass: true, WebSocketAuthPass: true, ExpectedTokenCount: streamResult.expectedTokenCount, ExpectedTokensValid: streamResult.expectedTokensValid,
 			ObservationsReceived: streamResult.observations, FreshObservations: streamResult.freshObservations, ShutdownPass: shutdown, TextMessagesReceived: streamResult.textMessages, BrokerMessagesReceived: streamResult.brokerMessages,
 			InstrumentsMetaReceived: streamResult.instrumentMetadata, AppCodeReceived: streamResult.appCodeMessages, OrderUpdatesReceived: streamResult.orderUpdates, ProviderErrorsReceived: streamResult.providerErrors,
@@ -635,6 +674,32 @@ func exchangePreflightFailure(lookup lookupEnv) (brokerzerodha.AuthenticationFai
 	return brokerzerodha.AuthenticationFailure{}, false
 }
 
+func preflightCredentialFailure(lookup lookupEnv) (brokerzerodha.AuthenticationFailure, bool) {
+	readOnly, present := lookup(readOnlyEnvironment)
+	if !present || !strings.EqualFold(strings.TrimSpace(readOnly), "true") {
+		return configurationFailure(readOnlyEnvironment + " must be true"), true
+	}
+	for _, name := range []string{apiKeyEnvironment, apiSecretEnvironment} {
+		value, ok := lookup(name)
+		if !ok || strings.TrimSpace(value) == "" {
+			return configurationFailure("Missing required environment variable: " + name), true
+		}
+		if strings.ContainsAny(value, "\r\n\x00") {
+			return configurationFailure("Invalid environment variable: " + name), true
+		}
+	}
+	request, _ := lookup(requestTokenEnvironment)
+	access, _ := lookup(accessTokenEnvironment)
+	expiry, _ := lookup(accessExpiryEnvironment)
+	if strings.TrimSpace(access) == "" && strings.TrimSpace(request) == "" {
+		return configurationFailure("A restored access token or fresh request token is required"), true
+	}
+	if (strings.TrimSpace(access) == "") != (strings.TrimSpace(expiry) == "") {
+		return configurationFailure("Restored access token and expiry must be provided together"), true
+	}
+	return brokerzerodha.AuthenticationFailure{}, false
+}
+
 func configurationFailure(message string) brokerzerodha.AuthenticationFailure {
 	return brokerzerodha.AuthenticationFailure{ErrorType: "ConfigurationError", Message: message, HTTPStatus: 0}
 }
@@ -647,12 +712,25 @@ func loadReadOnlyConfig(lookup lookupEnv) (brokerzerodha.Config, error) {
 	return value, nil
 }
 
-func loadDay0Tokens(path string) ([]string, error) {
+func loadPreflightTokens(path, mode string) ([]string, error) {
 	if path == "" {
 		return nil, errInvalidConfiguration
 	}
 	bundle, err := config.LoadRuntimeBundle(path)
-	if err != nil || bundle.Watchlist.ID != day0WatchlistID || len(bundle.Watchlist.Requirements) != 2 || len(bundle.Tokens) != 2 {
+	if err != nil || bundle.Manifest.Mode != mode {
+		return nil, errInvalidConfiguration
+	}
+	if mode == "PAPER" {
+		return loadDay0BundleTokens(bundle)
+	}
+	if mode == "SHADOW" {
+		return loadShadowBundleTokens(bundle)
+	}
+	return nil, errInvalidConfiguration
+}
+
+func loadDay0BundleTokens(bundle config.RuntimeBundle) ([]string, error) {
+	if bundle.Watchlist.ID != day0WatchlistID || len(bundle.Watchlist.Requirements) != 2 || len(bundle.Tokens) != 2 {
 		return nil, errInvalidConfiguration
 	}
 	wanted := map[string]struct{}{"NIFTY 50": {}, "NIFTY BANK": {}}
@@ -667,6 +745,32 @@ func loadDay0Tokens(path string) ([]string, error) {
 		delete(wanted, instrument.Symbol())
 	}
 	if len(wanted) != 0 {
+		return nil, errInvalidConfiguration
+	}
+	result := append([]string(nil), bundle.Tokens...)
+	sort.Strings(result)
+	return result, nil
+}
+
+func loadShadowBundleTokens(bundle config.RuntimeBundle) ([]string, error) {
+	if bundle.Watchlist.ID != shadowWatchlistID || len(bundle.Watchlist.Requirements) != 14 || len(bundle.Tokens) != 14 {
+		return nil, errInvalidConfiguration
+	}
+	counts := map[domain.InstrumentType]int{}
+	underlyings := map[domain.UnderlyingID]int{}
+	for _, requirement := range bundle.Watchlist.Requirements {
+		instrument, found := bundle.Master.Instrument(requirement.InstrumentID)
+		if !found || requirement.Provider != domain.Provider("zerodha") || requirement.EventKind != marketmodel.EventKindQuote || !requirement.Required || requirement.Exchange != domain.ExchangeNSE {
+			return nil, errInvalidConfiguration
+		}
+		underlying := instrument.UnderlyingID()
+		if underlying != "NIFTY" && underlying != "BANKNIFTY" {
+			return nil, errInvalidConfiguration
+		}
+		counts[instrument.Type()]++
+		underlyings[underlying]++
+	}
+	if counts[domain.InstrumentIndex] != 2 || counts[domain.InstrumentFuture] != 2 || counts[domain.InstrumentOption] != 10 || underlyings["NIFTY"] != 7 || underlyings["BANKNIFTY"] != 7 {
 		return nil, errInvalidConfiguration
 	}
 	result := append([]string(nil), bundle.Tokens...)

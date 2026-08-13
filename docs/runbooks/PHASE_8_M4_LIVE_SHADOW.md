@@ -19,18 +19,27 @@ are prohibited.
 ## Pre-session preparation
 
 1. Copy `.env.example` to the ignored `.env` and inject current credentials.
-2. Generate current bounded mappings from a current Zerodha instrument dump
+2. Generate the exact-date calendar and source manifest from the reviewed,
+   checksum-verified NSE calendar policy with `generate-calendar`, then run
+   `calendar-check`. A weekend, listed holiday, missing policy date, or source
+   checksum mismatch fails closed.
+3. Generate current bounded mappings from a current Zerodha instrument dump
    with `tradeedge-validation generate-shadow-derivatives`, providing accepted
    NIFTY and BANKNIFTY forward references, validity times, and all three output
    paths. Provider tokens are derived, never hand-edited.
-3. Run `build-shadow-bundle` with the approved calendar, generated master and
+4. Run `build-shadow-bundle` with the approved calendar, generated master and
    watchlist, `configs/validation/strategies-shadow.json`, portfolio/risk files,
    and both `qualification.*.shadow-collecting.json` files.
-4. Run fresh Telegram evidence and Zerodha preflight for mode `SHADOW`.
-5. Finalize a commit-, date-, artifact-, and evidence-bound SHADOW authorization
+5. Run fresh Telegram evidence and Zerodha preflight for mode `SHADOW`. Pass
+   `-credentials-file .env`; preflight reuses a valid restored access token or
+   exchanges the request token exactly once, atomically persists only
+   `TRADEEDGE_ZERODHA_ACCESS_TOKEN` and
+   `TRADEEDGE_ZERODHA_ACCESS_TOKEN_EXPIRES_AT`, and uses that session for REST
+   and WebSocket verification. It never prints or records the token.
+6. Finalize a commit-, date-, artifact-, and evidence-bound SHADOW authorization
    with `tradeedge-validation authorize`. CI never issues this authorization.
-6. Inspect the manifest and obtain explicit operator approval.
-7. Only then start the canonical service:
+7. Inspect the manifest and obtain explicit operator approval.
+8. Only then start the canonical service:
 
    ```powershell
    docker compose --env-file .env up -d tradeedge-shadow
