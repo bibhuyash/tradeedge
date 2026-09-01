@@ -45,7 +45,7 @@ jobs:
           ! grep -RInEi --include='*.go' 'api[_-]?key|access[_-]?token|client[_-]?secret' internal/tradingruntime
           ! grep -RInE --include='*.go' '\b(float32|float64)\b' internal/tradingruntime
           ! grep -RInE --include='*.go' '^\s*"github.com/.*/internal/adapters/broker/' internal/tradingruntime
-      - uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@v7
         with:
           name: phase-7-m1-runtime-evidence
           path: |

@@ -91,7 +91,7 @@ jobs:
           grep -q '"final_enforcement_result": "PASSED"' artifacts/phase-7-closure.json
           sha256sum artifacts/phase-7-closure.json > artifacts/phase-7-closure.json.sha256
           cp phase-1.json phase-2.json phase-3.json phase-4.json phase-5.json phase-6.json phase-7-m1.json phase-7-m2.json artifacts/
-      - uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@v7
         with:
           name: phase-7-closure-${{ github.run_id }}-${{ github.run_attempt }}
           path: artifacts/
