@@ -35,9 +35,11 @@ func main() {
 
 func run(args []string) error {
 	if len(args) == 0 {
-		return errors.New("usage: tradeedge-validation <readiness|telegram-check|calendar-check|generate-calendar|generate-mappings|generate-derivatives|generate-shadow-derivatives|authorize|day0-gate|day1-gate|close-day0|finalize-day|scorecard>")
+		return errors.New("usage: tradeedge-validation <prepare-session|readiness|telegram-check|calendar-check|generate-calendar|generate-mappings|generate-derivatives|generate-shadow-derivatives|build-shadow-bundle|finalize-shadow-session|authorize|day0-gate|day1-gate|close-day0|finalize-day|scorecard>")
 	}
 	switch args[0] {
+	case "prepare-session":
+		return prepareSession(args[1:])
 	case "readiness":
 		return readiness(args[1:])
 	case "telegram-check":

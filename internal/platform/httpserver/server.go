@@ -11,6 +11,7 @@ import (
 	"time"
 
 	"github.com/bibhuyash/tradeedge/internal/marketdata/readiness"
+	"github.com/bibhuyash/tradeedge/internal/operatorconsole"
 	"github.com/bibhuyash/tradeedge/internal/tradingruntime"
 )
 
@@ -81,6 +82,7 @@ func NewHandler(readiness *Readiness) http.Handler {
 
 func NewHandlerWithOptions(process *Readiness, options Options) http.Handler {
 	mux := http.NewServeMux()
+	mux.Handle("/console/", operatorconsole.New())
 	mux.HandleFunc("/healthz", methodGET(func(w http.ResponseWriter, _ *http.Request) {
 		writeStatus(w, http.StatusOK, "ok")
 	}))
