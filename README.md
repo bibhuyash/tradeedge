@@ -8,6 +8,23 @@ trading strategy. The M1 Zerodha package exposes only authentication, profile,
 and instrument reads and has no order mutation API. The moving-average crossover is a non-production
 engineering fixture with no profitability claim.
 
+## Operator console (read-only SHADOW)
+
+The running application serves its operator frontend at `/console/`. It uses
+the existing read-only APIs; unavailable APIs remain unknown, never demo data.
+See [the operator-console runbook](docs/runbooks/OPERATOR_CONSOLE.md) for daily
+preparation, verification and security limitations.
+
+To preview without credentials or broker connections:
+
+```powershell
+go run ./cmd/tradeedge-console-demo
+```
+
+Open `http://127.0.0.1:8090/console/`. The separate mock server supports healthy,
+warming, degraded and empty scenarios. It cannot create market evidence or
+authorize execution.
+
 ## Prerequisites
 
 - Go 1.23.4
