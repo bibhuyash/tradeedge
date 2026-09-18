@@ -71,6 +71,50 @@ type fakeMarketDialer struct {
 	calls       int
 }
 
+type mutableMarketClock struct {
+	mu  sync.Mutex
+	now time.Time
+}
+
+func (c *mutableMarketClock) Now() time.Time {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	return c.now
+}
+
+func (c *mutableMarketClock) Set(now time.Time) {
+	c.mu.Lock()
+	c.now = now
+	c.mu.Unlock()
+}
+
+type queuedMarketConnection struct {
+	mu         sync.Mutex
+	frames     []MarketFrame
+	secondRead chan struct{}
+	reads      int
+}
+
+func (c *queuedMarketConnection) Read(ctx context.Context) (MarketFrame, error) {
+	c.mu.Lock()
+	if len(c.frames) > 0 {
+		frame := c.frames[0]
+		c.frames = c.frames[1:]
+		c.reads++
+		if c.reads == 2 {
+			close(c.secondRead)
+		}
+		c.mu.Unlock()
+		return frame, nil
+	}
+	c.mu.Unlock()
+	<-ctx.Done()
+	return MarketFrame{}, ctx.Err()
+}
+
+func (*queuedMarketConnection) WriteJSON(context.Context, any) error { return nil }
+func (*queuedMarketConnection) Close() error                         { return nil }
+
 func (d *fakeMarketDialer) Dial(context.Context, string) (MarketConnection, error) {
 	d.mu.Lock()
 	defer d.mu.Unlock()
@@ -102,6 +146,52 @@ func TestDecodeMarketFrameFullQuoteUsesIntegerMinorUnits(t *testing.T) {
 	value := values[0]
 	if value.ProviderToken != "256265" || value.LastMinor != 2450125 || value.BidMinor == nil || *value.BidMinor != 2450100 || value.AskMinor == nil || *value.AskMinor != 2450150 || value.Currency != "INR" {
 		t.Fatalf("observation = %#v", value)
+	}
+}
+
+func TestMarketStreamQueueDelayDoesNotChangeIngestionTimestamp(t *testing.T) {
+	receivedAt := time.Date(2026, 9, 18, 8, 0, 0, 0, time.UTC)
+	clock := &mutableMarketClock{now: receivedAt}
+	credentials, err := (EnvCredentialSource{Lookup: func(key string) (string, bool) {
+		values := map[string]string{"TRADEEDGE_ZERODHA_API_KEY": "key", "TRADEEDGE_ZERODHA_API_SECRET": "secret", "TRADEEDGE_ZERODHA_ACCESS_TOKEN": "access", "TRADEEDGE_ZERODHA_ACCESS_TOKEN_EXPIRES_AT": receivedAt.Add(time.Hour).Format(time.RFC3339)}
+		value, ok := values[key]
+		return value, ok
+	}}).Load(context.Background())
+	if err != nil {
+		t.Fatal(err)
+	}
+	session := NewSessionManager(credentials, nil, clock, nil)
+	cfg := DefaultMarketStreamConfig()
+	cfg.BufferCapacity = 2
+	stream, err := NewMarketStream(cfg, &fakeMarketDialer{}, session, clock, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	connection := &queuedMarketConnection{
+		frames: []MarketFrame{
+			{Binary: true, MessageType: MarketMessageBinary, Data: wrapPackets(indexPacket(256265, 2450125, 2460000, 2440000, 2445000, 2455000, receivedAt.Add(-time.Second)))},
+			{Binary: true, MessageType: MarketMessageBinary, Data: wrapPackets(indexPacket(256265, 2450126, 2460000, 2440000, 2445000, 2455000, receivedAt))},
+		},
+		secondRead: make(chan struct{}),
+	}
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	var ingested []time.Time
+	err = stream.consume(ctx, connection, map[string]struct{}{"256265": {}}, map[string]struct{}{}, func(_ context.Context, observation marketdata.Observation) error {
+		ingested = append(ingested, observation.IngestedAt)
+		if len(ingested) == 1 {
+			<-connection.secondRead
+			clock.Set(receivedAt.Add(30 * time.Second))
+		} else {
+			cancel()
+		}
+		return nil
+	})
+	if !errors.Is(err, context.Canceled) {
+		t.Fatalf("consume error=%v", err)
+	}
+	if len(ingested) != 2 || !ingested[0].Equal(receivedAt) || !ingested[1].Equal(receivedAt) {
+		t.Fatalf("ingested timestamps=%v, want both %s", ingested, receivedAt)
 	}
 }
 
