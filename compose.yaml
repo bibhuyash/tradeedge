@@ -58,6 +58,7 @@ services:
       - |
         set -eu
         git config --global --add safe.directory /workspace
+        git config --global core.autocrlf true
         go build -buildvcs=true -o /tmp/tradeedge-validation ./cmd/tradeedge-validation
         go build -buildvcs=true -o /tmp/tradeedge-prepare ./cmd/tradeedge-prepare
         acceptance_flag=""
