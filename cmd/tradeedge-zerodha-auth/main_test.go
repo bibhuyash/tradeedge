@@ -105,6 +105,20 @@ func TestLoginURLIsSafeAndContainsNoSecret(t *testing.T) {
 	}
 }
 
+func TestLoginURLReadsSingleCredentialsFile(t *testing.T) {
+	path := filepath.Join(t.TempDir(), ".env")
+	if err := os.WriteFile(path, []byte(apiKeyEnvironment+"=file-key\n"+apiSecretEnvironment+"=secret\n"+requestTokenEnvironment+"=\n"+accessTokenEnvironment+"=\n"+accessExpiryEnvironment+"=\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	var output bytes.Buffer
+	if err := run([]string{"login-url", "-credentials-file", path}, mapLookup(nil), &output, commandDependencies{}); err != nil {
+		t.Fatal(err)
+	}
+	if got := strings.TrimSpace(output.String()); got != "https://kite.zerodha.com/connect/login?api_key=file-key&v=3" || strings.Contains(got, "secret") {
+		t.Fatalf("login URL=%q", got)
+	}
+}
+
 func TestExchangeTokenRejectsMissingAPIKeyAndSecret(t *testing.T) {
 	base := map[string]string{readOnlyEnvironment: "true", requestTokenEnvironment: "request"}
 	for name, testCase := range map[string]struct {
@@ -314,28 +328,83 @@ func TestAuthenticateExpiredSessionExchangesOnceAndFailureDoesNotPersist(t *test
 			t.Fatalf("exchanges=%d", exchanges)
 		}
 	})
-	t.Run("exchange failure preserves dotenv", func(t *testing.T) {
+	t.Run("invalid request token is cleared and never retried", func(t *testing.T) {
 		credentialsFile := filepath.Join(t.TempDir(), ".env")
 		secret, request := "recognizable-bootstrap-secret", "recognizable-bootstrap-request"
 		original := "KEEP=value\n" + apiKeyEnvironment + "=public-key\n" + apiSecretEnvironment + "=" + secret + "\n" + requestTokenEnvironment + "=" + request + "\n" + accessTokenEnvironment + "=\n" + accessExpiryEnvironment + "=\n"
 		if err := os.WriteFile(credentialsFile, []byte(original), 0o600); err != nil {
 			t.Fatal(err)
 		}
+		exchanges := 0
 		var output bytes.Buffer
-		err := run([]string{"authenticate", "-credentials-file", credentialsFile}, mapLookup(nil), &output, commandDependencies{clock: fixedClock{now: now}, roundTripper: roundTripFunc(func(*http.Request) (*http.Response, error) {
+		dependencies := commandDependencies{clock: fixedClock{now: now}, roundTripper: roundTripFunc(func(*http.Request) (*http.Response, error) {
+			exchanges++
 			return response(http.StatusForbidden, `{"status":"error","message":"Invalid request token","error_type":"TokenException"}`), nil
-		})})
+		})}
+		err := run([]string{"authenticate", "-credentials-file", credentialsFile}, mapLookup(nil), &output, dependencies)
 		if err == nil {
 			t.Fatal("authenticate succeeded")
 		}
 		raw, readErr := os.ReadFile(credentialsFile)
-		if readErr != nil || string(raw) != original {
-			t.Fatalf("dotenv changed: %q err=%v", raw, readErr)
+		if readErr != nil || !strings.Contains(string(raw), "KEEP=value\n") || !strings.Contains(string(raw), requestTokenEnvironment+"=\n") || strings.Contains(string(raw), requestTokenEnvironment+"="+request) {
+			t.Fatalf("dotenv invalidation failed: %q err=%v", raw, readErr)
 		}
 		if strings.Contains(output.String()+err.Error(), secret) || strings.Contains(output.String()+err.Error(), request) {
 			t.Fatalf("credential leaked: %q", output.String())
 		}
+		output.Reset()
+		if err = run([]string{"authenticate", "-credentials-file", credentialsFile}, mapLookup(nil), &output, dependencies); err == nil || exchanges != 1 {
+			t.Fatalf("invalid request token retried: err=%v exchanges=%d", err, exchanges)
+		}
 	})
+}
+
+func TestInstrumentSnapshotReusesPersistedSessionAndPublishesBoundedInputs(t *testing.T) {
+	now := time.Date(2026, 9, 18, 4, 30, 0, 0, time.UTC)
+	credentialsFile := filepath.Join(t.TempDir(), ".env")
+	values := restoredCredentialValues(now)
+	content := apiKeyEnvironment + "=" + values[apiKeyEnvironment] + "\n" + apiSecretEnvironment + "=" + values[apiSecretEnvironment] + "\n" + requestTokenEnvironment + "=must-not-be-used\n" + accessTokenEnvironment + "=" + values[accessTokenEnvironment] + "\n" + accessExpiryEnvironment + "=" + values[accessExpiryEnvironment] + "\n"
+	if err := os.WriteFile(credentialsFile, []byte(content), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	dump := "instrument_token,exchange_token,tradingsymbol,name,last_price,expiry,strike,tick_size,lot_size,instrument_type,segment,exchange\n" +
+		"1,1,NIFTY26OCTFUT,NIFTY,0,2026-10-29,0,0.05,65,FUT,NFO-FUT,NFO\n" +
+		"2,2,BANKNIFTY26OCTFUT,BANKNIFTY,0,2026-10-29,0,0.05,15,FUT,NFO-FUT,NFO\n"
+	requests := 0
+	dependencies := commandDependencies{clock: fixedClock{now: now}, roundTripper: roundTripFunc(func(request *http.Request) (*http.Response, error) {
+		requests++
+		if request.Method != http.MethodGet {
+			t.Fatalf("method=%s", request.Method)
+		}
+		switch request.URL.Path {
+		case "/instruments":
+			return response(http.StatusOK, dump), nil
+		case "/quote/ltp":
+			if got := request.URL.Query()["i"]; len(got) != 2 {
+				t.Fatalf("quotes=%v", got)
+			}
+			return response(http.StatusOK, `{"status":"success","data":{"NFO:NIFTY26OCTFUT":{"last_price":25123.45},"NFO:BANKNIFTY26OCTFUT":{"last_price":55234.5}}}`), nil
+		default:
+			t.Fatalf("path=%s", request.URL.Path)
+			return nil, errors.New("unexpected request")
+		}
+	})}
+	var published []byte
+	dependencies.publishEvidence = func(path string, raw []byte) (string, error) {
+		if path != "instruments.csv" {
+			t.Fatalf("path=%q", path)
+		}
+		published = append([]byte(nil), raw...)
+		return strings.Repeat("a", 64), nil
+	}
+	var output bytes.Buffer
+	if err := run([]string{"instrument-snapshot", "-credentials-file", credentialsFile, "-output", "instruments.csv"}, mapLookup(nil), &output, dependencies); err != nil {
+		t.Fatal(err)
+	}
+	if requests != 2 || string(published) != dump || !strings.Contains(output.String(), "NIFTY_FORWARD_MINOR=2512345\n") || !strings.Contains(output.String(), "BANKNIFTY_FORWARD_MINOR=5523450\n") {
+		t.Fatalf("requests=%d output=%q", requests, output.String())
+	}
+	assertNoCredentialMaterial(t, output.String(), values, "")
 }
 
 func TestVerifyREST(t *testing.T) {
@@ -940,7 +1009,7 @@ func TestFreshObservationEnforcesFiveSecondPolicy(t *testing.T) {
 }
 
 func TestCommandSurfaceHasNoMutationCapability(t *testing.T) {
-	want := []string{"login-url", "authenticate", "exchange-token", "verify-rest", "verify-websocket", "preflight"}
+	want := []string{"login-url", "authenticate", "instrument-snapshot", "exchange-token", "verify-rest", "verify-websocket", "preflight"}
 	if strings.Join(supportedCommands, ",") != strings.Join(want, ",") {
 		t.Fatalf("supported commands = %v", supportedCommands)
 	}

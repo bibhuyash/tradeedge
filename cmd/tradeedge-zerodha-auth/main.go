@@ -3,7 +3,9 @@
 package main
 
 import (
+	"bytes"
 	"context"
+	"encoding/json"
 	"errors"
 	"flag"
 	"fmt"
@@ -46,8 +48,9 @@ var (
 	errDiagnosticReported    = errors.New("authentication diagnostic reported")
 	errRESTVerification      = errors.New("Zerodha REST verification failed")
 	errWebSocketVerification = errors.New("Zerodha WebSocket verification failed")
+	errInstrumentSnapshot    = errors.New("Zerodha instrument snapshot failed")
 	apiKeyPattern            = regexp.MustCompile(`^[A-Za-z0-9_-]{1,128}$`)
-	supportedCommands        = []string{"login-url", "authenticate", "exchange-token", "verify-rest", "verify-websocket", "preflight"}
+	supportedCommands        = []string{"login-url", "authenticate", "instrument-snapshot", "exchange-token", "verify-rest", "verify-websocket", "preflight"}
 )
 
 type lookupEnv func(string) (string, bool)
@@ -86,6 +89,8 @@ func run(args []string, lookup lookupEnv, output io.Writer, dependencies command
 		return loginURL(args[1:], lookup, output)
 	case "authenticate":
 		return authenticate(args[1:], lookup, output, dependencies)
+	case "instrument-snapshot":
+		return instrumentSnapshot(args[1:], lookup, output, dependencies)
 	case "exchange-token":
 		return exchangeToken(args[1:], lookup, output, dependencies)
 	case "verify-rest":
@@ -128,6 +133,11 @@ func authenticate(args []string, lookup lookupEnv, output io.Writer, dependencie
 	if err != nil {
 		var failure brokerzerodha.AuthenticationFailure
 		if errors.As(err, &failure) {
+			if failure.HTTPStatus == http.StatusForbidden && failure.ErrorType == "TokenException" {
+				if persistErr := brokerzerodha.InvalidateRequestToken(*credentialsFile); persistErr != nil {
+					return errAuthentication
+				}
+			}
 			if writeErr := writeAuthenticationFailure(output, failure); writeErr != nil {
 				return writeErr
 			}
@@ -156,8 +166,16 @@ func authenticate(args []string, lookup lookupEnv, output io.Writer, dependencie
 func loginURL(args []string, lookup lookupEnv, output io.Writer) error {
 	set := flag.NewFlagSet("login-url", flag.ContinueOnError)
 	set.SetOutput(io.Discard)
+	credentialsFile := set.String("credentials-file", "", "untracked dotenv file containing the Zerodha API key")
 	if err := set.Parse(args); err != nil || set.NArg() != 0 {
 		return errInvalidConfiguration
+	}
+	if strings.TrimSpace(*credentialsFile) != "" {
+		persistedLookup, err := brokerzerodha.LookupWithPersistedSession(brokerzerodha.LookupEnv(lookup), *credentialsFile)
+		if err != nil {
+			return errInvalidConfiguration
+		}
+		lookup = lookupEnv(persistedLookup)
 	}
 	apiKey, ok := lookup(apiKeyEnvironment)
 	apiKey = strings.TrimSpace(apiKey)
@@ -171,6 +189,135 @@ func loginURL(args []string, lookup lookupEnv, output io.Writer) error {
 	login.RawQuery = query.Encode()
 	_, err := fmt.Fprintln(output, login.String())
 	return err
+}
+
+func instrumentSnapshot(args []string, lookup lookupEnv, output io.Writer, dependencies commandDependencies) error {
+	set := flag.NewFlagSet("instrument-snapshot", flag.ContinueOnError)
+	set.SetOutput(io.Discard)
+	credentialsFile := set.String("credentials-file", ".env", "untracked dotenv file containing the persisted Zerodha session")
+	outputPath := set.String("output", "", "create-once current instrument CSV")
+	timeout := set.Duration("timeout", 30*time.Second, "bounded instrument and quote timeout")
+	if err := set.Parse(args); err != nil || set.NArg() != 0 || strings.TrimSpace(*credentialsFile) == "" || strings.TrimSpace(*outputPath) == "" || *timeout <= 0 || *timeout > time.Minute {
+		return errInvalidConfiguration
+	}
+	persistedLookup, err := brokerzerodha.LookupWithPersistedSession(brokerzerodha.LookupEnv(lookup), *credentialsFile)
+	if err != nil {
+		return errInvalidConfiguration
+	}
+	lookup = lookupEnv(persistedLookup)
+	ctx, cancel := context.WithTimeout(context.Background(), *timeout)
+	defer cancel()
+	session, reused, err := authenticatedBootstrapSession(ctx, lookup, dependencies)
+	if err != nil || !reused {
+		if session != nil {
+			session.Shutdown()
+		}
+		return errInstrumentSnapshot
+	}
+	defer session.Shutdown()
+	config, err := loadBootstrapConfig(lookup)
+	if err != nil {
+		return errInstrumentSnapshot
+	}
+	transport, err := brokerzerodha.NewHTTPTransport(config, dependencies.roundTripper)
+	if err != nil {
+		return errInstrumentSnapshot
+	}
+	defer transport.CloseIdleConnections()
+	authorization, err := session.Authorization()
+	if err != nil {
+		return errInstrumentSnapshot
+	}
+	dump, _, err := transport.Instruments(ctx, authorization)
+	if err != nil {
+		return errInstrumentSnapshot
+	}
+	if _, err = brokerzerodha.ParseInstrumentDump(dump); err != nil {
+		return errInstrumentSnapshot
+	}
+	symbols, err := marketvalidation.SelectShadowFutureSymbols(dump, operatorClock(dependencies).Now())
+	if err != nil {
+		return errInstrumentSnapshot
+	}
+	quoteKeys := []string{"NFO:" + symbols.NIFTY, "NFO:" + symbols.BANKNIFTY}
+	quoteRaw, _, err := transport.LTP(ctx, authorization, quoteKeys)
+	if err != nil {
+		return errInstrumentSnapshot
+	}
+	prices, err := decodeLTPMinor(quoteRaw, quoteKeys)
+	if err != nil {
+		return errInstrumentSnapshot
+	}
+	publisher := dependencies.publishEvidence
+	if publisher == nil {
+		publisher = marketvalidation.PublishEvidenceCreateOnce
+	}
+	checksum, err := publisher(*outputPath, dump)
+	if err != nil {
+		return errInstrumentSnapshot
+	}
+	_, err = fmt.Fprintf(output, "INSTRUMENTS=PASS\nINSTRUMENT_PATH=%s\nINSTRUMENT_SHA256=%s\nNIFTY_FORWARD_MINOR=%d\nBANKNIFTY_FORWARD_MINOR=%d\n", *outputPath, checksum, prices[quoteKeys[0]], prices[quoteKeys[1]])
+	return err
+}
+
+func decodeLTPMinor(raw []byte, required []string) (map[string]int64, error) {
+	var payload struct {
+		Status string `json:"status"`
+		Data   map[string]struct {
+			LastPrice json.Number `json:"last_price"`
+		} `json:"data"`
+	}
+	decoder := json.NewDecoder(bytes.NewReader(raw))
+	decoder.UseNumber()
+	if decoder.Decode(&payload) != nil || payload.Status != "success" || len(payload.Data) != len(required) {
+		return nil, errInstrumentSnapshot
+	}
+	result := make(map[string]int64, len(required))
+	for _, key := range required {
+		quote, ok := payload.Data[key]
+		if !ok {
+			return nil, errInstrumentSnapshot
+		}
+		minor, err := decimalToMinor(quote.LastPrice.String())
+		if err != nil || minor <= 0 {
+			return nil, errInstrumentSnapshot
+		}
+		result[key] = minor
+	}
+	return result, nil
+}
+
+func decimalToMinor(value string) (int64, error) {
+	value = strings.TrimSpace(value)
+	if value == "" || strings.HasPrefix(value, "-") || strings.ContainsAny(value, "eE+") {
+		return 0, errInstrumentSnapshot
+	}
+	parts := strings.Split(value, ".")
+	if len(parts) > 2 || parts[0] == "" {
+		return 0, errInstrumentSnapshot
+	}
+	fraction := ""
+	if len(parts) == 2 {
+		fraction = parts[1]
+	}
+	if len(fraction) > 2 {
+		return 0, errInstrumentSnapshot
+	}
+	for len(fraction) < 2 {
+		fraction += "0"
+	}
+	major, err := strconv.ParseInt(parts[0], 10, 64)
+	if err != nil || major > (1<<63-1-99)/100 {
+		return 0, errInstrumentSnapshot
+	}
+	minor := int64(0)
+	if fraction != "" {
+		minor, err = strconv.ParseInt(fraction, 10, 64)
+	}
+	if err != nil {
+		return 0, errInstrumentSnapshot
+	}
+	return major*100 + minor, nil
 }
 
 func exchangeToken(args []string, lookup lookupEnv, output io.Writer, dependencies commandDependencies) error {

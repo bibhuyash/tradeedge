@@ -92,3 +92,50 @@ func TestLookupWithPersistedSessionRequiresCompleteValidPair(t *testing.T) {
 		}
 	})
 }
+
+func TestPersistPreparationPathsPreservesCredentialsAndUnrelatedEntries(t *testing.T) {
+	path := filepath.Join(t.TempDir(), ".env")
+	original := "UNRELATED=keep\n" + accessTokenKey + "=secret-value\n" +
+		"TRADEEDGE_AUTHORIZATION_MANIFEST_HOST=old-auth.json\n"
+	if err := os.WriteFile(path, []byte(original), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if err := PersistPreparationPaths(path, ".cache/auth.json", ".cache/bundle.json"); err != nil {
+		t.Fatal(err)
+	}
+	raw, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	text := string(raw)
+	for _, expected := range []string{
+		"UNRELATED=keep\n",
+		accessTokenKey + "=secret-value\n",
+		"TRADEEDGE_AUTHORIZATION_MANIFEST_HOST=.cache/auth.json\n",
+		"TRADEEDGE_RUNTIME_BUNDLE_HOST=.cache/bundle.json\n",
+	} {
+		if !strings.Contains(text, expected) {
+			t.Fatalf("missing preserved or updated entry %q", expected)
+		}
+	}
+}
+
+func TestInvalidateRequestTokenClearsOnlyRequestToken(t *testing.T) {
+	path := filepath.Join(t.TempDir(), ".env")
+	original := "TRADEEDGE_ZERODHA_REQUEST_TOKEN=one-time-secret\nUNRELATED=keep\n"
+	if err := os.WriteFile(path, []byte(original), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if err := InvalidateRequestToken(path); err != nil {
+		t.Fatal(err)
+	}
+	raw, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	text := string(raw)
+	if !strings.Contains(text, "TRADEEDGE_ZERODHA_REQUEST_TOKEN=\n") ||
+		!strings.Contains(text, "UNRELATED=keep\n") || strings.Contains(text, "one-time-secret") {
+		t.Fatal("request token was not safely invalidated")
+	}
+}

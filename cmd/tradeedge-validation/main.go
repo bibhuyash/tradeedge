@@ -35,7 +35,7 @@ func main() {
 
 func run(args []string) error {
 	if len(args) == 0 {
-		return errors.New("usage: tradeedge-validation <prepare-session|readiness|telegram-check|calendar-check|generate-calendar|generate-mappings|generate-derivatives|generate-shadow-derivatives|build-shadow-bundle|finalize-shadow-session|authorize|day0-gate|day1-gate|close-day0|finalize-day|scorecard>")
+		return errors.New("usage: tradeedge-validation <prepare-session|readiness|telegram-check|calendar-check|generate-calendar|generate-mappings|generate-derivatives|generate-shadow-derivatives|build-shadow-bundle|build-shadow-authorization|finalize-shadow-session|authorize|day0-gate|day1-gate|close-day0|finalize-day|scorecard>")
 	}
 	switch args[0] {
 	case "prepare-session":
@@ -56,6 +56,8 @@ func run(args []string) error {
 		return generateShadowDerivativeMappings(args[1:])
 	case "build-shadow-bundle":
 		return buildShadowBundle(args[1:])
+	case "build-shadow-authorization":
+		return buildShadowAuthorization(args[1:])
 	case "finalize-shadow-session":
 		return finalizeShadowSession(args[1:])
 	case "authorize":
@@ -73,6 +75,58 @@ func run(args []string) error {
 	default:
 		return errors.New("unknown market-validation command")
 	}
+}
+
+func buildShadowAuthorization(args []string) error {
+	set := flag.NewFlagSet("build-shadow-authorization", flag.ContinueOnError)
+	date := set.String("date", "", "trading date YYYY-MM-DD")
+	commit := set.String("commit", "", "exact application commit")
+	authorizedAt := set.String("authorized-at", "", "RFC3339 authorization time")
+	expiresAt := set.String("expires-at", "", "RFC3339 authorization expiry")
+	runtimeBundle := set.String("runtime-bundle", "", "SHADOW runtime bundle")
+	calendar := set.String("calendar", "", "exact-date calendar")
+	calendarApproval := set.String("calendar-approval", "", "calendar approval")
+	master := set.String("instrument-master", "", "instrument master")
+	watchlist := set.String("watchlist", "", "watchlist")
+	strategies := set.String("strategies", "", "strategy configuration")
+	portfolio := set.String("portfolio", "", "portfolio configuration")
+	risk := set.String("risk", "", "risk configuration")
+	nifty := set.String("qualification-nifty", "", "NIFTY qualification configuration")
+	bank := set.String("qualification-banknifty", "", "BANKNIFTY qualification configuration")
+	telegram := set.String("telegram", "", "Telegram evidence")
+	preflight := set.String("preflight", "", "Zerodha preflight evidence")
+	output := set.String("output", "", "final authorization manifest")
+	if err := set.Parse(args); err != nil || set.NArg() != 0 {
+		return errors.New("invalid build-shadow-authorization arguments")
+	}
+	values := []*string{date, commit, authorizedAt, expiresAt, runtimeBundle, calendar, calendarApproval, master, watchlist, strategies, portfolio, risk, nifty, bank, telegram, preflight, output}
+	for _, value := range values {
+		if strings.TrimSpace(*value) == "" {
+			return errors.New("build-shadow-authorization requires every artifact and identity input")
+		}
+	}
+	authorized, err := time.Parse(time.RFC3339, *authorizedAt)
+	if err != nil {
+		return err
+	}
+	expires, err := time.Parse(time.RFC3339, *expiresAt)
+	if err != nil {
+		return err
+	}
+	value, err := marketvalidation.BuildShadowAuthorization(marketvalidation.ShadowAuthorizationInputs{
+		OutputPath: *output, ApplicationCommit: *commit, TradingDate: *date, AuthorizedAt: authorized, ExpiresAt: expires,
+		RuntimeBundlePath: *runtimeBundle, CalendarPath: *calendar, CalendarApprovalPath: *calendarApproval, InstrumentMasterPath: *master, WatchlistPath: *watchlist,
+		StrategiesPath: *strategies, PortfolioPath: *portfolio, RiskPath: *risk, QualificationNIFTYPath: *nifty, QualificationBANKPath: *bank,
+		TelegramEvidencePath: *telegram, ZerodhaPreflightPath: *preflight,
+	})
+	if err != nil {
+		return err
+	}
+	raw, err := marketvalidation.Marshal(value)
+	if err != nil {
+		return err
+	}
+	return writeEvidence(*output, raw)
 }
 
 func generateCalendar(args []string) error {

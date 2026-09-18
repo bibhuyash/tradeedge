@@ -12,6 +12,29 @@ import (
 
 const DerivativeMappingPolicyVersion = "phase8-m4-bounded-derivative-mapping/v2"
 
+type ShadowFutureSymbols struct {
+	NIFTY     string
+	BANKNIFTY string
+}
+
+// SelectShadowFutureSymbols returns the same nearest eligible futures used by
+// GenerateShadowDerivativeMappings, before option strikes are selected.
+func SelectShadowFutureSymbols(dumpRaw []byte, asOf time.Time) (ShadowFutureSymbols, error) {
+	records, err := brokerzerodha.ParseInstrumentDump(dumpRaw)
+	if err != nil {
+		return ShadowFutureSymbols{}, err
+	}
+	nifty, err := selectEligibleFuture(records, "NIFTY", asOf)
+	if err != nil {
+		return ShadowFutureSymbols{}, err
+	}
+	bank, err := selectEligibleFuture(records, "BANKNIFTY", asOf)
+	if err != nil {
+		return ShadowFutureSymbols{}, err
+	}
+	return ShadowFutureSymbols{NIFTY: nifty.TradingSymbol, BANKNIFTY: bank.TradingSymbol}, nil
+}
+
 func GenerateNIFTYDerivativeMappings(dumpRaw []byte, forwardReferenceMinor int64, asOf, validFrom, validUntil time.Time) (MappingGeneration, MappingSelection, error) {
 	selection, err := selectDerivativeMappings(dumpRaw, "NIFTY", "NIFTY 50", forwardReferenceMinor, asOf)
 	if err != nil {
@@ -47,24 +70,17 @@ func selectDerivativeMappings(dumpRaw []byte, underlying, spotSymbol string, for
 		return MappingSelection{}, err
 	}
 	minDate, maxDate := date(asOf.AddDate(0, 0, 1)), date(asOf.AddDate(0, 0, 14))
-	var futures []brokerzerodha.InstrumentRecord
 	expiries := map[string]bool{}
 	for _, record := range records {
 		if !isDerivativeSymbol(record.TradingSymbol, underlying) {
 			continue
 		}
-		if record.Exchange == "NFO" && record.Segment == "NFO-FUT" && record.InstrumentType == "FUT" && record.Expiry >= minDate {
-			futures = append(futures, record)
-		}
 		if record.Exchange == "NFO" && record.Segment == "NFO-OPT" && record.InstrumentType == "CE" && record.Expiry >= minDate && record.Expiry <= maxDate {
 			expiries[record.Expiry] = true
 		}
 	}
-	if len(futures) == 0 || len(expiries) == 0 {
-		return MappingSelection{}, ErrInvalidMappingSelection
-	}
-	sort.Slice(futures, func(i, j int) bool { return futures[i].Expiry < futures[j].Expiry })
-	if len(futures) > 1 && futures[0].Expiry == futures[1].Expiry {
+	future, err := selectEligibleFuture(records, underlying, asOf)
+	if err != nil || len(expiries) == 0 {
 		return MappingSelection{}, ErrInvalidMappingSelection
 	}
 	expiryKeys := make([]string, 0, len(expiries))
@@ -112,7 +128,7 @@ func selectDerivativeMappings(dumpRaw []byte, underlying, spotSymbol string, for
 	}
 	selection := MappingSelection{SchemaVersion: MappingSelectionSchemaVersion, Instruments: []MappingSelectionItem{
 		{Key: "NSE:INDEX:" + underlying, ProviderExchange: "NSE", ProviderSegment: "INDICES", ProviderInstrumentType: "EQ", TradingSymbol: spotSymbol, CanonicalSegment: domain.SegmentIndex, Underlying: underlying, Type: domain.InstrumentIndex},
-		{Key: "NFO:FUTURE:" + underlying + ":" + futures[0].Expiry, ProviderExchange: "NFO", ProviderSegment: "NFO-FUT", ProviderInstrumentType: "FUT", TradingSymbol: futures[0].TradingSymbol, CanonicalSegment: domain.SegmentFutures, Underlying: underlying, Type: domain.InstrumentFuture},
+		{Key: "NFO:FUTURE:" + underlying + ":" + future.Expiry, ProviderExchange: "NFO", ProviderSegment: "NFO-FUT", ProviderInstrumentType: "FUT", TradingSymbol: future.TradingSymbol, CanonicalSegment: domain.SegmentFutures, Underlying: underlying, Type: domain.InstrumentFuture},
 	}}
 	for _, strike := range strikes[center-2 : center+3] {
 		matches := byStrike[strike]
@@ -123,6 +139,27 @@ func selectDerivativeMappings(dumpRaw []byte, underlying, spotSymbol string, for
 		selection.Instruments = append(selection.Instruments, MappingSelectionItem{Key: fmt.Sprintf("NFO:OPTION:%s:%s:%d:CE", underlying, record.Expiry, strike), ProviderExchange: "NFO", ProviderSegment: "NFO-OPT", ProviderInstrumentType: "CE", TradingSymbol: record.TradingSymbol, CanonicalSegment: domain.SegmentOptions, Underlying: underlying, Type: domain.InstrumentOption})
 	}
 	return selection, nil
+}
+
+func selectEligibleFuture(records []brokerzerodha.InstrumentRecord, underlying string, asOf time.Time) (brokerzerodha.InstrumentRecord, error) {
+	if asOf.IsZero() || (underlying != "NIFTY" && underlying != "BANKNIFTY") {
+		return brokerzerodha.InstrumentRecord{}, ErrInvalidMappingSelection
+	}
+	minDate := date(asOf.AddDate(0, 0, 1))
+	var futures []brokerzerodha.InstrumentRecord
+	for _, record := range records {
+		if isDerivativeSymbol(record.TradingSymbol, underlying) && record.Exchange == "NFO" && record.Segment == "NFO-FUT" && record.InstrumentType == "FUT" && record.Expiry >= minDate {
+			futures = append(futures, record)
+		}
+	}
+	if len(futures) == 0 {
+		return brokerzerodha.InstrumentRecord{}, ErrInvalidMappingSelection
+	}
+	sort.Slice(futures, func(i, j int) bool { return futures[i].Expiry < futures[j].Expiry })
+	if len(futures) > 1 && futures[0].Expiry == futures[1].Expiry {
+		return brokerzerodha.InstrumentRecord{}, ErrInvalidMappingSelection
+	}
+	return futures[0], nil
 }
 
 func date(at time.Time) string {

@@ -18,54 +18,37 @@ are prohibited.
 
 ## Pre-session preparation
 
-1. Copy `.env.example` to the ignored `.env` and inject current credentials.
-   When the previous Zerodha access-token session is absent or expired, place a
-   fresh request token in that file and run the bounded bootstrap before
-   retrieving the current instrument dump:
+`.env` is the single operator-controlled source for credentials and the two
+generated artifact selectors. Do not export process-scoped TradeEdge variables
+or run host Go commands. From a clean, merged `main` checkout run:
 
-   ```powershell
-   go run ./cmd/tradeedge-zerodha-auth authenticate -credentials-file .env
-   ```
+```powershell
+docker compose --env-file .env run --rm tradeedge-prepare
+```
 
-   It exchanges the request token at most once, atomically persists only the
-   access token and expiry, and performs no instrument, REST-profile,
-   WebSocket, order, or runtime operation. A valid persisted session is reused.
-   Never copy credentials or command output containing them into evidence.
-2. Generate the exact-date calendar and source manifest from the reviewed,
-   checksum-verified NSE calendar policy with `generate-calendar`, then run
-   `calendar-check`. A weekend, listed holiday, missing policy date, or source
-   checksum mismatch fails closed.
-3. Generate current bounded mappings from a current Zerodha instrument dump
-   with `tradeedge-validation generate-shadow-derivatives`, providing accepted
-   NIFTY and BANKNIFTY forward references, validity times, and all three output
-   paths. Provider tokens are derived, never hand-edited.
-4. Run `build-shadow-bundle` with the approved calendar, generated master and
-   watchlist, `configs/validation/strategies-shadow.json`, portfolio/risk files,
-   and both `qualification.*.shadow-collecting.json` files.
-5. Run fresh Telegram evidence and Zerodha preflight for mode `SHADOW`. Pass
-   `-credentials-file .env`; preflight reuses a valid restored access token or
-   exchanges the request token exactly once, atomically persists only
-   `TRADEEDGE_ZERODHA_ACCESS_TOKEN` and
-   `TRADEEDGE_ZERODHA_ACCESS_TOKEN_EXPIRES_AT`, and uses that session for REST
-   and WebSocket verification. It never prints or records the token.
-6. Finalize a commit-, date-, artifact-, and evidence-bound SHADOW authorization
-   with `tradeedge-validation authorize`. CI never issues this authorization.
-7. Inspect the manifest and obtain explicit operator approval.
-8. In PowerShell, remove any stale process-scoped manifest selector and validate
-   the Compose configuration. Clearing the process value makes the manifest
-   selector come from the current `.env`; quiet validation avoids printing the
-   resolved secret-bearing environment:
+If the result is `SESSION_PREPARATION=LOGIN_REQUIRED`, open the one printed
+`LOGIN_URL`, complete Zerodha login, replace only
+`TRADEEDGE_ZERODHA_REQUEST_TOKEN` in `.env`, and run the same command again.
+The rejected one-time request token is cleared and is never retried. A valid
+persisted access session is reused; otherwise the fresh request token is
+exchanged once and only the access token and expiry are atomically persisted.
+No token or secret is printed or placed in evidence.
 
-   ```powershell
-   Remove-Item Env:TRADEEDGE_AUTHORIZATION_MANIFEST_HOST -ErrorAction SilentlyContinue
-   docker compose --env-file .env config --quiet
-   ```
+`SESSION_PREPARATION=READY` means the command has completed the exact-date
+calendar checks, authenticated instrument snapshot, bounded NIFTY/BANKNIFTY
+mapping generation, runtime bundle, Telegram check, read-only Zerodha
+preflight, authorization creation and inspection, and atomic `.env` selector
+update. Existing create-once evidence is resumed after a failure; it is not
+silently overwritten. A closed market date, dirty checkout, non-`main` branch,
+stale process override, checksum conflict, invalid mapping, Telegram failure,
+preflight failure, or authorization failure returns
+`SESSION_PREPARATION=BLOCKED`.
 
-9. Only then start the canonical service:
+Only after `READY`, start the canonical service:
 
-   ```powershell
-   docker compose --env-file .env up -d tradeedge-shadow
-   ```
+```powershell
+docker compose --env-file .env up -d tradeedge-shadow
+```
 
 Confirm `/api/v1/integrations/zerodha/status` reports read-only SHADOW and
 `/api/v1/shadow/runtime` reports broker orders disabled. Candidate warmup is not
@@ -73,11 +56,10 @@ a system failure. Stop on mapping conflict, checkpoint failure, unexpected order
 frame, or authorization expiry.
 
 The packet is session-specific. Do not create an authorization for a closed or
-future session merely to complete preparation. On the actual trading date,
-generate fresh date-bound artifacts. If Zerodha requires a new login, the sole
-manual credential action is to place the resulting request token in the
-untracked `.env`; preflight exchanges or reuses it and persists the restored
-session fields without printing them.
+future session merely to complete preparation. On the actual trading date run
+the preparation command to generate fresh date-bound artifacts. The browser
+login and request-token replacement described above are the only manual
+authentication actions.
 
 ## Session 1 record and Session 2 target
 
