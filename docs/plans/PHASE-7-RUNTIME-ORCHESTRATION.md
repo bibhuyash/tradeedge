@@ -46,7 +46,11 @@ evidence pass. M1 closure alone does not authorize live trading or M2.
 - [x] Optional outbound-only Telegram adapter and redacted configuration.
 - [x] Independent structured CAS evidence and deterministic EOD reporting.
 - [x] Replay delivery suppression, bounded telemetry, and GET-only operational APIs.
-- [ ] Phase 7 M2 Ubuntu race/stress workflow and checksummed evidence pass.
+- [x] Phase 7 M2 Ubuntu race/stress workflow and checksummed evidence pass.
+
+The reviewed current commit passed the Phase 7 M2 Operational Notifications
+workflow, including the Ubuntu race/stress suite and checksummed evidence
+(GitHub Actions run 35101134859).
 
 M2 does not authorize live trading, Telegram commands, or a CAS strategy. M3
 trading-day closure and failure drills remain separate.
@@ -62,7 +66,10 @@ trading-day closure and failure drills remain separate.
 - [x] Same-commit Phase 1-7 regression, race, stress, security, and artifact
   workflow.
 - [x] PAPER/SHADOW operating and evidence-preservation runbook.
-- [ ] Reviewed-commit Ubuntu closure workflow and checksummed artifact pass.
+- [x] Reviewed-commit Ubuntu closure workflow and checksummed artifact pass.
+
+The reviewed current commit passed the Phase 7 Closure Release workflow and its
+checksummed artifact gate (GitHub Actions run 35101134980).
 
 M3 is closed only by the final workflow artifact. Local harness output without
 workflow identity and every external gate fails closed. Closure authorizes

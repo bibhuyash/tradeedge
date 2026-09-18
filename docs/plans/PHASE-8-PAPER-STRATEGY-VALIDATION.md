@@ -103,9 +103,20 @@ no PAPER or LIVE authority.
 - [x] GET-only runtime/warmup/scorecard APIs and `tradeedge-shadow` Compose
   service with a VCS-stamped binary.
 - [x] Operator mapping/bundle/authorization and later evidence tooling.
-- [ ] Real-market collection (requires explicit operator approval; not started
-  by engineering or CI).
+- [x] Real-market Session 1 completed as `PARTIAL_SESSION`: NIFTY and BANKNIFTY
+  each supplied 361 accepted observations and six completed candles. The candle
+  pipeline passed; EMA warmup ended at 6/50 because capture began near market
+  close. There were zero SHADOW proposals, broker orders, paper mutations, or
+  real broker mutations. The result remains `NOT_ALPHA_QUALIFIED`.
+
+Session 1 used application commit `20c9099a894b5dcc8f2dd5ee7157a30153165232`.
+Its duplicate shutdown checkpoint publication was subsequently fixed by
+`3d1ef202d927ee16bb1d6a562a0301900beb7e3f`. `RunWithOptions` is now the sole
+shutdown owner; the fix passed CI and the Phase 8 M4 workflow. Session 1 remains
+immutable historical evidence and is not rewritten to the fixed commit.
 
 M4 engineering readiness does not establish alpha and does not authorize a
 market session. The candidate remains `REFERENCE_CANDIDATE` and
-`NOT_ALPHA_QUALIFIED`.
+`NOT_ALPHA_QUALIFIED`. The next validation is Real-Market SHADOW Session 2,
+started early enough to target at least 50 completed one-minute candles for each
+underlying without changing EMA20/EMA50.

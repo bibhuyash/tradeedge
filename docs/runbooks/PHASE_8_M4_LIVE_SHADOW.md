@@ -39,7 +39,17 @@ are prohibited.
 6. Finalize a commit-, date-, artifact-, and evidence-bound SHADOW authorization
    with `tradeedge-validation authorize`. CI never issues this authorization.
 7. Inspect the manifest and obtain explicit operator approval.
-8. Only then start the canonical service:
+8. In PowerShell, remove any stale process-scoped manifest selector and validate
+   the Compose configuration. Clearing the process value makes the manifest
+   selector come from the current `.env`; quiet validation avoids printing the
+   resolved secret-bearing environment:
+
+   ```powershell
+   Remove-Item Env:TRADEEDGE_AUTHORIZATION_MANIFEST_HOST -ErrorAction SilentlyContinue
+   docker compose --env-file .env config --quiet
+   ```
+
+9. Only then start the canonical service:
 
    ```powershell
    docker compose --env-file .env up -d tradeedge-shadow
@@ -49,6 +59,40 @@ Confirm `/api/v1/integrations/zerodha/status` reports read-only SHADOW and
 `/api/v1/shadow/runtime` reports broker orders disabled. Candidate warmup is not
 a system failure. Stop on mapping conflict, checkpoint failure, unexpected order
 frame, or authorization expiry.
+
+The packet is session-specific. Do not create an authorization for a closed or
+future session merely to complete preparation. On the actual trading date,
+generate fresh date-bound artifacts. If Zerodha requires a new login, the sole
+manual credential action is to place the resulting request token in the
+untracked `.env`; preflight exchanges or reuses it and persists the restored
+session fields without printing them.
+
+## Session 1 record and Session 2 target
+
+Session 1 on 2026-08-13 is complete as `PARTIAL_SESSION`. NIFTY and BANKNIFTY
+each produced 361 accepted observations and six completed one-minute candles.
+The candle pipeline passed and EMA reached 6/50; six candles were expected
+because live capture began near market close. There were no SHADOW proposals,
+broker orders, paper mutations, or real broker mutations, and the candidate is
+still `NOT_ALPHA_QUALIFIED`.
+
+The duplicate shutdown checkpoint publication seen after Session 1 was fixed by
+commit `3d1ef202d927ee16bb1d6a562a0301900beb7e3f`. `RunWithOptions` owns shutdown
+and publishes one final checkpoint. Do not treat the historical Session 1
+closure fields as a current defect or rewrite its evidence to a later commit.
+
+For Session 2, start sufficiently early to collect at least 50 completed
+one-minute candles independently for NIFTY and BANKNIFTY. Expected progression
+is market data ready, candle aggregation, EMA 50/50, strategy ready,
+`SHADOW_COLLECTING`, then a genuine signal if the market supplies one. A genuine
+signal must exercise derivatives selection, released Phase 3 risk,
+qualification evidence, and outbound Telegram while producing zero broker
+orders. `NO_ACTION` or `NO_CROSSOVER` is a valid result; never alter EMA20/EMA50
+to manufacture a signal.
+
+At EOD require the session scorecard and real-market evidence, one clean
+checkpoint publication, clean shutdown, and process exit code 0. PAPER and LIVE
+remain disabled and real broker mutation remains unreachable.
 
 ## Shutdown ownership
 
