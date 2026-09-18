@@ -19,6 +19,18 @@ are prohibited.
 ## Pre-session preparation
 
 1. Copy `.env.example` to the ignored `.env` and inject current credentials.
+   When the previous Zerodha access-token session is absent or expired, place a
+   fresh request token in that file and run the bounded bootstrap before
+   retrieving the current instrument dump:
+
+   ```powershell
+   go run ./cmd/tradeedge-zerodha-auth authenticate -credentials-file .env
+   ```
+
+   It exchanges the request token at most once, atomically persists only the
+   access token and expiry, and performs no instrument, REST-profile,
+   WebSocket, order, or runtime operation. A valid persisted session is reused.
+   Never copy credentials or command output containing them into evidence.
 2. Generate the exact-date calendar and source manifest from the reviewed,
    checksum-verified NSE calendar policy with `generate-calendar`, then run
    `calendar-check`. A weekend, listed holiday, missing policy date, or source
