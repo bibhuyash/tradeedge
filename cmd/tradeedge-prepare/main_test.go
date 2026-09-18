@@ -14,6 +14,7 @@ type fakeRunner struct {
 	failCommand string
 	authError   string
 	failed      bool
+	dirty       bool
 	calls       []string
 }
 
@@ -32,6 +33,9 @@ func (runner *fakeRunner) Run(name string, args ...string) (string, error) {
 		return "", errors.New("fixture failure")
 	}
 	if name == "git" && len(args) > 0 && args[0] == "status" {
+		if runner.dirty {
+			return " M cmd/tradeedge-prepare/main.go\n", nil
+		}
 		return "", nil
 	}
 	if name == "git" && len(args) > 0 && args[0] == "branch" {
@@ -56,6 +60,42 @@ func (runner *fakeRunner) Run(name string, args ...string) (string, error) {
 	return "PASS\n", nil
 }
 
+func TestNormalPreparationRejectsDirtyTreeAndAcceptanceOnlyIsNonAuthorizing(t *testing.T) {
+	value, credentials := preparationFixture(t)
+	runner := &fakeRunner{dirty: true}
+	var output bytes.Buffer
+	if err := prepare(value, runner, &output); err == nil || !strings.Contains(err.Error(), "working tree is not clean") {
+		t.Fatalf("normal dirty preparation was not blocked: err=%v output=%q", err, output.String())
+	}
+
+	value.acceptanceOnly = true
+	output.Reset()
+	runner.calls = nil
+	if err := prepare(value, runner, &output); err != nil {
+		t.Fatalf("acceptance-only: %v", err)
+	}
+	for _, expected := range []string{"SESSION_PREPARATION=ACCEPTANCE_PASS", "AUTHORIZATION=NOT_GENERATED", "SHADOW_STARTABLE=NO"} {
+		if !strings.Contains(output.String(), expected+"\n") {
+			t.Fatalf("missing %q in %q", expected, output.String())
+		}
+	}
+	for _, call := range runner.calls {
+		if strings.Contains(call, "build-shadow-authorization") || strings.Contains(call, "prepare-session") || strings.Contains(call, "tradeedge-zerodha-auth") {
+			t.Fatalf("acceptance invoked release/auth path: %q", call)
+		}
+	}
+	raw, err := os.ReadFile(credentials)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if strings.Contains(string(raw), "authorization-aaaaaaa.json") || strings.Contains(string(raw), "runtime-bundle-aaaaaaa.json") {
+		t.Fatalf("acceptance persisted release selectors: %q", raw)
+	}
+	if _, err = os.Stat(value.selectorsFile); !errors.Is(err, os.ErrNotExist) {
+		t.Fatalf("acceptance created selector file: %v", err)
+	}
+}
+
 func writeFlagFile(args []string, name string) {
 	for index := 0; index+1 < len(args); index++ {
 		if args[index] == name {
@@ -72,56 +112,55 @@ func preparationFixture(t *testing.T) (options, string) {
 	if err := os.WriteFile(credentials, []byte("TRADEEDGE_AUTHORIZATION_MANIFEST_HOST=\nTRADEEDGE_RUNTIME_BUNDLE_HOST=\nUNCHANGED=value\n"), 0o600); err != nil {
 		t.Fatal(err)
 	}
-	return options{repository: repository, credentialsFile: credentials, authCommand: "auth", validationCommand: "validation", now: time.Date(2026, 9, 18, 4, 30, 0, 0, time.UTC)}, credentials
+	readOnly := func(args []string, _ string) (string, error) {
+		writeFlagFile(args, "-output")
+		if args[0] == "instrument-snapshot" {
+			return "INSTRUMENTS=PASS\nNIFTY_FORWARD_MINOR=2500000\nBANKNIFTY_FORWARD_MINOR=5500000\n", nil
+		}
+		return "AUTHENTICATION=PASS\nREST_AUTH=PASS\nWEBSOCKET_AUTH=PASS\n", nil
+	}
+	return options{repository: repository, credentialsFile: credentials, selectorsFile: filepath.Join(repository, ".cache", "tradeedge", "preparation.env"), sessionFile: filepath.Join(repository, "zerodha.json"), validationCommand: "validation", now: time.Date(2026, 9, 18, 4, 30, 0, 0, time.UTC), readOnly: readOnly}, credentials
 }
 
 func TestPrepareReadyAndRepeatedInvocation(t *testing.T) {
-	value, credentials := preparationFixture(t)
+	value, _ := preparationFixture(t)
 	runner := &fakeRunner{}
 	for attempt := 0; attempt < 2; attempt++ {
 		var output bytes.Buffer
 		if err := prepare(value, runner, &output); err != nil {
 			t.Fatalf("attempt %d: %v", attempt+1, err)
 		}
-		for _, expected := range []string{"SESSION_PREPARATION=READY", "ACCESS_TOKEN=REUSED", "INSTRUMENTS=PASS", "MAPPINGS=PASS", "ZERODHA_PREFLIGHT=PASS", "PAPER=DISABLED", "LIVE=DISABLED", "REAL_BROKER_MUTATION=UNREACHABLE"} {
+		for _, expected := range []string{"SESSION_PREPARATION=READY", "ACCESS_TOKEN=STORED_SESSION", "INSTRUMENTS=PASS", "MAPPINGS=PASS", "ZERODHA_PREFLIGHT=PASS", "PAPER=DISABLED", "LIVE=DISABLED", "REAL_BROKER_MUTATION=UNREACHABLE"} {
 			if !strings.Contains(output.String(), expected+"\n") {
 				t.Fatalf("missing %q in %q", expected, output.String())
 			}
 		}
 	}
-	raw, err := os.ReadFile(credentials)
-	if err != nil || !strings.Contains(string(raw), "UNCHANGED=value\n") || !strings.Contains(string(raw), "TRADEEDGE_AUTHORIZATION_MANIFEST_HOST=.cache/market-validation/2026-09-18/authorization-aaaaaaa.json\n") {
-		t.Fatalf("dotenv=%q err=%v", raw, err)
+	raw, err := os.ReadFile(value.selectorsFile)
+	if err != nil || !strings.Contains(string(raw), "TRADEEDGE_AUTHORIZATION_MANIFEST_HOST=.cache/market-validation/2026-09-18/authorization-aaaaaaa.json\n") || !strings.Contains(string(raw), "TRADEEDGE_RUNTIME_BUNDLE_HOST=.cache/market-validation/2026-09-18/runtime-bundle-aaaaaaa.json\n") {
+		t.Fatalf("selectors=%q err=%v", raw, err)
 	}
 }
 
-func TestPrepareReturnsOneLoginInstruction(t *testing.T) {
+func TestPrepareMappingAsOfFallsWithinValidity(t *testing.T) {
 	value, _ := preparationFixture(t)
-	runner := &fakeRunner{failCommand: "auth authenticate"}
-	var output bytes.Buffer
-	err := prepare(value, runner, &output)
-	if !errors.Is(err, errLoginRequired) || strings.Count(output.String(), "LOGIN_URL=") != 1 || !strings.Contains(output.String(), "REQUEST_TOKEN_DESTINATION=TRADEEDGE_ZERODHA_REQUEST_TOKEN in .env") {
-		t.Fatalf("err=%v output=%q", err, output.String())
+	runner := &fakeRunner{}
+	if err := prepare(value, runner, &bytes.Buffer{}); err != nil {
+		t.Fatal(err)
 	}
 	for _, call := range runner.calls {
-		if strings.HasPrefix(call, "git ") {
-			t.Fatalf("repository checks ran before login handoff: %q", call)
+		if strings.Contains(call, "generate-shadow-derivatives") {
+			if !strings.Contains(call, "-as-of 2026-09-18T10:00:00+05:30") || !strings.Contains(call, "-valid-from 2026-09-18T09:15:00+05:30") {
+				t.Fatalf("invalid mapping interval: %q", call)
+			}
+			return
 		}
 	}
-}
-
-func TestPrepareDoesNotMisclassifyTransportFailureAsLoginRequired(t *testing.T) {
-	value, _ := preparationFixture(t)
-	runner := &fakeRunner{failCommand: "auth authenticate", authError: "NetworkError"}
-	var output bytes.Buffer
-	err := prepare(value, runner, &output)
-	if err == nil || errors.Is(err, errLoginRequired) || strings.Contains(output.String(), "LOGIN_URL=") {
-		t.Fatalf("transport failure was misclassified: err=%v output=%q", err, output.String())
-	}
+	t.Fatal("mapping generation was not invoked")
 }
 
 func TestPrepareFailuresAreFailClosedAndResume(t *testing.T) {
-	for _, stage := range []string{"instrument-snapshot", "generate-calendar", "calendar-check", "generate-shadow-derivatives", "build-shadow-bundle", "telegram-check", "preflight", "build-shadow-authorization", "prepare-session"} {
+	for _, stage := range []string{"generate-calendar", "calendar-check", "generate-shadow-derivatives", "build-shadow-bundle", "telegram-check", "build-shadow-authorization", "prepare-session"} {
 		t.Run(stage, func(t *testing.T) {
 			value, _ := preparationFixture(t)
 			runner := &fakeRunner{failCommand: stage}
@@ -137,12 +176,12 @@ func TestPrepareFailuresAreFailClosedAndResume(t *testing.T) {
 	}
 }
 
-func TestPrepareRejectsStaleProcessOverride(t *testing.T) {
+func TestPrepareGeneratedSelectorsOverrideStaleProcessValue(t *testing.T) {
 	value, _ := preparationFixture(t)
 	t.Setenv("TRADEEDGE_AUTHORIZATION_MANIFEST_HOST", "stale/session.json")
 	var output bytes.Buffer
-	if err := prepare(value, &fakeRunner{}, &output); err == nil || strings.Contains(output.String(), "SESSION_PREPARATION=READY") {
-		t.Fatalf("stale override accepted: err=%v output=%q", err, output.String())
+	if err := prepare(value, &fakeRunner{}, &output); err != nil || !strings.Contains(output.String(), "SESSION_PREPARATION=READY") {
+		t.Fatalf("generated selectors were not authoritative: err=%v output=%q", err, output.String())
 	}
 }
 
@@ -159,5 +198,18 @@ func TestBlockedPreparationAlwaysIncludesBlocker(t *testing.T) {
 	}
 	if strings.Contains(output.String(), "secret-value") {
 		t.Fatalf("blocked output leaked secret: %q", output.String())
+	}
+}
+
+func TestPreflightDiagnosticIsUsefulAndSecretSafe(t *testing.T) {
+	raw := "AUTHENTICATION=PASS\nREST_AUTH=PASS\nWEBSOCKET_AUTH=FAIL\nERROR_TYPE=WebSocketTimeout\nLAST_FAILURE_STAGE=FRESHNESS\nOBSERVATIONS_RECEIVED=0\nACCESS_TOKEN=secret\n"
+	got := preflightDiagnostic(raw)
+	for _, expected := range []string{"AUTHENTICATION=PASS", "WEBSOCKET_AUTH=FAIL", "LAST_FAILURE_STAGE=FRESHNESS", "OBSERVATIONS_RECEIVED=0"} {
+		if !strings.Contains(got, expected) {
+			t.Fatalf("missing %q in %q", expected, got)
+		}
+	}
+	if strings.Contains(got, "secret") || strings.Contains(got, "ACCESS_TOKEN") {
+		t.Fatalf("secret leaked in %q", got)
 	}
 }

@@ -49,7 +49,7 @@ jobs:
           TRADEEDGE_TELEGRAM_BOT_TOKEN: compose-validation-only
           TRADEEDGE_TELEGRAM_CHAT_ID: compose-validation-only
         run: docker compose --env-file .env.example config --quiet
-      - name: Clean-environment preparation bootstrap and SHADOW fail-closed
+      - name: Control Plane V2 composition and SHADOW fail-closed
         shell: bash
         run: |
           set -euo pipefail
@@ -60,22 +60,18 @@ jobs:
             'TRADEEDGE_TELEGRAM_BOT_TOKEN=compose-validation-only' \
             'TRADEEDGE_TELEGRAM_CHAT_ID=compose-validation-only' > .env
           docker compose --env-file .env config --quiet
-          set +e
-          prepare_output="$(docker compose --env-file .env run --rm tradeedge-prepare 2>&1)"
-          prepare_status=$?
-          set -e
-          test "$prepare_status" -eq 2
-          grep -q '^SESSION_PREPARATION=LOGIN_REQUIRED$' <<<"$prepare_output"
-          grep -q '^LOGIN_URL=https://kite.zerodha.com/connect/login?' <<<"$prepare_output"
-          ! grep -q 'TRADEEDGE_RUNTIME_BUNDLE_HOST.*missing' <<<"$prepare_output"
-          ! grep -q 'TRADEEDGE_AUTHORIZATION_MANIFEST_HOST.*missing' <<<"$prepare_output"
-          printf '%s\n' 'TRADEEDGE_ZERODHA_REQUEST_TOKEN=test-only-request' >> .env
+          rendered="$(docker compose --env-file .env config)"
+          shadow="$(sed -n '/^  tradeedge-shadow:/,$p' <<<"$rendered")"
+          ! grep -q 'TRADEEDGE_ZERODHA_REQUEST_TOKEN' <<<"$shadow"
+          ! grep -q 'TRADEEDGE_ZERODHA_ACCESS_TOKEN' <<<"$shadow"
+          grep -q 'TRADEEDGE_ZERODHA_SESSION_FILE: /var/lib/tradeedge/session/zerodha.json' <<<"$shadow"
+          grep -q '/workspace/.cache/tradeedge/preparation.env' <<<"$shadow"
           set +e
           shadow_output="$(docker compose --env-file .env run --rm --no-deps tradeedge-shadow 2>&1)"
           shadow_status=$?
           set -e
           test "$shadow_status" -ne 0
-          grep -q 'checksum-bound authorization manifest is unavailable; run tradeedge-prepare' <<<"$shadow_output"
+          grep -q 'generated SHADOW artifact selectors are unavailable; run tradeedge-prepare' <<<"$shadow_output"
       - name: Credential scan
         shell: bash
         run: if git grep -nE '\b(sk-(proj-)?[A-Za-z0-9_]{20,}|ghp_[A-Za-z0-9]{20,}|gho_[A-Za-z0-9]{20,}|xox[baprs]-[A-Za-z0-9]{20,}|-----BEGIN (RSA |EC |OPENSSH )?PRIVATE KEY-----)' -- ':!go.sum'; then exit 1; fi

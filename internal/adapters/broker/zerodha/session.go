@@ -57,7 +57,7 @@ func NewSessionManager(credentials CredentialMaterial, exchanger TokenExchanger,
 		clock = RealClock{}
 	}
 	manager := &SessionManager{clock: clock, credentials: credentials, exchanger: exchanger, telemetry: brokertelemetry.Safe(recorder), state: SessionLoginRequired}
-	if credentials.apiKey == "" || credentials.apiSecret == "" {
+	if credentials.apiKey == "" || (credentials.apiSecret == "" && credentials.accessToken == "") {
 		manager.state = SessionUnconfigured
 	} else if credentials.accessToken != "" {
 		manager.accessToken = credentials.accessToken

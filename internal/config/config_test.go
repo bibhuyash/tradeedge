@@ -44,6 +44,7 @@ func TestLoadWithLookupOverrides(t *testing.T) {
 		"TRADEEDGE_AUTHORIZATION_MANIFEST":   "authorization.json",
 		"TRADEEDGE_CHECKPOINT_ROOT":          ".cache/checkpoints",
 		"TRADEEDGE_OPERATOR_CONTROL_SOCKET":  ".cache/control.sock",
+		"TRADEEDGE_ZERODHA_SESSION_FILE":     ".cache/session.json",
 	}))
 	if err != nil {
 		t.Fatalf("LoadWithLookup() error = %v", err)
@@ -112,6 +113,7 @@ func TestLoadWithLookupAcceptsEveryNonMutatingZerodhaMode(t *testing.T) {
 			}
 			if mode == ZerodhaModeShadow {
 				values["TRADEEDGE_TRADING_MODE"] = ModeShadow
+				values["TRADEEDGE_ZERODHA_SESSION_FILE"] = ".cache/session.json"
 			}
 			cfg, err := LoadWithLookup(mapLookup(values))
 			if err != nil || cfg.ZerodhaMode != mode {

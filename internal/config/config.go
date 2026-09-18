@@ -37,6 +37,7 @@ type Config struct {
 	RiskTimeout               time.Duration
 	ZerodhaMode               string
 	ZerodhaReadOnly           bool
+	ZerodhaSessionFile        string
 	TelegramEnabled           bool
 	telegramBotToken          string
 	telegramChatID            string
@@ -66,6 +67,7 @@ func LoadWithLookup(lookup LookupEnv) (Config, error) {
 		RiskMaxConcurrency:        4,
 		RiskTimeout:               100 * time.Millisecond,
 		ZerodhaMode:               strings.ToUpper(envOrDefault(lookup, "TRADEEDGE_ZERODHA_MODE", ZerodhaModeOffline)),
+		ZerodhaSessionFile:        envOrDefault(lookup, "TRADEEDGE_ZERODHA_SESSION_FILE", ""),
 	}
 
 	if raw, ok := lookup("TRADEEDGE_SHUTDOWN_TIMEOUT"); ok {
@@ -170,6 +172,9 @@ func (c Config) Validate() error {
 	}
 	if (c.ZerodhaMode == ZerodhaModePaper || c.ZerodhaMode == ZerodhaModeShadow) && (strings.TrimSpace(c.RuntimeBundlePath) == "" || strings.TrimSpace(c.AuthorizationManifestPath) == "" || strings.TrimSpace(c.CheckpointRoot) == "" || strings.TrimSpace(c.OperatorControlSocket) == "") {
 		return errors.New("connected market observation requires authorization manifest, runtime bundle, checkpoint root, and operator control socket")
+	}
+	if c.ZerodhaMode == ZerodhaModeShadow && strings.TrimSpace(c.ZerodhaSessionFile) == "" {
+		return errors.New("SHADOW requires TRADEEDGE_ZERODHA_SESSION_FILE")
 	}
 	if (c.ZerodhaMode == ZerodhaModePaper && c.TradingMode != ModePaper) || (c.ZerodhaMode == ZerodhaModeShadow && c.TradingMode != ModeShadow) {
 		return errors.New("trading mode and authorized Zerodha mode must match")

@@ -48,6 +48,13 @@ is executable only when explicitly labelled as reducing exposure and matched
 to the authoritative open option; ordinary SELL legs retain protective-buy
 dependency enforcement.
 
+Outcome `ZERODHA_SESSION_V2` separates authentication ownership from the data
+plane. A dedicated localhost control plane exchanges an ephemeral Zerodha
+request token, persists a versioned access session in a permission-restricted
+local store, and exposes explicit session state. SHADOW reads that store at its
+existing adapter boundary; it does not invoke an authentication process, parse
+stdout, or obtain dynamic authentication state from environment configuration.
+
 ```mermaid
 flowchart TB
     Z["Zerodha APIs"] --> A["Provider adapters"]
@@ -91,6 +98,9 @@ The monolith isolates domain modules, owns orchestration, applies timeouts and c
   LIVE_DISABLED cannot become trading-ready, and no live-enabled route exists.
 - SHADOW has one hypothetical fill-derived TradeEdge book; real broker
   positions remain non-comparable observation evidence.
+- Control Plane V2 is the sole session writer. A corrupt or expired session
+  fails closed, and neither request tokens nor access tokens cross an operator
+  response, log, authorization manifest, or runtime bundle.
 
 ## Failure Modes
 
