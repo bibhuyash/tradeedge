@@ -145,3 +145,19 @@ func TestPrepareRejectsStaleProcessOverride(t *testing.T) {
 		t.Fatalf("stale override accepted: err=%v output=%q", err, output.String())
 	}
 }
+
+func TestBlockedPreparationAlwaysIncludesBlocker(t *testing.T) {
+	var output bytes.Buffer
+	writePreparationFailure(&output, errors.New("authentication failed: access_token=secret-value"))
+
+	lines := strings.Split(strings.TrimSpace(output.String()), "\n")
+	if len(lines) != 2 || lines[0] != "SESSION_PREPARATION=BLOCKED" {
+		t.Fatalf("unexpected blocked output: %q", output.String())
+	}
+	if !strings.HasPrefix(lines[1], "BLOCKER=") || strings.TrimSpace(strings.TrimPrefix(lines[1], "BLOCKER=")) == "" {
+		t.Fatalf("blocked output omitted blocker: %q", output.String())
+	}
+	if strings.Contains(output.String(), "secret-value") {
+		t.Fatalf("blocked output leaked secret: %q", output.String())
+	}
+}

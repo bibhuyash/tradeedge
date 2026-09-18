@@ -50,9 +50,31 @@ func main() {
 		os.Exit(2)
 	}
 	if err != nil {
-		fmt.Fprintln(os.Stderr, "SESSION_PREPARATION=BLOCKED")
+		writePreparationFailure(os.Stderr, err)
 		os.Exit(1)
 	}
+}
+
+func writePreparationFailure(output io.Writer, err error) {
+	blocker := secretSafeBlocker(err)
+	fmt.Fprintln(output, "SESSION_PREPARATION=BLOCKED")
+	fmt.Fprintln(output, "BLOCKER="+blocker)
+}
+
+func secretSafeBlocker(err error) string {
+	blocker := strings.NewReplacer("\r", " ", "\n", " ").Replace(strings.TrimSpace(err.Error()))
+	for index, word := range strings.Fields(blocker) {
+		for _, name := range []string{"api_key", "api_secret", "access_token", "password"} {
+			prefix := name + "="
+			if valueIndex := strings.Index(word, prefix); valueIndex >= 0 {
+				words := strings.Fields(blocker)
+				words[index] = word[:valueIndex] + prefix + "[REDACTED]"
+				blocker = strings.Join(words, " ")
+				break
+			}
+		}
+	}
+	return blocker
 }
 
 func prepare(value options, commands runner, output io.Writer) error {
