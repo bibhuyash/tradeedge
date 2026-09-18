@@ -36,16 +36,17 @@ func (runner commandRunner) Run(name string, args ...string) (string, error) {
 }
 
 type options struct {
-	repository, credentialsFile, sessionFile, validationCommand string
-	now                                                         time.Time
-	readOnly                                                    func([]string, string) (string, error)
-	acceptanceOnly                                              bool
+	repository, credentialsFile, selectorsFile, sessionFile, validationCommand string
+	now                                                                        time.Time
+	readOnly                                                                   func([]string, string) (string, error)
+	acceptanceOnly                                                             bool
 }
 
 func main() {
 	set := flag.NewFlagSet("tradeedge-prepare", flag.ExitOnError)
 	repository := set.String("repo", ".", "repository root")
 	credentials := set.String("credentials-file", ".env", "single untracked operator dotenv file")
+	selectors := set.String("selectors-file", ".cache/tradeedge/preparation.env", "generated non-secret artifact selectors")
 	sessionFile := set.String("session-file", ".cache/tradeedge/session/zerodha.json", "persisted V2 Zerodha session")
 	validationCommand := set.String("validation-command", "tradeedge-validation", "market-validation binary")
 	acceptanceOnly := set.Bool("acceptance-only", false, "exercise the real V2 read-only path without producing release authorization")
@@ -57,7 +58,7 @@ func main() {
 		}
 		return stdout.String(), nil
 	}
-	err := prepare(options{repository: *repository, credentialsFile: *credentials, sessionFile: *sessionFile, validationCommand: *validationCommand, now: time.Now(), readOnly: readOnly, acceptanceOnly: *acceptanceOnly}, commandRunner{directory: *repository}, os.Stdout)
+	err := prepare(options{repository: *repository, credentialsFile: *credentials, selectorsFile: *selectors, sessionFile: *sessionFile, validationCommand: *validationCommand, now: time.Now(), readOnly: readOnly, acceptanceOnly: *acceptanceOnly}, commandRunner{directory: *repository}, os.Stdout)
 	if errors.Is(err, errLoginRequired) {
 		os.Exit(2)
 	}
@@ -201,6 +202,9 @@ func prepare(value options, commands runner, output io.Writer) error {
 		fmt.Fprintln(output, "REAL_BROKER_MUTATION=UNREACHABLE")
 		return nil
 	}
+	if status, statusErr := commands.Run("git", "status", "--porcelain"); statusErr != nil || strings.TrimSpace(status) != "" {
+		return errors.New("working tree changed during preparation")
+	}
 	authorization := filepath.Join(root, "authorization-"+shortCommit+".json")
 	if _, statErr := os.Stat(authorization); errors.Is(statErr, os.ErrNotExist) {
 		authorizedAt := now
@@ -215,13 +219,10 @@ func prepare(value options, commands runner, output io.Writer) error {
 	}
 	manifestHost, _ := filepath.Rel(value.repository, authorization)
 	bundleHost, _ := filepath.Rel(value.repository, bundle)
-	if err = rejectProcessOverride(value.credentialsFile, "TRADEEDGE_AUTHORIZATION_MANIFEST_HOST"); err != nil {
+	if err = initializeSelectorFile(value.selectorsFile); err != nil {
 		return err
 	}
-	if err = rejectProcessOverride(value.credentialsFile, "TRADEEDGE_RUNTIME_BUNDLE_HOST"); err != nil {
-		return err
-	}
-	if err = brokerzerodha.PersistPreparationPaths(value.credentialsFile, filepath.ToSlash(manifestHost), filepath.ToSlash(bundleHost)); err != nil {
+	if err = brokerzerodha.PersistPreparationPaths(value.selectorsFile, filepath.ToSlash(manifestHost), filepath.ToSlash(bundleHost)); err != nil {
 		return err
 	}
 	fmt.Fprintln(output, "SESSION_PREPARATION=READY")
@@ -239,6 +240,20 @@ func prepare(value options, commands runner, output io.Writer) error {
 	fmt.Fprintln(output, "REAL_BROKER_MUTATION=UNREACHABLE")
 	fmt.Fprintln(output, "START_COMMAND=docker compose --env-file .env up -d tradeedge-shadow")
 	return nil
+}
+
+func initializeSelectorFile(path string) error {
+	if err := os.MkdirAll(filepath.Dir(path), 0o700); err != nil {
+		return err
+	}
+	file, err := os.OpenFile(path, os.O_WRONLY|os.O_CREATE|os.O_EXCL, 0o600)
+	if errors.Is(err, os.ErrExist) {
+		return nil
+	}
+	if err != nil {
+		return err
+	}
+	return file.Close()
 }
 
 func preflightDiagnostic(raw string) string {

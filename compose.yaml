@@ -63,7 +63,7 @@ services:
         go build -buildvcs=true -o /tmp/tradeedge-prepare ./cmd/tradeedge-prepare
         acceptance_flag=""
         if [ "$${TRADEEDGE_PREPARATION_ACCEPTANCE_ONLY:-false}" = "true" ]; then acceptance_flag="-acceptance-only"; fi
-        exec /tmp/tradeedge-prepare $$acceptance_flag -repo /workspace -credentials-file /workspace/.env -session-file /var/lib/tradeedge/session/zerodha.json -validation-command /tmp/tradeedge-validation
+        exec /tmp/tradeedge-prepare $$acceptance_flag -repo /workspace -credentials-file /workspace/.env -selectors-file /workspace/.cache/tradeedge/preparation.env -session-file /var/lib/tradeedge/session/zerodha.json -validation-command /tmp/tradeedge-validation
     volumes:
       - type: bind
         source: .
@@ -178,6 +178,15 @@ services:
       - -c
       - |
         set -eu
+        if [ ! -f /workspace/.cache/tradeedge/preparation.env ]; then
+          echo "generated SHADOW artifact selectors are unavailable; run tradeedge-prepare" >&2
+          exit 1
+        fi
+        set -a
+        . /workspace/.cache/tradeedge/preparation.env
+        TRADEEDGE_AUTHORIZATION_MANIFEST="$${TRADEEDGE_AUTHORIZATION_MANIFEST_HOST:-}"
+        TRADEEDGE_RUNTIME_BUNDLE="$${TRADEEDGE_RUNTIME_BUNDLE_HOST:-}"
+        set +a
         if [ -z "$${TRADEEDGE_AUTHORIZATION_MANIFEST:-}" ]; then
           echo "checksum-bound authorization manifest is unavailable" >&2
           exit 1

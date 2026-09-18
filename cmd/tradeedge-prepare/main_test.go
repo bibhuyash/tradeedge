@@ -91,6 +91,9 @@ func TestNormalPreparationRejectsDirtyTreeAndAcceptanceOnlyIsNonAuthorizing(t *t
 	if strings.Contains(string(raw), "authorization-aaaaaaa.json") || strings.Contains(string(raw), "runtime-bundle-aaaaaaa.json") {
 		t.Fatalf("acceptance persisted release selectors: %q", raw)
 	}
+	if _, err = os.Stat(value.selectorsFile); !errors.Is(err, os.ErrNotExist) {
+		t.Fatalf("acceptance created selector file: %v", err)
+	}
 }
 
 func writeFlagFile(args []string, name string) {
@@ -116,11 +119,11 @@ func preparationFixture(t *testing.T) (options, string) {
 		}
 		return "AUTHENTICATION=PASS\nREST_AUTH=PASS\nWEBSOCKET_AUTH=PASS\n", nil
 	}
-	return options{repository: repository, credentialsFile: credentials, sessionFile: filepath.Join(repository, "zerodha.json"), validationCommand: "validation", now: time.Date(2026, 9, 18, 4, 30, 0, 0, time.UTC), readOnly: readOnly}, credentials
+	return options{repository: repository, credentialsFile: credentials, selectorsFile: filepath.Join(repository, ".cache", "tradeedge", "preparation.env"), sessionFile: filepath.Join(repository, "zerodha.json"), validationCommand: "validation", now: time.Date(2026, 9, 18, 4, 30, 0, 0, time.UTC), readOnly: readOnly}, credentials
 }
 
 func TestPrepareReadyAndRepeatedInvocation(t *testing.T) {
-	value, credentials := preparationFixture(t)
+	value, _ := preparationFixture(t)
 	runner := &fakeRunner{}
 	for attempt := 0; attempt < 2; attempt++ {
 		var output bytes.Buffer
@@ -133,9 +136,9 @@ func TestPrepareReadyAndRepeatedInvocation(t *testing.T) {
 			}
 		}
 	}
-	raw, err := os.ReadFile(credentials)
-	if err != nil || !strings.Contains(string(raw), "UNCHANGED=value\n") || !strings.Contains(string(raw), "TRADEEDGE_AUTHORIZATION_MANIFEST_HOST=.cache/market-validation/2026-09-18/authorization-aaaaaaa.json\n") {
-		t.Fatalf("dotenv=%q err=%v", raw, err)
+	raw, err := os.ReadFile(value.selectorsFile)
+	if err != nil || !strings.Contains(string(raw), "TRADEEDGE_AUTHORIZATION_MANIFEST_HOST=.cache/market-validation/2026-09-18/authorization-aaaaaaa.json\n") || !strings.Contains(string(raw), "TRADEEDGE_RUNTIME_BUNDLE_HOST=.cache/market-validation/2026-09-18/runtime-bundle-aaaaaaa.json\n") {
+		t.Fatalf("selectors=%q err=%v", raw, err)
 	}
 }
 
@@ -173,12 +176,12 @@ func TestPrepareFailuresAreFailClosedAndResume(t *testing.T) {
 	}
 }
 
-func TestPrepareRejectsStaleProcessOverride(t *testing.T) {
+func TestPrepareGeneratedSelectorsOverrideStaleProcessValue(t *testing.T) {
 	value, _ := preparationFixture(t)
 	t.Setenv("TRADEEDGE_AUTHORIZATION_MANIFEST_HOST", "stale/session.json")
 	var output bytes.Buffer
-	if err := prepare(value, &fakeRunner{}, &output); err == nil || strings.Contains(output.String(), "SESSION_PREPARATION=READY") {
-		t.Fatalf("stale override accepted: err=%v output=%q", err, output.String())
+	if err := prepare(value, &fakeRunner{}, &output); err != nil || !strings.Contains(output.String(), "SESSION_PREPARATION=READY") {
+		t.Fatalf("generated selectors were not authoritative: err=%v output=%q", err, output.String())
 	}
 }
 
