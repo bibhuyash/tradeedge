@@ -151,7 +151,7 @@ func TestDecodeMarketFrameFullQuoteUsesIntegerMinorUnits(t *testing.T) {
 
 func TestMarketStreamQueueDelayDoesNotChangeIngestionTimestamp(t *testing.T) {
 	receivedAt := time.Date(2026, 9, 18, 8, 0, 0, 0, time.UTC)
-	clock := &mutableMarketClock{now: receivedAt, observed: make(chan struct{}, 2)}
+	clock := &mutableMarketClock{now: receivedAt}
 	credentials, err := (EnvCredentialSource{Lookup: func(key string) (string, bool) {
 		values := map[string]string{"TRADEEDGE_ZERODHA_API_KEY": "key", "TRADEEDGE_ZERODHA_API_SECRET": "secret", "TRADEEDGE_ZERODHA_ACCESS_TOKEN": "access", "TRADEEDGE_ZERODHA_ACCESS_TOKEN_EXPIRES_AT": receivedAt.Add(time.Hour).Format(time.RFC3339)}
 		value, ok := values[key]
@@ -175,6 +175,7 @@ func TestMarketStreamQueueDelayDoesNotChangeIngestionTimestamp(t *testing.T) {
 	}
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
+	clock.observed = make(chan struct{}, 2)
 	var ingested []time.Time
 	err = stream.consume(ctx, connection, map[string]struct{}{"256265": {}}, map[string]struct{}{}, func(_ context.Context, observation marketdata.Observation) error {
 		ingested = append(ingested, observation.IngestedAt)
