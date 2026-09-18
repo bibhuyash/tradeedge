@@ -72,14 +72,20 @@ type fakeMarketDialer struct {
 }
 
 type mutableMarketClock struct {
-	mu  sync.Mutex
-	now time.Time
+	mu       sync.Mutex
+	now      time.Time
+	observed chan struct{}
 }
 
 func (c *mutableMarketClock) Now() time.Time {
 	c.mu.Lock()
-	defer c.mu.Unlock()
-	return c.now
+	now := c.now
+	observed := c.observed
+	c.mu.Unlock()
+	if observed != nil {
+		observed <- struct{}{}
+	}
+	return now
 }
 
 func (c *mutableMarketClock) Set(now time.Time) {
@@ -89,10 +95,8 @@ func (c *mutableMarketClock) Set(now time.Time) {
 }
 
 type queuedMarketConnection struct {
-	mu         sync.Mutex
-	frames     []MarketFrame
-	secondRead chan struct{}
-	reads      int
+	mu     sync.Mutex
+	frames []MarketFrame
 }
 
 func (c *queuedMarketConnection) Read(ctx context.Context) (MarketFrame, error) {
@@ -100,10 +104,6 @@ func (c *queuedMarketConnection) Read(ctx context.Context) (MarketFrame, error) 
 	if len(c.frames) > 0 {
 		frame := c.frames[0]
 		c.frames = c.frames[1:]
-		c.reads++
-		if c.reads == 2 {
-			close(c.secondRead)
-		}
 		c.mu.Unlock()
 		return frame, nil
 	}
@@ -151,7 +151,7 @@ func TestDecodeMarketFrameFullQuoteUsesIntegerMinorUnits(t *testing.T) {
 
 func TestMarketStreamQueueDelayDoesNotChangeIngestionTimestamp(t *testing.T) {
 	receivedAt := time.Date(2026, 9, 18, 8, 0, 0, 0, time.UTC)
-	clock := &mutableMarketClock{now: receivedAt}
+	clock := &mutableMarketClock{now: receivedAt, observed: make(chan struct{}, 2)}
 	credentials, err := (EnvCredentialSource{Lookup: func(key string) (string, bool) {
 		values := map[string]string{"TRADEEDGE_ZERODHA_API_KEY": "key", "TRADEEDGE_ZERODHA_API_SECRET": "secret", "TRADEEDGE_ZERODHA_ACCESS_TOKEN": "access", "TRADEEDGE_ZERODHA_ACCESS_TOKEN_EXPIRES_AT": receivedAt.Add(time.Hour).Format(time.RFC3339)}
 		value, ok := values[key]
@@ -172,7 +172,6 @@ func TestMarketStreamQueueDelayDoesNotChangeIngestionTimestamp(t *testing.T) {
 			{Binary: true, MessageType: MarketMessageBinary, Data: wrapPackets(indexPacket(256265, 2450125, 2460000, 2440000, 2445000, 2455000, receivedAt.Add(-time.Second)))},
 			{Binary: true, MessageType: MarketMessageBinary, Data: wrapPackets(indexPacket(256265, 2450126, 2460000, 2440000, 2445000, 2455000, receivedAt))},
 		},
-		secondRead: make(chan struct{}),
 	}
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
@@ -180,7 +179,8 @@ func TestMarketStreamQueueDelayDoesNotChangeIngestionTimestamp(t *testing.T) {
 	err = stream.consume(ctx, connection, map[string]struct{}{"256265": {}}, map[string]struct{}{}, func(_ context.Context, observation marketdata.Observation) error {
 		ingested = append(ingested, observation.IngestedAt)
 		if len(ingested) == 1 {
-			<-connection.secondRead
+			<-clock.observed
+			<-clock.observed
 			clock.Set(receivedAt.Add(30 * time.Second))
 		} else {
 			cancel()
