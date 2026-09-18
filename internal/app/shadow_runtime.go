@@ -15,6 +15,7 @@ import (
 	brokerzerodha "github.com/bibhuyash/tradeedge/internal/adapters/broker/zerodha"
 	"github.com/bibhuyash/tradeedge/internal/adapters/marketdata/calendarfile"
 	telegramadapter "github.com/bibhuyash/tradeedge/internal/adapters/notification/telegram"
+	"github.com/bibhuyash/tradeedge/internal/adapters/sessionfile"
 	shadowcheckpoint "github.com/bibhuyash/tradeedge/internal/adapters/shadowruntime/checkpointfile"
 	"github.com/bibhuyash/tradeedge/internal/config"
 	"github.com/bibhuyash/tradeedge/internal/derivatives"
@@ -149,16 +150,9 @@ func composeProductionShadow(ctx context.Context, cfg config.Config) (*productio
 	if err != nil || !zerodhaConfig.Enabled {
 		return nil, Options{}, errors.Join(brokerzerodha.ErrInvalidConfiguration, err)
 	}
-	credentials, err := (brokerzerodha.EnvCredentialSource{Lookup: os.LookupEnv}).Load(ctx)
+	apiKey, _ := os.LookupEnv("TRADEEDGE_ZERODHA_API_KEY")
+	session, err := loadShadowSession(ctx, cfg.ZerodhaSessionFile, apiKey, brokerzerodha.RealClock{})
 	if err != nil {
-		return nil, Options{}, err
-	}
-	exchanger, err := brokerzerodha.NewHTTPTokenExchanger(zerodhaConfig, nil, brokerzerodha.RealClock{})
-	if err != nil {
-		return nil, Options{}, err
-	}
-	session := brokerzerodha.NewSessionManager(credentials, exchanger, brokerzerodha.RealClock{}, nil)
-	if err = session.Authenticate(ctx); err != nil {
 		return nil, Options{}, err
 	}
 	streamConfig := brokerzerodha.DefaultMarketStreamConfig()
@@ -233,6 +227,22 @@ func composeProductionShadow(ctx context.Context, cfg config.Config) (*productio
 	qualificationHandler, _ := qualificationops.New(qualificationEngine)
 	shadowHandler, _ := shadowops.New(runtime)
 	return composition, Options{MarketReadiness: evaluator, LatestObservations: latestObservations, StrategyOperations: shadowHandler, IntegrationOperations: composition, IntegrationRuntime: composition, TradingRuntime: composition, OperationalOperations: operational.Handler(), NotificationRuntime: operational, QualificationOperations: qualificationHandler, ShadowOperations: shadowHandler}, nil
+}
+
+func loadShadowSession(ctx context.Context, path, apiKey string, clock brokerzerodha.Clock) (*brokerzerodha.SessionManager, error) {
+	store, err := sessionfile.New(path)
+	if err != nil {
+		return nil, err
+	}
+	record, err := store.Load(ctx)
+	if err != nil {
+		return nil, errors.Join(brokerzerodha.ErrAuthentication, err)
+	}
+	manager, err := brokerzerodha.NewStoredSessionManager(apiKey, record, clock)
+	if err != nil {
+		return nil, errors.Join(brokerzerodha.ErrAuthentication, err)
+	}
+	return manager, nil
 }
 
 func shadowAuthority(bundle config.RuntimeBundle) (portfolioconfig.PortfolioConfiguration, riskconfig.RiskConfiguration, error) {

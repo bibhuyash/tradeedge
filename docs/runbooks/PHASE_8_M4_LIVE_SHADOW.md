@@ -18,31 +18,59 @@ are prohibited.
 
 ## Pre-session preparation
 
-`.env` is the single operator-controlled source for credentials and the two
-generated artifact selectors. Do not export process-scoped TradeEdge variables
-or run host Go commands. From a clean, merged `main` checkout run:
+Control Plane V2 owns authentication. `.env` contains the static API key and
+secret plus the existing non-secret artifact selectors; it must not contain a
+request token or access token. Start the localhost-only control plane:
+
+```powershell
+docker compose --env-file .env up -d tradeedge-control
+```
+
+Read `http://127.0.0.1:8081/api/v1/session/status`. If the state is
+`LOGIN_REQUIRED` or `EXPIRED`, get the URL from
+`http://127.0.0.1:8081/api/v1/session/login-url`, complete browser login, and
+submit the returned request token exactly once:
+
+```powershell
+$body = @{ request_token = Read-Host 'Zerodha request token' } | ConvertTo-Json
+Invoke-RestMethod -Method Post -ContentType 'application/json' -Body $body `
+  -Uri 'http://127.0.0.1:8081/api/v1/session/exchange'
+$body = $null
+```
+
+Do not save the request token in shell history, `.env`, a runtime bundle or
+evidence. The response must be `AUTHENTICATED`. Restarting the control plane
+must preserve `AUTHENTICATED` with `reused=true`; no second exchange occurs.
+`ERROR` is fail-closed and requires inspection of the local session file or
+provider availability rather than another blind submission.
+
+The current checksum-pinned runtime bundle and `QUALIFICATION_ONLY`
+authorization manifest remain mandatory prerequisites. Their generation is a
+separate reviewed workflow and is not performed by Control Plane V2. Do not use
+the legacy `tradeedge-prepare -> tradeedge-zerodha-auth` stdout protocol as an
+authentication step for this V2 workflow.
+
+From a clean candidate commit, generate them with the persisted V2 session:
 
 ```powershell
 docker compose --env-file .env run --rm tradeedge-prepare
 ```
 
-If the result is `SESSION_PREPARATION=LOGIN_REQUIRED`, open the one printed
-`LOGIN_URL`, complete Zerodha login, replace only
-`TRADEEDGE_ZERODHA_REQUEST_TOKEN` in `.env`, and run the same command again.
-The rejected one-time request token is cleared and is never retried. A valid
-persisted access session is reused; otherwise the fresh request token is
-exchanged once and only the access token and expiry are atomically persisted.
-No token or secret is printed or placed in evidence.
+Preparation loads `/var/lib/tradeedge/session/zerodha.json` read-only and calls
+the shared instrument-snapshot and preflight implementation in-process. It
+cannot request login, consume a request token, or exchange a token.
 
-`SESSION_PREPARATION=READY` means the command has completed the exact-date
-calendar checks, authenticated instrument snapshot, bounded NIFTY/BANKNIFTY
-mapping generation, runtime bundle, Telegram check, read-only Zerodha
-preflight, authorization creation and inspection, and atomic `.env` selector
-update. Existing create-once evidence is resumed after a failure; it is not
-silently overwritten. A closed market date, dirty checkout, non-`main` branch,
-stale process override, checksum conflict, invalid mapping, Telegram failure,
-preflight failure, or authorization failure returns
-`SESSION_PREPARATION=BLOCKED`.
+Before creating the candidate commit, the same real V2 bridge can be exercised
+without producing authorization or persistent release artifacts:
+
+```powershell
+docker compose --env-file .env run --rm -e TRADEEDGE_PREPARATION_ACCEPTANCE_ONLY=true tradeedge-prepare
+```
+
+This acceptance-only mode permits a dirty tree, stores its intermediate files
+in a temporary directory that is removed on exit, and stops before authorization
+generation and artifact-selector persistence. Normal preparation continues to
+require a clean tree.
 
 Only after `READY`, start the canonical service:
 
@@ -55,11 +83,10 @@ Confirm `/api/v1/integrations/zerodha/status` reports read-only SHADOW and
 a system failure. Stop on mapping conflict, checkpoint failure, unexpected order
 frame, or authorization expiry.
 
-The packet is session-specific. Do not create an authorization for a closed or
-future session merely to complete preparation. On the actual trading date run
-the preparation command to generate fresh date-bound artifacts. The browser
-login and request-token replacement described above are the only manual
-authentication actions.
+The authorization packet remains session-specific. Do not create one for a
+closed or future session merely to complete preparation. Browser login and the
+single localhost exchange request above are the only manual authentication
+actions.
 
 ## Session 1 record and Session 2 target
 

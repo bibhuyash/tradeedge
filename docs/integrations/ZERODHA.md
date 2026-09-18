@@ -49,9 +49,9 @@ A provider-neutral boundary may not expose every Zerodha feature, but it protect
 
 Retail access tokens expire at the documented daily session boundary and
 require re-login after expiry or invalidation. M1 does not use refresh tokens.
-Production secret storage, instrument licensing/retention, runtime composition,
-durable checkpoint storage, and operational login ownership remain M3 or
-deployment decisions.
+Instrument licensing/retention and production-grade external secret storage
+remain deployment decisions. Control Plane V2 owns operational login and uses a
+replaceable local file store for the current single-host deployment.
 
 ## Acceptance Criteria
 
@@ -93,3 +93,19 @@ futures, and two bounded five-option universes. Replacement subscriptions are
 serialized, capped at 16 instruments, and limited to once per five minutes.
 Expiry or mapping changes require checksum-pinned metadata and fail closed.
 SHADOW composes no Zerodha mutation port; PAPER authorization cannot start it.
+
+## Control Plane V2 session ownership
+
+`tradeedge-control` is the only component that exchanges a request token. The
+operator obtains the login URL from `GET /api/v1/session/login-url`, submits the
+one-time token to `POST /api/v1/session/exchange`, and inspects state through
+`GET /api/v1/session/status`. The service is published on host loopback only.
+
+The request token is exchanged immediately and discarded. A versioned local
+file stores only the access token, expiry, provider and authentication time;
+the file is written by temporary-file replacement with restricted permissions.
+Missing state is `LOGIN_REQUIRED`, an expired record is `EXPIRED`, and malformed
+or unreadable state is `ERROR`. SHADOW consumes a valid stored access session
+directly and fails startup for every other state. The legacy prepare/auth
+subprocess workflow remains available for historical compatibility but is not
+part of the V2 path.

@@ -184,7 +184,7 @@ func (exchanger *HTTPTokenExchanger) Exchange(ctx context.Context, apiKey, apiSe
 	request.Header.Set("X-Kite-Version", "3")
 	response, err := exchanger.client.Do(request)
 	if err != nil {
-		return TokenExchangeResult{}, ErrAuthentication
+		return TokenExchangeResult{}, errors.Join(ErrAuthentication, ErrUnavailable, err)
 	}
 	defer response.Body.Close()
 	var payload struct {
@@ -202,6 +202,12 @@ func (exchanger *HTTPTokenExchanger) Exchange(ctx context.Context, apiKey, apiSe
 			if failure, ok := newAuthenticationFailure(payload.ErrorType, payload.Message, response.StatusCode, apiKey, apiSecret, requestToken, checksum); ok {
 				return TokenExchangeResult{}, failure
 			}
+			if response.StatusCode == http.StatusForbidden && strings.TrimSpace(payload.ErrorType) == "TokenException" {
+				return TokenExchangeResult{}, AuthenticationFailure{ErrorType: "TokenException", Message: "Token is invalid or expired", HTTPStatus: response.StatusCode}
+			}
+		}
+		if response.StatusCode >= http.StatusInternalServerError {
+			return TokenExchangeResult{}, errors.Join(ErrAuthentication, ErrUnavailable)
 		}
 		return TokenExchangeResult{}, ErrAuthentication
 	}

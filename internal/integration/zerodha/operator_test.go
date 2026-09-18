@@ -1,4 +1,4 @@
-package main
+package zerodha
 
 import (
 	"bytes"
@@ -18,9 +18,63 @@ import (
 	"time"
 
 	brokerzerodha "github.com/bibhuyash/tradeedge/internal/adapters/broker/zerodha"
+	"github.com/bibhuyash/tradeedge/internal/adapters/sessionfile"
 	"github.com/bibhuyash/tradeedge/internal/marketdata"
 	"github.com/bibhuyash/tradeedge/internal/marketvalidation"
+	"github.com/bibhuyash/tradeedge/internal/session"
 )
+
+func TestStoredSessionAcquisitionFailsClosedWithoutExchange(t *testing.T) {
+	now := time.Date(2026, 9, 18, 4, 0, 0, 0, time.UTC)
+	lookup := lookupEnv(func(key string) (string, bool) {
+		if key == apiKeyEnvironment {
+			return "public-key", true
+		}
+		return "", false
+	})
+	write := func(path string, record session.Record) {
+		store, err := sessionfile.New(path)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if err = store.Save(context.Background(), record); err != nil {
+			t.Fatal(err)
+		}
+	}
+	valid := filepath.Join(t.TempDir(), "valid.json")
+	write(valid, session.Record{Provider: session.ProviderZerodha, AccessToken: "stored", AuthenticatedAt: now.Add(-time.Hour), ExpiresAt: now.Add(time.Hour)})
+	manager, err := loadStoredSession(context.Background(), lookup, commandDependencies{clock: fixedClock{now}, storedSessionFile: valid})
+	if err != nil || manager.Snapshot().State != brokerzerodha.SessionAuthenticated {
+		t.Fatalf("valid stored session: state=%v err=%v", manager.Snapshot().State, err)
+	}
+	manager.Shutdown()
+
+	missing := filepath.Join(t.TempDir(), "missing.json")
+	if _, err = loadStoredSession(context.Background(), lookup, commandDependencies{clock: fixedClock{now}, storedSessionFile: missing}); !errors.Is(err, session.ErrNotFound) {
+		t.Fatalf("missing: %v", err)
+	}
+	expired := filepath.Join(t.TempDir(), "expired.json")
+	write(expired, session.Record{Provider: session.ProviderZerodha, AccessToken: "stored", AuthenticatedAt: now.Add(-2 * time.Hour), ExpiresAt: now.Add(-time.Hour)})
+	if _, err = loadStoredSession(context.Background(), lookup, commandDependencies{clock: fixedClock{now}, storedSessionFile: expired}); !errors.Is(err, brokerzerodha.ErrSessionExpired) {
+		t.Fatalf("expired: %v", err)
+	}
+	corrupt := filepath.Join(t.TempDir(), "corrupt.json")
+	if err = os.WriteFile(corrupt, []byte("{"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if _, err = loadStoredSession(context.Background(), lookup, commandDependencies{clock: fixedClock{now}, storedSessionFile: corrupt}); !errors.Is(err, session.ErrCorrupt) {
+		t.Fatalf("corrupt: %v", err)
+	}
+}
+
+func TestBundleErrorClassDoesNotExposePaths(t *testing.T) {
+	if got := bundleErrorClass(errors.New(`open C:\sensitive\bundle.json: The system cannot find the file specified.`)); got != "FILE_MISSING" {
+		t.Fatalf("class=%q", got)
+	}
+	if got := bundleErrorClass(errors.New("load watchlist: invalid record")); got != "INVALID_WATCHLIST" {
+		t.Fatalf("class=%q", got)
+	}
+}
 
 type fixedClock struct{ now time.Time }
 
@@ -752,7 +806,7 @@ func TestPreflightValidatesBundleBeforeExchange(t *testing.T) {
 	if err == nil || exchanges != 0 {
 		t.Fatalf("error=%v exchanges=%d", err, exchanges)
 	}
-	want := "AUTHENTICATION=FAIL\nERROR_TYPE=ConfigurationError\nMESSAGE=Invalid checksum-pinned runtime bundle\nHTTP_STATUS=0\n"
+	want := "AUTHENTICATION=FAIL\nERROR_TYPE=ConfigurationError\nMESSAGE=Invalid checksum-pinned runtime bundle\nHTTP_STATUS=0\nBUNDLE_ERROR=INVALID_CONTENT\nBUNDLE_DETAIL=UNCLASSIFIED\n"
 	if output.String() != want {
 		t.Fatalf("output=%q", output.String())
 	}
@@ -1020,8 +1074,8 @@ func TestCommandSurfaceHasNoMutationCapability(t *testing.T) {
 	}
 }
 
-func TestShadowComposePassesRestoredSessionEnvironment(t *testing.T) {
-	raw, err := os.ReadFile(filepath.Join("..", "..", "compose.yaml"))
+func TestShadowComposeUsesControlPlaneSessionStoreWithoutDynamicEnvironment(t *testing.T) {
+	raw, err := os.ReadFile(filepath.Join("..", "..", "..", "compose.yaml"))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -1031,13 +1085,36 @@ func TestShadowComposePassesRestoredSessionEnvironment(t *testing.T) {
 		t.Fatal("tradeedge-shadow service missing")
 	}
 	section := text[shadow:]
-	for _, name := range []string{accessTokenEnvironment, accessExpiryEnvironment} {
-		if !strings.Contains(section, name+": ${"+name+":-}") {
-			t.Fatalf("SHADOW Compose does not pass %s", name)
+	for _, name := range []string{requestTokenEnvironment, accessTokenEnvironment, accessExpiryEnvironment} {
+		if strings.Contains(section, name+":") {
+			t.Fatalf("SHADOW Compose still passes dynamic credential %s", name)
 		}
 	}
-	if !strings.Contains(text, "[ -z \"$${"+accessTokenEnvironment+":-}\" ] || [ -z \"$${"+accessExpiryEnvironment+":-}\" ]") {
-		t.Fatal("Compose credential gate does not accept a complete restored session")
+	if !strings.Contains(section, "TRADEEDGE_ZERODHA_SESSION_FILE: /var/lib/tradeedge/session/zerodha.json") || !strings.Contains(text, "  tradeedge-control:") {
+		t.Fatal("Compose does not connect SHADOW to Control Plane V2 session storage")
+	}
+}
+
+func TestPrepareComposeProvidesStoredSessionAPIKeyWithoutLegacyAuth(t *testing.T) {
+	raw, err := os.ReadFile(filepath.Join("..", "..", "..", "compose.yaml"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	text := string(raw)
+	start := strings.Index(text, "  tradeedge-prepare:")
+	if start < 0 {
+		t.Fatal("tradeedge-prepare section missing")
+	}
+	end := strings.Index(text[start+1:], "\n  tradeedge-day0:")
+	if end < 0 {
+		t.Fatal("tradeedge-prepare section terminator missing")
+	}
+	section := text[start : start+1+end]
+	if !strings.Contains(section, "TRADEEDGE_ZERODHA_API_KEY: ${TRADEEDGE_ZERODHA_API_KEY:?required}") {
+		t.Fatal("preparation container does not receive the public Zerodha API key")
+	}
+	if strings.Contains(section, "tradeedge-zerodha-auth") || strings.Contains(section, requestTokenEnvironment+":") {
+		t.Fatal("preparation Compose reintroduced legacy authentication")
 	}
 }
 
