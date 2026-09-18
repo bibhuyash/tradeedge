@@ -103,6 +103,11 @@ func TestPrepareReturnsOneLoginInstruction(t *testing.T) {
 	if !errors.Is(err, errLoginRequired) || strings.Count(output.String(), "LOGIN_URL=") != 1 || !strings.Contains(output.String(), "REQUEST_TOKEN_DESTINATION=TRADEEDGE_ZERODHA_REQUEST_TOKEN in .env") {
 		t.Fatalf("err=%v output=%q", err, output.String())
 	}
+	for _, call := range runner.calls {
+		if strings.HasPrefix(call, "git ") {
+			t.Fatalf("repository checks ran before login handoff: %q", call)
+		}
+	}
 }
 
 func TestPrepareDoesNotMisclassifyTransportFailureAsLoginRequired(t *testing.T) {

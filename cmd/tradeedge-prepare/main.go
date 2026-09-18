@@ -59,24 +59,6 @@ func prepare(value options, commands runner, output io.Writer) error {
 	ist := time.FixedZone("IST", 5*60*60+30*60)
 	now := value.now.In(ist)
 	date := now.Format("2006-01-02")
-	if status, err := commands.Run("git", "status", "--porcelain"); err != nil || strings.TrimSpace(status) != "" {
-		return errors.New("working tree is not clean")
-	}
-	branchRaw, err := commands.Run("git", "branch", "--show-current")
-	if err != nil || strings.TrimSpace(branchRaw) != "main" {
-		return errors.New("preparation requires the merged main branch")
-	}
-	commitRaw, err := commands.Run("git", "rev-parse", "HEAD")
-	commit := strings.TrimSpace(commitRaw)
-	if err != nil || len(commit) != 40 {
-		return errors.New("application commit unavailable")
-	}
-	shortCommit := commit[:7]
-	root := filepath.Join(value.repository, ".cache", "market-validation", date)
-	if err = os.MkdirAll(root, 0o750); err != nil {
-		return err
-	}
-
 	authOutput, authErr := commands.Run(value.authCommand, "authenticate", "-credentials-file", value.credentialsFile)
 	if authErr != nil {
 		errorType := field(authOutput, "ERROR_TYPE")
@@ -96,6 +78,23 @@ func prepare(value options, commands runner, output io.Writer) error {
 	lifecycle := field(authOutput, "ACCESS_TOKEN_LIFECYCLE")
 	if lifecycle != "REUSED" && lifecycle != "EXCHANGED" {
 		return errors.New("invalid authentication result")
+	}
+	if status, err := commands.Run("git", "status", "--porcelain"); err != nil || strings.TrimSpace(status) != "" {
+		return errors.New("working tree is not clean")
+	}
+	branchRaw, err := commands.Run("git", "branch", "--show-current")
+	if err != nil || strings.TrimSpace(branchRaw) != "main" {
+		return errors.New("preparation requires the merged main branch")
+	}
+	commitRaw, err := commands.Run("git", "rev-parse", "HEAD")
+	commit := strings.TrimSpace(commitRaw)
+	if err != nil || len(commit) != 40 {
+		return errors.New("application commit unavailable")
+	}
+	shortCommit := commit[:7]
+	root := filepath.Join(value.repository, ".cache", "market-validation", date)
+	if err = os.MkdirAll(root, 0o750); err != nil {
+		return err
 	}
 
 	instrumentPath := filepath.Join(root, "zerodha-instruments-"+shortCommit+".csv")
