@@ -20,7 +20,19 @@ import (
 const (
 	MaximumSubscriptions = 16
 	MinimumRemapInterval = 5 * time.Minute
+	MaximumEvaluations   = 100
 )
+
+// Evaluation is bounded read-only evidence of an actual completed-candle EMA evaluation.
+type Evaluation struct {
+	Strategy    string                   `json:"strategy"`
+	Candidate   string                   `json:"candidate"`
+	Underlying  qualification.Underlying `json:"underlying"`
+	EvaluatedAt time.Time                `json:"evaluated_at"`
+	FrameID     string                   `json:"frame_id"`
+	Decision    string                   `json:"decision"`
+	Reason      string                   `json:"reason"`
+}
 
 type RiskGateway interface {
 	Evaluate(context.Context, derivatives.ConnectedRequest) (riskmodel.PortfolioRiskDecision, error)
@@ -67,22 +79,24 @@ type Snapshot struct {
 }
 
 type Runtime struct {
-	mu            sync.RWMutex
-	master        instrumentmaster.Master
-	spots         map[qualification.Underlying]domain.InstrumentID
-	policies      map[qualification.Underlying]derivatives.Policy
-	aggregator    *CandleAggregator
-	ema           map[qualification.Underlying]EMAState
-	qualification *qualification.Engine
-	risk          RiskGateway
-	observer      interface{ Observe(notification.Event) }
-	sessions      *SessionTracker
-	latest        map[domain.InstrumentID]marketmodel.QuoteEvent
-	history       map[domain.InstrumentID][]marketmodel.QuoteEvent
-	status        map[qualification.Underlying]UnderlyingStatus
-	lastRemap     map[qualification.Underlying]time.Time
-	revision      uint64
-	tradingDate   string
+	mu              sync.RWMutex
+	master          instrumentmaster.Master
+	spots           map[qualification.Underlying]domain.InstrumentID
+	policies        map[qualification.Underlying]derivatives.Policy
+	aggregator      *CandleAggregator
+	ema             map[qualification.Underlying]EMAState
+	qualification   *qualification.Engine
+	risk            RiskGateway
+	observer        interface{ Observe(notification.Event) }
+	sessions        *SessionTracker
+	latest          map[domain.InstrumentID]marketmodel.QuoteEvent
+	history         map[domain.InstrumentID][]marketmodel.QuoteEvent
+	status          map[qualification.Underlying]UnderlyingStatus
+	lastRemap       map[qualification.Underlying]time.Time
+	revision        uint64
+	tradingDate     string
+	evaluations     []Evaluation
+	evaluationCount uint64
 }
 
 func New(config RuntimeConfig) (*Runtime, error) {
@@ -188,6 +202,7 @@ func (r *Runtime) Process(ctx context.Context, quote marketmodel.QuoteEvent, ses
 	}
 	r.ema[underlying] = state
 	r.refreshStatus(underlying, quote.ExchangeTime())
+	r.recordEvaluation(underlying, *completed, state, signal)
 	if signal == nil {
 		return nil
 	}
@@ -201,6 +216,21 @@ func (r *Runtime) Process(ctx context.Context, quote marketmodel.QuoteEvent, ses
 		return nil
 	}
 	return r.processSignal(ctx, *signal, session, casRestricted, stopNew, series.Completed)
+}
+
+func (r *Runtime) recordEvaluation(underlying qualification.Underlying, frame CandlePoint, state EMAState, signal *EMASignal) {
+	value := Evaluation{Strategy: qualification.StrategyID, Candidate: "REFERENCE_CANDIDATE", Underlying: underlying, EvaluatedAt: frame.CloseTime.UTC(), FrameID: frame.EventID, Decision: "NO_ACTION", Reason: "EMA_WARMUP_INCOMPLETE"}
+	if state.Samples >= WarmupRequired {
+		value.Reason = "EMA_ENTRY_CONDITION_NOT_SATISFIED"
+	}
+	if signal != nil {
+		value.Decision, value.Reason = "TRADE_PROPOSAL", "EMA_CROSSOVER_DETECTED"
+	}
+	r.evaluations = append(r.evaluations, value)
+	if len(r.evaluations) > MaximumEvaluations {
+		r.evaluations = append([]Evaluation(nil), r.evaluations[len(r.evaluations)-MaximumEvaluations:]...)
+	}
+	r.evaluationCount++
 }
 
 func (r *Runtime) processSignal(ctx context.Context, signal EMASignal, session string, casRestricted, stopNew bool, candles []CandlePoint) error {
@@ -393,6 +423,21 @@ func (r *Runtime) MultiSessionScorecards() []MultiSessionScorecard {
 	r.mu.RLock()
 	defer r.mu.RUnlock()
 	return r.sessions.Multi(r.qualification.Scorecards())
+}
+
+// RecentEvaluations returns newest-first bounded runtime evidence.
+func (r *Runtime) RecentEvaluations(limit int) ([]Evaluation, uint64) {
+	r.mu.RLock()
+	defer r.mu.RUnlock()
+	if limit <= 0 || limit > MaximumEvaluations {
+		limit = MaximumEvaluations
+	}
+	values := append([]Evaluation(nil), r.evaluations...)
+	sort.Slice(values, func(i, j int) bool { return values[i].EvaluatedAt.After(values[j].EvaluatedAt) })
+	if len(values) > limit {
+		values = values[:limit]
+	}
+	return values, r.evaluationCount
 }
 
 func qualificationQuote(value marketmodel.QuoteEvent) qualification.Quote {

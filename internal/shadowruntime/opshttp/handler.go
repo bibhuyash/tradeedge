@@ -3,6 +3,7 @@ package opshttp
 
 import (
 	"encoding/json"
+	"fmt"
 	"net/http"
 	"strings"
 
@@ -14,6 +15,7 @@ type Source interface {
 	Status() []shadowruntime.UnderlyingStatus
 	SessionScorecards() []shadowruntime.SessionScorecard
 	MultiSessionScorecards() []shadowruntime.MultiSessionScorecard
+	RecentEvaluations(int) ([]shadowruntime.Evaluation, uint64)
 }
 
 type Handler struct{ source Source }
@@ -48,6 +50,16 @@ func (h Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		_ = json.NewEncoder(w).Encode(h.source.SessionScorecards())
 	case "/api/v1/shadow/multi-session":
 		_ = json.NewEncoder(w).Encode(h.source.MultiSessionScorecards())
+	case "/api/v1/shadow/evaluations":
+		limit := 100
+		if raw := r.URL.Query().Get("limit"); raw != "" {
+			_, _ = fmt.Sscan(raw, &limit)
+		}
+		if limit < 1 || limit > shadowruntime.MaximumEvaluations {
+			limit = shadowruntime.MaximumEvaluations
+		}
+		items, count := h.source.RecentEvaluations(limit)
+		_ = json.NewEncoder(w).Encode(map[string]any{"items": items, "count": count, "limit": limit})
 	default:
 		http.NotFound(w, r)
 	}
