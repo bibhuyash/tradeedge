@@ -1,4 +1,47 @@
 services:
+  tradeedge-prepare:
+    image: golang:1.23.4-bookworm@sha256:95db116434e3f21a2a15600ffc7169bf380c6bfd021b154d106fcb346721c277
+    platform: linux/amd64
+    init: true
+    restart: "no"
+    working_dir: /workspace
+    command:
+      - sh
+      - -c
+      - |
+        set -eu
+        git config --global --add safe.directory /workspace
+        go build -buildvcs=true -o /tmp/tradeedge-zerodha-auth ./cmd/tradeedge-zerodha-auth
+        go build -buildvcs=true -o /tmp/tradeedge-validation ./cmd/tradeedge-validation
+        go build -buildvcs=true -o /tmp/tradeedge-prepare ./cmd/tradeedge-prepare
+        exec /tmp/tradeedge-prepare -repo /workspace -credentials-file /workspace/.env -auth-command /tmp/tradeedge-zerodha-auth -validation-command /tmp/tradeedge-validation
+    volumes:
+      - type: bind
+        source: .
+        target: /workspace
+        read_only: true
+      - type: bind
+        source: ./.cache
+        target: /workspace/.cache
+      - type: bind
+        source: ./.env
+        target: /workspace/.env
+    environment:
+      TRADEEDGE_ZERODHA_BASE_URL: ${TRADEEDGE_ZERODHA_BASE_URL:-https://api.kite.trade}
+      TRADEEDGE_ZERODHA_TIMEOUT: ${TRADEEDGE_ZERODHA_TIMEOUT:-2s}
+      TRADEEDGE_ZERODHA_MAX_CONCURRENCY: ${TRADEEDGE_ZERODHA_MAX_CONCURRENCY:-4}
+      TRADEEDGE_ZERODHA_READ_RETRIES: ${TRADEEDGE_ZERODHA_READ_RETRIES:-2}
+      TRADEEDGE_ZERODHA_MAPPING_MAX_AGE: ${TRADEEDGE_ZERODHA_MAPPING_MAX_AGE:-24h}
+      TRADEEDGE_ZERODHA_READ_ONLY: "true"
+      TRADEEDGE_TELEGRAM_BOT_TOKEN: ${TRADEEDGE_TELEGRAM_BOT_TOKEN:?required}
+      TRADEEDGE_TELEGRAM_CHAT_ID: ${TRADEEDGE_TELEGRAM_CHAT_ID:?required}
+      TRADEEDGE_AUTHORIZATION_MANIFEST_HOST: ${TRADEEDGE_AUTHORIZATION_MANIFEST_HOST:-}
+      TRADEEDGE_RUNTIME_BUNDLE_HOST: ${TRADEEDGE_RUNTIME_BUNDLE_HOST:-}
+    security_opt:
+      - no-new-privileges:true
+    cap_drop:
+      - ALL
+
   tradeedge-day0:
     image: golang:1.23.4-bookworm@sha256:95db116434e3f21a2a15600ffc7169bf380c6bfd021b154d106fcb346721c277
     platform: linux/amd64
@@ -84,7 +127,7 @@ services:
       TRADEEDGE_TRADING_MODE: shadow
       TRADEEDGE_ZERODHA_MODE: SHADOW
       TRADEEDGE_ZERODHA_READ_ONLY: "true"
-      TRADEEDGE_RUNTIME_BUNDLE: /workspace/.cache/market-validation/config/runtime-bundle.shadow.json
+      TRADEEDGE_RUNTIME_BUNDLE: /workspace/${TRADEEDGE_RUNTIME_BUNDLE_HOST:?set the checksum-bound SHADOW runtime bundle path}
       TRADEEDGE_AUTHORIZATION_MANIFEST: /workspace/${TRADEEDGE_AUTHORIZATION_MANIFEST_HOST:?set the checksum-bound SHADOW manifest path}
       TRADEEDGE_CHECKPOINT_ROOT: /var/lib/tradeedge/checkpoint
       TRADEEDGE_OPERATOR_CONTROL_SOCKET: /run/tradeedge/operator.sock

@@ -35,6 +35,7 @@ jobs:
       - name: Canonical Docker Compose contract
         env:
           TRADEEDGE_AUTHORIZATION_MANIFEST_HOST: .cache/market-validation/2099-01-01/authorization.json
+          TRADEEDGE_RUNTIME_BUNDLE_HOST: .cache/market-validation/2099-01-01/runtime-bundle.json
           TRADEEDGE_ZERODHA_API_KEY: test-only-key
           TRADEEDGE_ZERODHA_API_SECRET: test-only-secret
           TRADEEDGE_ZERODHA_REQUEST_TOKEN: test-only-request

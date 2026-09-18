@@ -54,6 +54,29 @@ func (transport *HTTPTransport) Instruments(ctx context.Context, authorization s
 	return transport.read(ctx, "/instruments", authorization)
 }
 
+// LTP retrieves a bounded read-only last-price snapshot. Instrument names are
+// validated before they are placed in the query string.
+func (transport *HTTPTransport) LTP(ctx context.Context, authorization string, instruments []string) ([]byte, int, error) {
+	if len(instruments) == 0 || len(instruments) > 16 {
+		return nil, 0, ErrInvalidConfiguration
+	}
+	query := url.Values{}
+	for _, instrument := range instruments {
+		instrument = strings.TrimSpace(instrument)
+		parts := strings.Split(instrument, ":")
+		if len(parts) != 2 || parts[0] != "NFO" || parts[1] == "" || len(parts[1]) > 64 {
+			return nil, 0, ErrInvalidConfiguration
+		}
+		for _, character := range parts[1] {
+			if !((character >= 'A' && character <= 'Z') || (character >= '0' && character <= '9')) {
+				return nil, 0, ErrInvalidConfiguration
+			}
+		}
+		query.Add("i", instrument)
+	}
+	return transport.read(ctx, "/quote/ltp?"+query.Encode(), authorization)
+}
+
 func (transport *HTTPTransport) read(ctx context.Context, path, authorization string) ([]byte, int, error) {
 	transport.mu.RLock()
 	stopped := transport.stopped

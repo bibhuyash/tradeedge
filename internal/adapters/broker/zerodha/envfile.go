@@ -143,6 +143,95 @@ func persistAccessToken(path, token string, expiresAt time.Time) error {
 	return nil
 }
 
+// PersistPreparationPaths atomically updates only the two non-secret Compose
+// selectors owned by the preparation workflow.
+func PersistPreparationPaths(path, authorizationManifest, runtimeBundle string) error {
+	if strings.TrimSpace(authorizationManifest) == "" || strings.TrimSpace(runtimeBundle) == "" || strings.ContainsAny(authorizationManifest+runtimeBundle, "\r\n\x00") {
+		return ErrCredentialsMalformed
+	}
+	return persistDotenvValues(path, map[string]string{
+		"TRADEEDGE_AUTHORIZATION_MANIFEST_HOST": authorizationManifest,
+		"TRADEEDGE_RUNTIME_BUNDLE_HOST":         runtimeBundle,
+	})
+}
+
+// InvalidateRequestToken atomically clears a provider-rejected one-time token
+// so repeated preparation cannot submit it again.
+func InvalidateRequestToken(path string) error {
+	return persistDotenvValues(path, map[string]string{"TRADEEDGE_ZERODHA_REQUEST_TOKEN": ""})
+}
+
+func persistDotenvValues(path string, updates map[string]string) error {
+	clean := filepath.Clean(strings.TrimSpace(path))
+	if clean == "." {
+		return ErrCredentialsMalformed
+	}
+	raw, err := os.ReadFile(clean)
+	if err != nil {
+		return fmt.Errorf("persist operator configuration: %w", err)
+	}
+	updated, err := updateDotenvValues(raw, updates)
+	if err != nil {
+		return err
+	}
+	info, err := os.Stat(clean)
+	if err != nil {
+		return fmt.Errorf("persist operator configuration: %w", err)
+	}
+	temporary, err := os.CreateTemp(filepath.Dir(clean), ".tradeedge-operator-config-*")
+	if err != nil {
+		return fmt.Errorf("persist operator configuration: %w", err)
+	}
+	temporaryPath := temporary.Name()
+	defer func() { _ = os.Remove(temporaryPath) }()
+	mode := info.Mode().Perm()
+	if mode&0o077 != 0 || mode == 0 {
+		mode = 0o600
+	}
+	if err = temporary.Chmod(mode); err == nil {
+		_, err = temporary.Write(updated)
+	}
+	if err == nil {
+		err = temporary.Sync()
+	}
+	closeErr := temporary.Close()
+	if err == nil {
+		err = closeErr
+	}
+	if err != nil {
+		return fmt.Errorf("persist operator configuration: %w", err)
+	}
+	if err = replaceFile(temporaryPath, clean); err != nil {
+		return fmt.Errorf("persist operator configuration: %w", err)
+	}
+	return os.Chmod(clean, mode)
+}
+
+func updateDotenvValues(raw []byte, updates map[string]string) ([]byte, error) {
+	scanner := bufio.NewScanner(strings.NewReader(string(raw)))
+	lines, seen := make([]string, 0, 32), map[string]bool{}
+	for scanner.Scan() {
+		line := scanner.Text()
+		name, assignment := dotenvAssignment(line)
+		if value, ok := updates[name]; ok {
+			if seen[name] {
+				return nil, ErrCredentialsMalformed
+			}
+			seen[name], line = true, assignment+value
+		}
+		lines = append(lines, line)
+	}
+	if err := scanner.Err(); err != nil {
+		return nil, errors.Join(ErrCredentialsMalformed, err)
+	}
+	for name, value := range updates {
+		if !seen[name] {
+			lines = append(lines, name+"="+value)
+		}
+	}
+	return []byte(strings.Join(lines, "\n") + "\n"), nil
+}
+
 func updateDotenvSession(raw []byte, token, expiry string) ([]byte, error) {
 	scanner := bufio.NewScanner(strings.NewReader(string(raw)))
 	lines := make([]string, 0, 32)
