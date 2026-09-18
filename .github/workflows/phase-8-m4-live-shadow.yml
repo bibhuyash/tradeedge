@@ -65,12 +65,13 @@ jobs:
           ! grep -q 'TRADEEDGE_ZERODHA_REQUEST_TOKEN' <<<"$shadow"
           ! grep -q 'TRADEEDGE_ZERODHA_ACCESS_TOKEN' <<<"$shadow"
           grep -q 'TRADEEDGE_ZERODHA_SESSION_FILE: /var/lib/tradeedge/session/zerodha.json' <<<"$shadow"
+          grep -q '/workspace/.cache/tradeedge/preparation.env' <<<"$shadow"
           set +e
           shadow_output="$(docker compose --env-file .env run --rm --no-deps tradeedge-shadow 2>&1)"
           shadow_status=$?
           set -e
           test "$shadow_status" -ne 0
-          grep -q 'checksum-bound authorization manifest is unavailable' <<<"$shadow_output"
+          grep -q 'generated SHADOW artifact selectors are unavailable; run tradeedge-prepare' <<<"$shadow_output"
       - name: Credential scan
         shell: bash
         run: if git grep -nE '\b(sk-(proj-)?[A-Za-z0-9_]{20,}|ghp_[A-Za-z0-9]{20,}|gho_[A-Za-z0-9]{20,}|xox[baprs]-[A-Za-z0-9]{20,}|-----BEGIN (RSA |EC |OPENSSH )?PRIVATE KEY-----)' -- ':!go.sum'; then exit 1; fi
