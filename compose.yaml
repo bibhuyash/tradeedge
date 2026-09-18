@@ -58,6 +58,14 @@ services:
           echo "zerodha runtime credential is unavailable" >&2
           exit 1
         fi
+        if [ -z "$${TRADEEDGE_AUTHORIZATION_MANIFEST:-}" ]; then
+          echo "checksum-bound authorization manifest is unavailable; run tradeedge-prepare" >&2
+          exit 1
+        fi
+        if [ "$${TRADEEDGE_ZERODHA_MODE:-}" = "SHADOW" ] && [ -z "$${TRADEEDGE_RUNTIME_BUNDLE:-}" ]; then
+          echo "checksum-bound SHADOW runtime bundle is unavailable; run tradeedge-prepare" >&2
+          exit 1
+        fi
         go build -buildvcs=true -o /tmp/tradeedge ./cmd/tradeedge
         exec /tmp/tradeedge
     ports:
@@ -81,7 +89,7 @@ services:
       TRADEEDGE_ZERODHA_MODE: PAPER
       TRADEEDGE_ZERODHA_READ_ONLY: "true"
       TRADEEDGE_RUNTIME_BUNDLE: /workspace/.cache/market-validation/config/runtime-bundle.json
-      TRADEEDGE_AUTHORIZATION_MANIFEST: /workspace/${TRADEEDGE_AUTHORIZATION_MANIFEST_HOST:?set the checksum-bound manifest path}
+      TRADEEDGE_AUTHORIZATION_MANIFEST: ${TRADEEDGE_AUTHORIZATION_MANIFEST_HOST:-}
       TRADEEDGE_CHECKPOINT_ROOT: /var/lib/tradeedge/checkpoint
       TRADEEDGE_OPERATOR_CONTROL_SOCKET: /run/tradeedge/operator.sock
       TRADEEDGE_ZERODHA_API_KEY: ${TRADEEDGE_ZERODHA_API_KEY:?required}
@@ -127,8 +135,8 @@ services:
       TRADEEDGE_TRADING_MODE: shadow
       TRADEEDGE_ZERODHA_MODE: SHADOW
       TRADEEDGE_ZERODHA_READ_ONLY: "true"
-      TRADEEDGE_RUNTIME_BUNDLE: /workspace/${TRADEEDGE_RUNTIME_BUNDLE_HOST:?set the checksum-bound SHADOW runtime bundle path}
-      TRADEEDGE_AUTHORIZATION_MANIFEST: /workspace/${TRADEEDGE_AUTHORIZATION_MANIFEST_HOST:?set the checksum-bound SHADOW manifest path}
+      TRADEEDGE_RUNTIME_BUNDLE: ${TRADEEDGE_RUNTIME_BUNDLE_HOST:-}
+      TRADEEDGE_AUTHORIZATION_MANIFEST: ${TRADEEDGE_AUTHORIZATION_MANIFEST_HOST:-}
       TRADEEDGE_CHECKPOINT_ROOT: /var/lib/tradeedge/checkpoint
       TRADEEDGE_OPERATOR_CONTROL_SOCKET: /run/tradeedge/operator.sock
       TRADEEDGE_ZERODHA_API_KEY: ${TRADEEDGE_ZERODHA_API_KEY:?required}
