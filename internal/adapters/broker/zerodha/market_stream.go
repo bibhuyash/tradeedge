@@ -148,6 +148,7 @@ type MarketFrame struct {
 	MessageType MarketMessageType
 	Data        []byte
 	CloseCode   int
+	ReceivedAt  time.Time
 }
 
 type MarketConnection interface {
@@ -444,6 +445,7 @@ func (s *MarketStream) consume(ctx context.Context, connection MarketConnection,
 				errorsCh <- err
 				return
 			}
+			frame.ReceivedAt = s.clock.Now().UTC()
 			select {
 			case frames <- frame:
 			case <-readCtx.Done():
@@ -470,7 +472,7 @@ func (s *MarketStream) consume(ctx context.Context, connection MarketConnection,
 			s.snapshot.Resubscriptions++
 			s.mu.Unlock()
 		case frame := <-frames:
-			now := s.clock.Now().UTC()
+			now := frame.ReceivedAt
 			messageType := marketFrameType(frame)
 			textType := TextMessageType("")
 			var textErr error

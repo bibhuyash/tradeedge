@@ -12,6 +12,7 @@ import (
 	"github.com/bibhuyash/tradeedge/internal/config"
 	"github.com/bibhuyash/tradeedge/internal/platform/checkpointfile"
 	"github.com/bibhuyash/tradeedge/internal/platform/logging"
+	"github.com/bibhuyash/tradeedge/internal/shadowruntime"
 )
 
 type shadowShutdownRecorder struct {
@@ -20,6 +21,136 @@ type shadowShutdownRecorder struct {
 	err          error
 	state        *atomic.Int32
 	seenState    atomic.Int32
+}
+
+type shadowCheckpointStoreRecorder struct {
+	mu       sync.Mutex
+	actual   uint64
+	expected []uint64
+	conflict bool
+	entered  chan struct{}
+	release  chan struct{}
+}
+
+func (s *shadowCheckpointStoreRecorder) Publish(_ context.Context, _ shadowruntime.Snapshot, expected uint64, _ string, _ string, _ time.Time, _ bool) (checkpointfile.Generation, error) {
+	if s.entered != nil {
+		select {
+		case s.entered <- struct{}{}:
+		default:
+		}
+	}
+	if s.release != nil {
+		<-s.release
+	}
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.expected = append(s.expected, expected)
+	if s.conflict || expected != s.actual {
+		return checkpointfile.Generation{}, checkpointfile.ErrConflict
+	}
+	s.actual++
+	return checkpointfile.Generation{Sequence: s.actual}, nil
+}
+
+func checkpointSnapshotForTest() shadowruntime.Snapshot {
+	return shadowruntime.Snapshot{SchemaVersion: shadowruntime.SchemaVersion, Revision: 1, Checksum: "test"}
+}
+
+func TestShadowCheckpointPublisherRestartsAtLoadedSequence(t *testing.T) {
+	store := &shadowCheckpointStoreRecorder{actual: 41}
+	publisher := newShadowCheckpointPublisher(store, checkpointSnapshotForTest, 41, "calendar", "configuration")
+	publisher.Dirty()
+	if err := publisher.Publish(context.Background(), false); err != nil {
+		t.Fatal(err)
+	}
+	if publisher.sequence != 42 || len(store.expected) != 1 || store.expected[0] != 41 {
+		t.Fatalf("sequence=%d expected=%v, want sequence 42 from expected 41", publisher.sequence, store.expected)
+	}
+}
+
+func TestShadowCheckpointPublisherSerializesConcurrentRequests(t *testing.T) {
+	store := &shadowCheckpointStoreRecorder{}
+	publisher := newShadowCheckpointPublisher(store, checkpointSnapshotForTest, 0, "calendar", "configuration")
+	const callers = 16
+	start := make(chan struct{})
+	errorsByCaller := make(chan error, callers)
+	var wait sync.WaitGroup
+	for range callers {
+		wait.Add(1)
+		go func() {
+			defer wait.Done()
+			<-start
+			errorsByCaller <- publisher.Publish(context.Background(), true)
+		}()
+	}
+	close(start)
+	wait.Wait()
+	close(errorsByCaller)
+	for err := range errorsByCaller {
+		if err != nil {
+			t.Fatal(err)
+		}
+	}
+	for index, expected := range store.expected {
+		if expected != uint64(index) {
+			t.Fatalf("publication %d used expected=%d", index, expected)
+		}
+	}
+}
+
+func TestShadowCheckpointPublisherCoalescesMarketTicks(t *testing.T) {
+	store := &shadowCheckpointStoreRecorder{}
+	publisher := newShadowCheckpointPublisher(store, checkpointSnapshotForTest, 0, "calendar", "configuration")
+	for range 10_000 {
+		publisher.Dirty()
+	}
+	if err := publisher.Publish(context.Background(), false); err != nil {
+		t.Fatal(err)
+	}
+	if err := publisher.Publish(context.Background(), false); err != nil {
+		t.Fatal(err)
+	}
+	if len(store.expected) != 1 || publisher.sequence != 1 {
+		t.Fatalf("publications=%d sequence=%d, want one publication at sequence 1", len(store.expected), publisher.sequence)
+	}
+}
+
+func TestShadowCheckpointPublisherExternalConflictFailsClosed(t *testing.T) {
+	store := &shadowCheckpointStoreRecorder{actual: 2, conflict: true}
+	publisher := newShadowCheckpointPublisher(store, checkpointSnapshotForTest, 2, "calendar", "configuration")
+	publisher.Dirty()
+	if err := publisher.Publish(context.Background(), false); !errors.Is(err, checkpointfile.ErrConflict) {
+		t.Fatalf("error=%v, want checkpoint conflict", err)
+	}
+	if publisher.sequence != 2 {
+		t.Fatalf("sequence advanced to %d after conflict", publisher.sequence)
+	}
+}
+
+func TestShadowCheckpointPersistenceDoesNotBlockMarketDirtyPath(t *testing.T) {
+	store := &shadowCheckpointStoreRecorder{entered: make(chan struct{}, 1), release: make(chan struct{})}
+	publisher := newShadowCheckpointPublisher(store, checkpointSnapshotForTest, 0, "calendar", "configuration")
+	publisher.Dirty()
+	done := make(chan error, 1)
+	go func() { done <- publisher.Publish(context.Background(), false) }()
+	<-store.entered
+	marked := make(chan struct{})
+	go func() {
+		publisher.Dirty()
+		close(marked)
+	}()
+	select {
+	case <-marked:
+	case <-time.After(time.Second):
+		t.Fatal("market dirty path blocked on checkpoint persistence")
+	}
+	close(store.release)
+	if err := <-done; err != nil {
+		t.Fatal(err)
+	}
+	if publisher.mutations.Load() == publisher.published {
+		t.Fatal("mutation arriving during publication was lost")
+	}
 }
 
 func (r *shadowShutdownRecorder) Shutdown(context.Context) error {

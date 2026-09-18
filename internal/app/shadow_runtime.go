@@ -10,6 +10,7 @@ import (
 	"os"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	brokerzerodha "github.com/bibhuyash/tradeedge/internal/adapters/broker/zerodha"
@@ -53,8 +54,7 @@ type productionShadow struct {
 	evaluator     *marketreadiness.Evaluator
 	runtime       *shadowruntime.Runtime
 	risk          *shadowruntime.Phase3Gateway
-	checkpoint    *shadowcheckpoint.Store
-	sequence      uint64
+	checkpoint    *shadowCheckpointPublisher
 	calendar      string
 	schedule      *marketcalendar.Schedule
 	controls      *control.Controller
@@ -64,6 +64,64 @@ type productionShadow struct {
 	streamErr     error
 	readyOnce     sync.Once
 	shutdown      shutdownOperation
+}
+
+const shadowCheckpointCadence = 30 * time.Second
+
+type shadowCheckpointStore interface {
+	Publish(context.Context, shadowruntime.Snapshot, uint64, string, string, time.Time, bool) (checkpointfile.Generation, error)
+}
+
+// shadowCheckpointPublisher is the sole owner of SHADOW checkpoint sequence
+// advancement. Market processing only marks state dirty and never waits for
+// filesystem persistence.
+type shadowCheckpointPublisher struct {
+	mu            sync.Mutex
+	store         shadowCheckpointStore
+	snapshot      func() shadowruntime.Snapshot
+	sequence      uint64
+	calendar      string
+	configuration string
+	mutations     atomic.Uint64
+	published     uint64
+}
+
+func newShadowCheckpointPublisher(store shadowCheckpointStore, snapshot func() shadowruntime.Snapshot, sequence uint64, calendar, configuration string) *shadowCheckpointPublisher {
+	return &shadowCheckpointPublisher{store: store, snapshot: snapshot, sequence: sequence, calendar: calendar, configuration: configuration}
+}
+
+func (p *shadowCheckpointPublisher) Dirty() { p.mutations.Add(1) }
+
+func (p *shadowCheckpointPublisher) Publish(ctx context.Context, clean bool) error {
+	p.mu.Lock()
+	defer p.mu.Unlock()
+	target := p.mutations.Load()
+	if !clean && target == p.published {
+		return nil
+	}
+	generation, err := p.store.Publish(ctx, p.snapshot(), p.sequence, p.calendar, p.configuration, time.Now().UTC(), clean)
+	if err != nil {
+		return fmt.Errorf("publish SHADOW checkpoint at expected sequence %d: %w", p.sequence, err)
+	}
+	p.sequence = generation.Sequence
+	p.published = target
+	return nil
+}
+
+func (p *shadowCheckpointPublisher) Run(ctx context.Context, cadence time.Duration, failed func(error)) {
+	ticker := time.NewTicker(cadence)
+	defer ticker.Stop()
+	for {
+		select {
+		case <-ctx.Done():
+			return
+		case <-ticker.C:
+			if err := p.Publish(ctx, false); err != nil {
+				failed(err)
+				return
+			}
+		}
+	}
 }
 
 // shutdownOperation converges repeated and concurrent shutdown requests onto
@@ -97,6 +155,11 @@ func runProductionShadow(ctx context.Context, cfg config.Config, logger *slog.Lo
 	}
 	streamCtx, cancel := context.WithCancel(ctx)
 	defer cancel()
+	checkpointFailure := make(chan error, 1)
+	go composition.checkpoint.Run(streamCtx, shadowCheckpointCadence, func(err error) {
+		checkpointFailure <- err
+		cancel()
+	})
 	go func() {
 		if streamErr := composition.stream.Stream(streamCtx, composition.bundle.Tokens, composition.accept); streamErr != nil && !errors.Is(streamErr, context.Canceled) {
 			composition.mu.Lock()
@@ -105,7 +168,13 @@ func runProductionShadow(ctx context.Context, cfg config.Config, logger *slog.Lo
 			composition.evaluator.SetProviderAvailable("zerodha", false)
 		}
 	}()
-	return runProductionShadowApplication(ctx, cfg, logger, options)
+	applicationErr := runProductionShadowApplication(streamCtx, cfg, logger, options)
+	select {
+	case checkpointErr := <-checkpointFailure:
+		return errors.Join(applicationErr, checkpointErr)
+	default:
+		return applicationErr
+	}
 }
 
 // runProductionShadowApplication is the authoritative owner of application
@@ -200,7 +269,7 @@ func composeProductionShadow(ctx context.Context, cfg config.Config) (*productio
 	if err != nil {
 		return nil, Options{}, err
 	}
-	composition := &productionShadow{bundle: bundle, authorization: authorization, stream: stream, session: session, evaluator: evaluator, runtime: runtime, risk: riskGateway, checkpoint: checkpointStore, calendar: string(schedule.Version()), schedule: schedule}
+	composition := &productionShadow{bundle: bundle, authorization: authorization, stream: stream, session: session, evaluator: evaluator, runtime: runtime, risk: riskGateway, calendar: string(schedule.Version()), schedule: schedule}
 	controls, err := control.New(cfg.CheckpointRoot+string(os.PathSeparator)+"shadow-operator-controls.json", shadowEOD{composition}, nil)
 	if err != nil {
 		return nil, Options{}, err
@@ -211,14 +280,18 @@ func composeProductionShadow(ctx context.Context, cfg config.Config) (*productio
 		return nil, Options{}, err
 	}
 	composition.local = local
+	sequence := uint64(0)
 	if snapshot, generation, loadErr := checkpointStore.Load(ctx); loadErr == nil {
-		if generation.CalendarVersion != composition.calendar || generation.ConfigurationChecksum != bundle.Checksum || runtime.Restore(snapshot) != nil {
+		sequence = generation.Sequence
+		current := runtime.Snapshot()
+		compatible := generation.CalendarVersion == composition.calendar && generation.ConfigurationChecksum == bundle.Checksum && snapshot.TradingDate == current.TradingDate
+		if compatible && runtime.Restore(snapshot) != nil {
 			return nil, Options{}, checkpointfile.ErrConflict
 		}
-		composition.sequence = generation.Sequence
 	} else if !errors.Is(loadErr, checkpointfile.ErrNotFound) {
 		return nil, Options{}, loadErr
 	}
+	composition.checkpoint = newShadowCheckpointPublisher(checkpointStore, runtime.Snapshot, sequence, composition.calendar, bundle.Checksum)
 	live, err := ingest.NewLiveService(ingest.Normalizer{Resolver: instrumentmaster.Resolver{Repository: repository}, Calendar: schedule}, ingest.ObserverGroup{evaluator, latestObservations, shadowQualityObserver{runtime}}, composition, 2*time.Second, 4096)
 	if err != nil {
 		return nil, Options{}, err
@@ -310,13 +383,8 @@ func (p *productionShadow) Process(ctx context.Context, event marketmodel.Event)
 	if err != nil {
 		return err
 	}
-	p.mu.Lock()
-	defer p.mu.Unlock()
-	generation, publishErr := p.checkpoint.Publish(ctx, p.runtime.Snapshot(), p.sequence, p.calendar, p.bundle.Checksum, time.Now().UTC(), false)
-	if publishErr == nil {
-		p.sequence = generation.Sequence
-	}
-	return publishErr
+	p.checkpoint.Dirty()
+	return nil
 }
 
 func (p *productionShadow) ServeHTTP(w http.ResponseWriter, r *http.Request) {
@@ -344,9 +412,7 @@ func (p *productionShadow) shutdownRuntime(ctx context.Context) error {
 	if p.controls != nil {
 		controlErr = p.controls.Shutdown(ctx)
 	}
-	p.mu.Lock()
-	_, checkpointErr := p.checkpoint.Publish(ctx, p.runtime.Snapshot(), p.sequence, p.calendar, p.bundle.Checksum, time.Now().UTC(), true)
-	p.mu.Unlock()
+	checkpointErr := p.checkpoint.Publish(ctx, true)
 	return errors.Join(localErr, controlErr, checkpointErr, p.risk.Shutdown(ctx))
 }
 
