@@ -47,7 +47,7 @@ var (
 	errRESTVerification      = errors.New("Zerodha REST verification failed")
 	errWebSocketVerification = errors.New("Zerodha WebSocket verification failed")
 	apiKeyPattern            = regexp.MustCompile(`^[A-Za-z0-9_-]{1,128}$`)
-	supportedCommands        = []string{"login-url", "exchange-token", "verify-rest", "verify-websocket", "preflight"}
+	supportedCommands        = []string{"login-url", "authenticate", "exchange-token", "verify-rest", "verify-websocket", "preflight"}
 )
 
 type lookupEnv func(string) (string, bool)
@@ -84,6 +84,8 @@ func run(args []string, lookup lookupEnv, output io.Writer, dependencies command
 	switch args[0] {
 	case "login-url":
 		return loginURL(args[1:], lookup, output)
+	case "authenticate":
+		return authenticate(args[1:], lookup, output, dependencies)
 	case "exchange-token":
 		return exchangeToken(args[1:], lookup, output, dependencies)
 	case "verify-rest":
@@ -95,6 +97,60 @@ func run(args []string, lookup lookupEnv, output io.Writer, dependencies command
 	default:
 		return errInvalidCommand
 	}
+}
+
+// authenticate establishes and persists a Zerodha session before the
+// session-specific market artifacts and preflight exist. It is deliberately
+// limited to the token exchange; it does not create a client, load a bundle,
+// fetch instruments, open a WebSocket, or start a runtime.
+func authenticate(args []string, lookup lookupEnv, output io.Writer, dependencies commandDependencies) error {
+	set := flag.NewFlagSet("authenticate", flag.ContinueOnError)
+	set.SetOutput(io.Discard)
+	credentialsFile := set.String("credentials-file", ".env", "untracked dotenv file containing and receiving Zerodha credentials")
+	timeout := set.Duration("timeout", defaultOperatorTimeout, "bounded authentication timeout")
+	if err := set.Parse(args); err != nil || set.NArg() != 0 || strings.TrimSpace(*credentialsFile) == "" || *timeout <= 0 || *timeout > 30*time.Second {
+		return errInvalidConfiguration
+	}
+	persistedLookup, err := brokerzerodha.LookupWithPersistedSession(brokerzerodha.LookupEnv(lookup), *credentialsFile)
+	if err != nil {
+		return errInvalidConfiguration
+	}
+	lookup = lookupEnv(persistedLookup)
+	if failure, failed := bootstrapCredentialFailure(lookup); failed {
+		if writeErr := writeAuthenticationFailure(output, failure); writeErr != nil {
+			return writeErr
+		}
+		return errors.Join(errAuthentication, errDiagnosticReported)
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), *timeout)
+	defer cancel()
+	session, reused, err := authenticatedBootstrapSession(ctx, lookup, dependencies)
+	if err != nil {
+		var failure brokerzerodha.AuthenticationFailure
+		if errors.As(err, &failure) {
+			if writeErr := writeAuthenticationFailure(output, failure); writeErr != nil {
+				return writeErr
+			}
+			return errors.Join(errAuthentication, errDiagnosticReported)
+		}
+		return errAuthentication
+	}
+	defer session.Shutdown()
+	snapshot := session.Snapshot()
+	if snapshot.State != brokerzerodha.SessionAuthenticated || snapshot.ExpiresAt.IsZero() {
+		return errAuthentication
+	}
+	if !reused {
+		if err = session.PersistAccessToken(*credentialsFile); err != nil {
+			return errAuthentication
+		}
+	}
+	lifecycle := "EXCHANGED"
+	if reused {
+		lifecycle = "REUSED"
+	}
+	_, err = fmt.Fprintf(output, "AUTHENTICATION=PASS\nACCESS_TOKEN_LIFECYCLE=%s\nACCESS_TOKEN_EXPIRES_AT=%s\n", lifecycle, snapshot.ExpiresAt.UTC().Format(time.RFC3339))
+	return err
 }
 
 func loginURL(args []string, lookup lookupEnv, output io.Writer) error {
@@ -636,20 +692,34 @@ func authenticatedSession(ctx context.Context, lookup lookupEnv, dependencies co
 	if err != nil {
 		return nil, err
 	}
+	session, _, err := authenticateSession(ctx, lookup, zerodhaConfig, dependencies)
+	return session, err
+}
+
+func authenticatedBootstrapSession(ctx context.Context, lookup lookupEnv, dependencies commandDependencies) (*brokerzerodha.SessionManager, bool, error) {
+	zerodhaConfig, err := loadBootstrapConfig(lookup)
+	if err != nil {
+		return nil, false, err
+	}
+	return authenticateSession(ctx, lookup, zerodhaConfig, dependencies)
+}
+
+func authenticateSession(ctx context.Context, lookup lookupEnv, zerodhaConfig brokerzerodha.Config, dependencies commandDependencies) (*brokerzerodha.SessionManager, bool, error) {
 	credentials, err := (brokerzerodha.EnvCredentialSource{Lookup: brokerzerodha.LookupEnv(lookup)}).Load(ctx)
 	if err != nil {
-		return nil, err
+		return nil, false, err
 	}
 	exchanger, err := brokerzerodha.NewHTTPTokenExchanger(zerodhaConfig, dependencies.roundTripper, operatorClock(dependencies))
 	if err != nil {
-		return nil, err
+		return nil, false, err
 	}
 	session := brokerzerodha.NewSessionManager(credentials, exchanger, operatorClock(dependencies), nil)
+	reused := session.Snapshot().State == brokerzerodha.SessionAuthenticated
 	if err = session.Authenticate(ctx); err != nil {
 		session.Shutdown()
-		return nil, err
+		return nil, false, err
 	}
-	return session, nil
+	return session, reused, nil
 }
 
 func writeAuthenticationFailure(output io.Writer, failure brokerzerodha.AuthenticationFailure) error {
@@ -700,12 +770,48 @@ func preflightCredentialFailure(lookup lookupEnv) (brokerzerodha.AuthenticationF
 	return brokerzerodha.AuthenticationFailure{}, false
 }
 
+func bootstrapCredentialFailure(lookup lookupEnv) (brokerzerodha.AuthenticationFailure, bool) {
+	for _, name := range []string{apiKeyEnvironment, apiSecretEnvironment} {
+		value, ok := lookup(name)
+		if !ok || strings.TrimSpace(value) == "" {
+			return configurationFailure("Missing required environment variable: " + name), true
+		}
+		if strings.ContainsAny(value, "\r\n\x00") {
+			return configurationFailure("Invalid environment variable: " + name), true
+		}
+	}
+	request, _ := lookup(requestTokenEnvironment)
+	access, _ := lookup(accessTokenEnvironment)
+	expiry, _ := lookup(accessExpiryEnvironment)
+	if strings.TrimSpace(access) == "" && strings.TrimSpace(request) == "" {
+		return configurationFailure("A restored access token or fresh request token is required"), true
+	}
+	if (strings.TrimSpace(access) == "") != (strings.TrimSpace(expiry) == "") {
+		return configurationFailure("Restored access token and expiry must be provided together"), true
+	}
+	return brokerzerodha.AuthenticationFailure{}, false
+}
+
 func configurationFailure(message string) brokerzerodha.AuthenticationFailure {
 	return brokerzerodha.AuthenticationFailure{ErrorType: "ConfigurationError", Message: message, HTTPStatus: 0}
 }
 
 func loadReadOnlyConfig(lookup lookupEnv) (brokerzerodha.Config, error) {
 	value, err := brokerzerodha.LoadConfig(brokerzerodha.LookupEnv(lookup))
+	if err != nil || !value.Enabled {
+		return brokerzerodha.Config{}, errInvalidConfiguration
+	}
+	return value, nil
+}
+
+func loadBootstrapConfig(lookup lookupEnv) (brokerzerodha.Config, error) {
+	configuredLookup := func(key string) (string, bool) {
+		if key == readOnlyEnvironment {
+			return "true", true
+		}
+		return lookup(key)
+	}
+	value, err := brokerzerodha.LoadConfig(brokerzerodha.LookupEnv(configuredLookup))
 	if err != nil || !value.Enabled {
 		return brokerzerodha.Config{}, errInvalidConfiguration
 	}

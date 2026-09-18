@@ -229,6 +229,115 @@ func TestExchangeTokenSuccessAndExpiry(t *testing.T) {
 	}
 }
 
+func TestAuthenticatePersistsFreshSessionAndReusesItForPreflight(t *testing.T) {
+	now := time.Date(2026, 9, 18, 8, 0, 0, 0, time.UTC)
+	credentialsFile := filepath.Join(t.TempDir(), ".env")
+	values := credentialValues()
+	values["UNRELATED"] = "ignored"
+	initial := "UNRELATED=preserved\n" + apiKeyEnvironment + "=" + values[apiKeyEnvironment] + "\n" + apiSecretEnvironment + "=" + values[apiSecretEnvironment] + "\n" + requestTokenEnvironment + "=" + values[requestTokenEnvironment] + "\n" + accessTokenEnvironment + "=\n" + accessExpiryEnvironment + "=\n"
+	if err := os.WriteFile(credentialsFile, []byte(initial), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	exchanges := 0
+	roundTripper := roundTripFunc(func(request *http.Request) (*http.Response, error) {
+		switch request.URL.Path {
+		case "/session/token":
+			exchanges++
+			return response(http.StatusOK, `{"status":"success","data":{"access_token":"bootstrap-access-token"}}`), nil
+		case "/user/profile":
+			if got := request.Header.Get("Authorization"); got != "token public-key:bootstrap-access-token" {
+				t.Fatalf("authorization=%q", got)
+			}
+			return response(http.StatusOK, `{"status":"success","data":{"exchanges":["NSE"],"products":["CNC"],"order_types":["LIMIT"]}}`), nil
+		default:
+			return nil, fmt.Errorf("unexpected request %s", request.URL.Path)
+		}
+	})
+	dependencies := commandDependencies{clock: fixedClock{now: now}, roundTripper: roundTripper}
+	for attempt := 0; attempt < 2; attempt++ {
+		var output bytes.Buffer
+		if err := run([]string{"authenticate", "-credentials-file", credentialsFile}, mapLookup(nil), &output, dependencies); err != nil {
+			t.Fatalf("authenticate attempt %d: %v output=%q", attempt+1, err, output.String())
+		}
+		lifecycle := "EXCHANGED"
+		if attempt == 1 {
+			lifecycle = "REUSED"
+		}
+		if !strings.Contains(output.String(), "AUTHENTICATION=PASS\nACCESS_TOKEN_LIFECYCLE="+lifecycle+"\n") {
+			t.Fatalf("output=%q", output.String())
+		}
+		assertNoCredentialMaterial(t, output.String(), merge(values, map[string]string{accessTokenEnvironment: "bootstrap-access-token"}), "")
+	}
+	if exchanges != 1 {
+		t.Fatalf("exchanges=%d", exchanges)
+	}
+	raw, err := os.ReadFile(credentialsFile)
+	if err != nil {
+		t.Fatal(err)
+	}
+	text := string(raw)
+	if !strings.Contains(text, "UNRELATED=preserved\n") || strings.Count(text, accessTokenEnvironment+"=") != 1 || strings.Count(text, accessExpiryEnvironment+"=") != 1 {
+		t.Fatalf("dotenv shape=%q", text)
+	}
+
+	connection := &fakeMarketConnection{frames: []brokerzerodha.MarketFrame{{Binary: true, Data: quoteFrame(256265, now)}, {Binary: true, Data: quoteFrame(260105, now)}}}
+	preflightDependencies := websocketDependencies(now, &fakeMarketDialer{connection: connection})
+	preflightDependencies.roundTripper = roundTripper
+	var preflightOutput bytes.Buffer
+	if err = run([]string{"preflight", "-runtime-bundle", "pinned.json", "-timeout", "1s", "-credentials-file", credentialsFile}, mapLookup(map[string]string{readOnlyEnvironment: "true"}), &preflightOutput, preflightDependencies); err != nil {
+		t.Fatalf("preflight: %v output=%q", err, preflightOutput.String())
+	}
+	if exchanges != 1 {
+		t.Fatalf("preflight exchanged request token: exchanges=%d", exchanges)
+	}
+	assertNoCredentialMaterial(t, preflightOutput.String(), merge(values, map[string]string{accessTokenEnvironment: "bootstrap-access-token"}), "")
+}
+
+func TestAuthenticateExpiredSessionExchangesOnceAndFailureDoesNotPersist(t *testing.T) {
+	now := time.Date(2026, 9, 18, 8, 0, 0, 0, time.UTC)
+	t.Run("expired session", func(t *testing.T) {
+		credentialsFile := filepath.Join(t.TempDir(), ".env")
+		values := credentialValues()
+		content := apiKeyEnvironment + "=" + values[apiKeyEnvironment] + "\n" + apiSecretEnvironment + "=" + values[apiSecretEnvironment] + "\n" + requestTokenEnvironment + "=" + values[requestTokenEnvironment] + "\n" + accessTokenEnvironment + "=expired\n" + accessExpiryEnvironment + "=" + now.Add(-time.Minute).Format(time.RFC3339) + "\n"
+		if err := os.WriteFile(credentialsFile, []byte(content), 0o600); err != nil {
+			t.Fatal(err)
+		}
+		exchanges := 0
+		dependencies := commandDependencies{clock: fixedClock{now: now}, roundTripper: roundTripFunc(func(request *http.Request) (*http.Response, error) {
+			exchanges++
+			return response(http.StatusOK, `{"status":"success","data":{"access_token":"renewed-access-token"}}`), nil
+		})}
+		if err := run([]string{"authenticate", "-credentials-file", credentialsFile}, mapLookup(nil), io.Discard, dependencies); err != nil {
+			t.Fatal(err)
+		}
+		if exchanges != 1 {
+			t.Fatalf("exchanges=%d", exchanges)
+		}
+	})
+	t.Run("exchange failure preserves dotenv", func(t *testing.T) {
+		credentialsFile := filepath.Join(t.TempDir(), ".env")
+		secret, request := "recognizable-bootstrap-secret", "recognizable-bootstrap-request"
+		original := "KEEP=value\n" + apiKeyEnvironment + "=public-key\n" + apiSecretEnvironment + "=" + secret + "\n" + requestTokenEnvironment + "=" + request + "\n" + accessTokenEnvironment + "=\n" + accessExpiryEnvironment + "=\n"
+		if err := os.WriteFile(credentialsFile, []byte(original), 0o600); err != nil {
+			t.Fatal(err)
+		}
+		var output bytes.Buffer
+		err := run([]string{"authenticate", "-credentials-file", credentialsFile}, mapLookup(nil), &output, commandDependencies{clock: fixedClock{now: now}, roundTripper: roundTripFunc(func(*http.Request) (*http.Response, error) {
+			return response(http.StatusForbidden, `{"status":"error","message":"Invalid request token","error_type":"TokenException"}`), nil
+		})})
+		if err == nil {
+			t.Fatal("authenticate succeeded")
+		}
+		raw, readErr := os.ReadFile(credentialsFile)
+		if readErr != nil || string(raw) != original {
+			t.Fatalf("dotenv changed: %q err=%v", raw, readErr)
+		}
+		if strings.Contains(output.String()+err.Error(), secret) || strings.Contains(output.String()+err.Error(), request) {
+			t.Fatalf("credential leaked: %q", output.String())
+		}
+	})
+}
+
 func TestVerifyREST(t *testing.T) {
 	now := time.Date(2026, 8, 10, 10, 0, 0, 0, time.UTC)
 	values := restoredCredentialValues(now)
@@ -831,7 +940,7 @@ func TestFreshObservationEnforcesFiveSecondPolicy(t *testing.T) {
 }
 
 func TestCommandSurfaceHasNoMutationCapability(t *testing.T) {
-	want := []string{"login-url", "exchange-token", "verify-rest", "verify-websocket", "preflight"}
+	want := []string{"login-url", "authenticate", "exchange-token", "verify-rest", "verify-websocket", "preflight"}
 	if strings.Join(supportedCommands, ",") != strings.Join(want, ",") {
 		t.Fatalf("supported commands = %v", supportedCommands)
 	}

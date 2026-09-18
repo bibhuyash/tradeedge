@@ -16,9 +16,9 @@ const (
 	accessExpiryKey = "TRADEEDGE_ZERODHA_ACCESS_TOKEN_EXPIRES_AT"
 )
 
-// LookupWithPersistedSession overlays only a complete access-token session
-// from path. Static credentials and request tokens continue to come from the
-// caller's approved environment.
+// LookupWithPersistedSession overlays the supported Zerodha credential fields
+// from path. It rejects malformed or partial restored sessions before exposing
+// any credential value to the caller.
 func LookupWithPersistedSession(base LookupEnv, path string) (LookupEnv, error) {
 	if base == nil {
 		return nil, ErrCredentialsMissing
@@ -28,11 +28,15 @@ func LookupWithPersistedSession(base LookupEnv, path string) (LookupEnv, error) 
 		return nil, fmt.Errorf("load Zerodha session: %w", err)
 	}
 	values := map[string]string{}
+	credentialKeys := map[string]struct{}{
+		"TRADEEDGE_ZERODHA_API_KEY": {}, "TRADEEDGE_ZERODHA_API_SECRET": {}, "TRADEEDGE_ZERODHA_REQUEST_TOKEN": {},
+		accessTokenKey: {}, accessExpiryKey: {},
+	}
 	scanner := bufio.NewScanner(strings.NewReader(string(raw)))
 	for scanner.Scan() {
 		line := scanner.Text()
 		name, _ := dotenvAssignment(line)
-		if name != accessTokenKey && name != accessExpiryKey {
+		if _, supported := credentialKeys[name]; !supported {
 			continue
 		}
 		if _, duplicate := values[name]; duplicate {
