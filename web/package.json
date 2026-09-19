@@ -4,7 +4,7 @@
   "version": "1.0.0",
   "type": "module",
   "scripts": {
-    "dev": "vite",
+    "dev": "node scripts/dev.mjs",
     "build": "npm run typecheck && vite build",
     "lint": "eslint .",
     "test": "vitest run",

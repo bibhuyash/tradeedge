@@ -9,6 +9,7 @@ import (
 	"strings"
 	"time"
 
+	operatorstartup "github.com/bibhuyash/tradeedge/internal/operator/startup"
 	"github.com/bibhuyash/tradeedge/internal/session"
 )
 
@@ -20,8 +21,17 @@ type SessionService interface {
 	Exchange(context.Context, string) (session.Status, error)
 }
 
-func NewHandler(service SessionService) http.Handler {
+type StartupService interface {
+	Status(context.Context) operatorstartup.Status
+	Start(context.Context) operatorstartup.Status
+}
+
+func NewHandler(service SessionService, startupServices ...StartupService) http.Handler {
 	mux := http.NewServeMux()
+	var startup StartupService
+	if len(startupServices) > 0 {
+		startup = startupServices[0]
+	}
 	mux.HandleFunc("/healthz", func(writer http.ResponseWriter, request *http.Request) {
 		if request.Method != http.MethodGet {
 			methodNotAllowed(writer, http.MethodGet)
@@ -85,6 +95,24 @@ func NewHandler(service SessionService) http.Handler {
 			writeJSON(writer, http.StatusConflict, errorResponse(status, "exchange_in_progress"))
 		default:
 			writeJSON(writer, http.StatusServiceUnavailable, errorResponse(session.Status{Provider: session.ProviderZerodha, State: session.StateError}, "authentication_unavailable"))
+		}
+	})
+	mux.HandleFunc("/api/v1/operator/startup", func(writer http.ResponseWriter, request *http.Request) {
+		if startup == nil {
+			writeJSON(writer, http.StatusServiceUnavailable, map[string]string{"state": "FAILED", "reason": "startup_unavailable"})
+			return
+		}
+		switch request.Method {
+		case http.MethodGet:
+			writeJSON(writer, http.StatusOK, startup.Status(request.Context()))
+		case http.MethodPost:
+			status := startup.Status(request.Context())
+			if status.State != operatorstartup.Ready && status.State != operatorstartup.MarketClosed && status.State != operatorstartup.Preparing && status.State != operatorstartup.StartingShadow && status.State != operatorstartup.WaitingForReadiness {
+				go startup.Start(context.Background())
+			}
+			writeJSON(writer, http.StatusAccepted, startup.Status(request.Context()))
+		default:
+			methodNotAllowed(writer, http.MethodGet+", "+http.MethodPost)
 		}
 	})
 	return mux

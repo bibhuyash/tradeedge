@@ -1,0 +1,8 @@
+.git
+.cache
+.env
+.env.*
+!.env.example
+web/node_modules
+web/dist
+artifacts
