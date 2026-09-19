@@ -12,21 +12,29 @@ import (
 
 	brokerzerodha "github.com/bibhuyash/tradeedge/internal/adapters/broker/zerodha"
 	"github.com/bibhuyash/tradeedge/internal/adapters/sessionfile"
+	"github.com/bibhuyash/tradeedge/internal/operator/runtimecompose"
+	operatorstartup "github.com/bibhuyash/tradeedge/internal/operator/startup"
 	"github.com/bibhuyash/tradeedge/internal/session"
 )
 
 type Config struct {
-	HTTPAddress     string
-	SessionFile     string
-	ShutdownTimeout time.Duration
-	Zerodha         brokerzerodha.Config
-	apiKey          string
-	apiSecret       string
+	HTTPAddress        string
+	SessionFile        string
+	ShutdownTimeout    time.Duration
+	StartupTimeout     time.Duration
+	Repository         string
+	ValidationCommand  string
+	ShadowReadinessURL string
+	Zerodha            brokerzerodha.Config
+	apiKey             string
+	apiSecret          string
 }
 
 type Dependencies struct {
 	RoundTripper http.RoundTripper
 	Clock        session.Clock
+	Startup      StartupService
+	Runtime      operatorstartup.RuntimeManager
 }
 
 type Application struct {
@@ -47,7 +55,7 @@ func LoadConfig(lookup brokerzerodha.LookupEnv) (Config, error) {
 	}
 	value := Config{
 		HTTPAddress: "127.0.0.1:8081", SessionFile: ".cache/tradeedge/session/zerodha.json",
-		ShutdownTimeout: 10 * time.Second, Zerodha: zerodhaConfig,
+		ShutdownTimeout: 10 * time.Second, StartupTimeout: 60 * time.Second, Repository: ".", ValidationCommand: "tradeedge-validation", ShadowReadinessURL: "http://127.0.0.1:8080/readyz", Zerodha: zerodhaConfig,
 		apiKey:    valueOf(lookup, "TRADEEDGE_ZERODHA_API_KEY"),
 		apiSecret: valueOf(lookup, "TRADEEDGE_ZERODHA_API_SECRET"),
 	}
@@ -56,6 +64,15 @@ func LoadConfig(lookup brokerzerodha.LookupEnv) (Config, error) {
 	}
 	if raw := valueOf(lookup, "TRADEEDGE_ZERODHA_SESSION_FILE"); raw != "" {
 		value.SessionFile = raw
+	}
+	if raw := valueOf(lookup, "TRADEEDGE_REPOSITORY"); raw != "" {
+		value.Repository = raw
+	}
+	if raw := valueOf(lookup, "TRADEEDGE_VALIDATION_COMMAND"); raw != "" {
+		value.ValidationCommand = raw
+	}
+	if raw := valueOf(lookup, "TRADEEDGE_SHADOW_READINESS_URL"); raw != "" {
+		value.ShadowReadinessURL = raw
 	}
 	if raw := valueOf(lookup, "TRADEEDGE_SHUTDOWN_TIMEOUT"); raw != "" {
 		value.ShutdownTimeout, err = time.ParseDuration(raw)
@@ -70,6 +87,18 @@ func LoadConfig(lookup brokerzerodha.LookupEnv) (Config, error) {
 }
 
 func New(ctx context.Context, config Config, dependencies Dependencies) (*Application, error) {
+	if strings.TrimSpace(config.Repository) == "" {
+		config.Repository = "."
+	}
+	if strings.TrimSpace(config.ValidationCommand) == "" {
+		config.ValidationCommand = "tradeedge-validation"
+	}
+	if strings.TrimSpace(config.ShadowReadinessURL) == "" {
+		config.ShadowReadinessURL = "http://127.0.0.1:8080/readyz"
+	}
+	if config.StartupTimeout <= 0 {
+		config.StartupTimeout = 60 * time.Second
+	}
 	store, err := sessionfile.New(config.SessionFile)
 	if err != nil {
 		return nil, errors.New("configure session store")
@@ -86,7 +115,21 @@ func New(ctx context.Context, config Config, dependencies Dependencies) (*Applic
 	if err != nil {
 		return nil, errors.New("configure session service")
 	}
-	handler := NewHandler(service)
+	startup := dependencies.Startup
+	if startup == nil {
+		runtime := dependencies.Runtime
+		if runtime == nil {
+			runtime, err = runtimecompose.New(config.Repository)
+			if err != nil {
+				return nil, errors.New("configure Compose runtime manager")
+			}
+		}
+		startup, err = newLifecycle(config, service, clock, runtime)
+		if err != nil {
+			return nil, errors.New("configure startup lifecycle")
+		}
+	}
+	handler := NewHandler(service, startup)
 	return &Application{config: config, service: service, handler: handler}, nil
 }
 

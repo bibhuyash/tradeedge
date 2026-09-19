@@ -17,6 +17,7 @@ import (
 	"time"
 
 	brokerzerodha "github.com/bibhuyash/tradeedge/internal/adapters/broker/zerodha"
+	"github.com/bibhuyash/tradeedge/internal/adapters/sessionfile"
 	"github.com/bibhuyash/tradeedge/internal/session"
 )
 
@@ -32,6 +33,42 @@ type acceptanceClock struct{ now time.Time }
 func (c acceptanceClock) Now() time.Time { return c.now }
 
 func TestZerodhaSessionV2Acceptance(t *testing.T) {
+	t.Run("expired persisted session exchanges once and becomes authenticated", func(t *testing.T) {
+		var exchanges atomic.Int32
+		provider := fakeZerodha(t, func(writer http.ResponseWriter, request *http.Request) {
+			exchanges.Add(1)
+			assertExchangeRequest(t, request)
+			writeProvider(writer, http.StatusOK, `{"status":"success","data":{"access_token":"`+testAccessToken+`"}}`)
+		})
+		defer provider.Close()
+		directory := t.TempDir()
+		path := filepath.Join(directory, "zerodha-session.json")
+		clock := acceptanceClock{now: time.Date(2026, 9, 19, 4, 0, 0, 0, time.UTC)}
+		store, err := sessionfile.New(path)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if err = store.Save(context.Background(), session.Record{Provider: session.ProviderZerodha, AccessToken: "expired-access", AuthenticatedAt: clock.now.Add(-24 * time.Hour), ExpiresAt: clock.now.Add(-time.Hour)}); err != nil {
+			t.Fatal(err)
+		}
+		control := newAcceptanceServer(t, acceptanceConfig(path, provider.URL, time.Second), provider, clock)
+		defer control.Close()
+		if status := getStatus(t, control.URL); status.State != session.StateExpired {
+			t.Fatalf("state=%s", status.State)
+		}
+		code, body := exchange(t, control.URL, testRequestToken)
+		if code != http.StatusOK {
+			t.Fatalf("exchange=%d %s", code, body)
+		}
+		assertSecretSafe(t, body)
+		if status := getStatus(t, control.URL); status.State != session.StateAuthenticated || exchanges.Load() != 1 {
+			t.Fatalf("status=%#v exchanges=%d", status, exchanges.Load())
+		}
+		stored, err := store.Load(context.Background())
+		if err != nil || stored.AccessToken != testAccessToken {
+			t.Fatalf("stored=%#v err=%v", stored, err)
+		}
+	})
 	t.Run("new install login once and restart reuse", func(t *testing.T) {
 		var exchanges atomic.Int32
 		provider := fakeZerodha(t, func(writer http.ResponseWriter, request *http.Request) {

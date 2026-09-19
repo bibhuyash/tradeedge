@@ -6,7 +6,6 @@ services:
       - "127.0.0.1:3000:3000"
     depends_on:
       - tradeedge-control
-      - tradeedge-shadow
     restart: unless-stopped
     security_opt:
       - no-new-privileges:true
@@ -18,18 +17,13 @@ services:
       - SETGID
 
   tradeedge-control:
-    image: golang:1.23.4-bookworm@sha256:95db116434e3f21a2a15600ffc7169bf380c6bfd021b154d106fcb346721c277
+    build:
+      context: .
+      dockerfile: cmd/tradeedge-control/Dockerfile
     platform: linux/amd64
     init: true
     restart: unless-stopped
     working_dir: /workspace
-    command:
-      - sh
-      - -c
-      - |
-        set -eu
-        go build -buildvcs=true -o /tmp/tradeedge-control ./cmd/tradeedge-control
-        exec /tmp/tradeedge-control
     ports:
       - "127.0.0.1:8081:8081"
     volumes:
@@ -40,10 +34,17 @@ services:
       - type: bind
         source: ./.cache/tradeedge/session
         target: /var/lib/tradeedge/session
+      - type: bind
+        source: ./.cache
+        target: /workspace/.cache
     environment:
       TRADEEDGE_CONTROL_HTTP_ADDR: :8081
       TRADEEDGE_SHUTDOWN_TIMEOUT: ${TRADEEDGE_SHUTDOWN_TIMEOUT:-10s}
       TRADEEDGE_ZERODHA_SESSION_FILE: /var/lib/tradeedge/session/zerodha.json
+      TRADEEDGE_REPOSITORY: /workspace
+      TRADEEDGE_VALIDATION_COMMAND: /usr/local/bin/tradeedge-validation
+      TRADEEDGE_SHADOW_READINESS_URL: http://tradeedge-shadow:8080/readyz
+      TRADEEDGE_HOST_REPOSITORY: ${PWD}
       TRADEEDGE_ZERODHA_API_KEY: ${TRADEEDGE_ZERODHA_API_KEY:?required}
       TRADEEDGE_ZERODHA_API_SECRET: ${TRADEEDGE_ZERODHA_API_SECRET:?required}
       TRADEEDGE_ZERODHA_BASE_URL: ${TRADEEDGE_ZERODHA_BASE_URL:-https://api.kite.trade}
@@ -219,14 +220,14 @@ services:
       - "127.0.0.1:8080:8080"
     volumes:
       - type: bind
-        source: .
+        source: ${TRADEEDGE_HOST_REPOSITORY:-.}
         target: /workspace
         read_only: true
       - type: bind
-        source: ./.cache/market-validation/shadow-checkpoint
+        source: ${TRADEEDGE_HOST_REPOSITORY:-.}/.cache/market-validation/shadow-checkpoint
         target: /var/lib/tradeedge/checkpoint
       - type: bind
-        source: ./.cache/tradeedge/session
+        source: ${TRADEEDGE_HOST_REPOSITORY:-.}/.cache/tradeedge/session
         target: /var/lib/tradeedge/session
         read_only: true
       - type: tmpfs
