@@ -522,7 +522,7 @@ func TestVerifyWebSocketDisconnect(t *testing.T) {
 	dependencies := websocketDependencies(now, &fakeMarketDialer{connection: connection})
 	var output bytes.Buffer
 	err := run([]string{"verify-websocket", "-runtime-bundle", "pinned.json", "-timeout", "1s"}, mapLookup(restoredCredentialValues(now)), &output, dependencies)
-	if !errors.Is(err, errWebSocketVerification) || !strings.Contains(output.String(), "OBSERVATIONS_RECEIVED=1") || !strings.Contains(output.String(), "SHUTDOWN=PASS") {
+	if !errors.Is(err, errWebSocketVerification) || !strings.Contains(output.String(), "WEBSOCKET_AUTH=FAIL") || !strings.Contains(output.String(), "SHUTDOWN=PASS") {
 		t.Fatalf("error=%v output=%q", err, output.String())
 	}
 }
