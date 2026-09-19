@@ -82,7 +82,8 @@ func NewMock() http.Handler {
 
 type mockSource struct{ scenario string }
 
-func (s mockSource) Snapshot() shadowruntime.Snapshot { return shadowruntime.Snapshot{Revision: 1} }
+func (s mockSource) Snapshot() shadowruntime.Snapshot                           { return shadowruntime.Snapshot{Revision: 1} }
+func (s mockSource) RecentEvaluations(int) ([]shadowruntime.Evaluation, uint64) { return nil, 0 }
 func (s mockSource) Status() []shadowruntime.UnderlyingStatus {
 	result := []shadowruntime.UnderlyingStatus{}
 	if s.scenario == "empty" {

@@ -5,6 +5,9 @@ export type Runtime = { mode: string; strategy: string; candidate: string; quali
 export type Underlying = { underlying: string; market_data: string; future: string; option_universe: string; strategy: string; warmup_samples: number; warmup_required: number }
 export type Ready = { status: string; market_data_state: string; trading_permitted: boolean }
 export type IntegrationStatus = { stream: { state?: string } }
+export type Evaluation = { strategy: string; candidate: string; underlying: string; evaluated_at: string; frame_id: string; decision: string; reason: string }
+export type Signal = { Underlying: string; SignalTime: string; Direction: string; OptionID: string; Entry: { PriceMinor: number }; Risk: string; RiskReason: string }
+export type QualificationSeries = { Underlying: string; Records?: Signal[]; Open?: { OptionID: string; Quantity: number; EntryMinor: number; CurrentMarkMinor: number }; Trades?: { GrossPnLMinor: number }[] }
 type RuntimeResponse = { Mode?: string; Strategy?: string; Candidate?: string; Qualification?: string; Revision?: number; BrokerOrders?: string; Status?: Underlying[] }
 
 export class APIError extends Error { constructor(message: string) { super(message) } }
@@ -43,4 +46,7 @@ export const api = {
   },
   readiness: () => request<Ready>('/shadow/readyz'),
   integrationStatus: () => request<IntegrationStatus>('/shadow/api/v1/integrations/zerodha/status'),
+  evaluations: () => request<{ items: Evaluation[]; count: number }>('/shadow/api/v1/shadow/evaluations?limit=100'),
+  signals: () => request<Signal[] | null>('/shadow/api/v1/qualification/signals/recent?limit=100'),
+  qualification: () => request<QualificationSeries[]>('/shadow/api/v1/qualification/strategies'),
 }
