@@ -1,9 +1,16 @@
 import { spawn as nodeSpawn } from 'node:child_process'
 import { fileURLToPath } from 'node:url'
 import path from 'node:path'
-import { mkdir, readFile } from 'node:fs/promises'
 
+const HEALTH_URL = 'http://127.0.0.1:8081/healthz'
 const delay = (milliseconds) => new Promise((resolve) => setTimeout(resolve, milliseconds))
+
+export function resolveDevelopmentPaths(scriptUrl = import.meta.url) {
+  const scriptDirectory = path.dirname(fileURLToPath(scriptUrl))
+  const webDirectory = path.dirname(scriptDirectory)
+  const repository = path.dirname(webDirectory)
+  return { repository, webDirectory, composeFile: path.join(repository, 'compose.yaml'), envFile: path.join(repository, '.env') }
+}
 
 export async function runCommand(spawn, command, args, options = {}) {
   return await new Promise((resolve, reject) => {
@@ -13,82 +20,84 @@ export async function runCommand(spawn, command, args, options = {}) {
   })
 }
 
-export async function waitForControl(fetcher, { attempts = 40, interval = 500 } = {}) {
-  let lastError
-  for (let attempt = 0; attempt < attempts; attempt += 1) {
-    try {
-      const response = await fetcher('http://127.0.0.1:8081/healthz', { signal: AbortSignal.timeout(2_000) })
-      if (response.ok) return
-      lastError = new Error(`control plane returned HTTP ${response.status}`)
-    } catch (error) { lastError = error }
-    await delay(interval)
-  }
-  throw new Error(`control plane did not become healthy: ${lastError instanceof Error ? lastError.message : 'unreachable'}`)
+export async function captureCommand(spawn, command, args, options = {}) {
+  return await new Promise((resolve, reject) => {
+    const child = spawn(command, args, { stdio: ['ignore', 'pipe', 'pipe'], ...options })
+    let stdout = ''; let stderr = ''
+    child.stdout?.on('data', (chunk) => { stdout += chunk })
+    child.stderr?.on('data', (chunk) => { stderr += chunk })
+    child.once('error', reject)
+    child.once('exit', (code) => code === 0 ? resolve({ stdout, stderr }) : reject(new Error(`${command} exited with code ${code ?? 'unknown'}: ${stderr.trim() || stdout.trim()}`)))
+  })
 }
 
-async function controlAvailable(fetcher) {
+function composeArgs(paths, ...args) { return ['compose', '--file', paths.composeFile, '--env-file', paths.envFile, ...args] }
+
+export async function inspectControl(spawn, paths) {
+  const { stdout } = await captureCommand(spawn, 'docker', composeArgs(paths, 'ps', '--all', '--format', 'json', 'tradeedge-control'), { cwd: paths.repository })
+  const records = stdout.trim().split(/\r?\n/).filter(Boolean).flatMap((line) => {
+    try { const value = JSON.parse(line); return Array.isArray(value) ? value : [value] } catch { return [] }
+  })
+  const record = records[0]
+  if (!record) return { state: 'missing', health: 'missing', exitCode: null }
+  return { state: String(record.State ?? record.Status ?? 'unknown').toLowerCase(), health: String(record.Health || 'none').toLowerCase(), exitCode: record.ExitCode ?? null }
+}
+
+async function probeControl(fetcher) {
   try {
-    const response = await fetcher('http://127.0.0.1:8081/healthz', { signal: AbortSignal.timeout(1_000) })
-    return response.ok
-  } catch {
-    return false
-  }
-}
-
-export function parseDotenv(contents) {
-  const result = {}
-  for (const raw of contents.split(/\r?\n/)) {
-    const line = raw.trim()
-    if (!line || line.startsWith('#')) continue
-    const split = line.indexOf('=')
-    if (split < 1) continue
-    let value = line.slice(split + 1).trim()
-    if ((value.startsWith('"') && value.endsWith('"')) || (value.startsWith("'") && value.endsWith("'"))) value = value.slice(1, -1)
-    result[line.slice(0, split).trim()] = value
-  }
-  return result
-}
-
-export async function startControl(spawn, repository) {
-  const binaryDirectory = path.join(repository, '.cache', 'dev-bin')
-  const executableSuffix = process.platform === 'win32' ? '.exe' : ''
-  const validationBinary = path.join(binaryDirectory, `tradeedge-validation${executableSuffix}`)
-  const controlBinary = path.join(binaryDirectory, `tradeedge-control${executableSuffix}`)
-  await mkdir(binaryDirectory, { recursive: true })
-  await runCommand(spawn, 'go', ['build', '-o', validationBinary, './cmd/tradeedge-validation'], { cwd: repository })
-  await runCommand(spawn, 'go', ['build', '-o', controlBinary, './cmd/tradeedge-control'], { cwd: repository })
-
-  const environment = {
-    ...process.env,
-    ...parseDotenv(await readFile(path.join(repository, '.env'), 'utf8')),
-    TRADEEDGE_REPOSITORY: repository,
-    TRADEEDGE_VALIDATION_COMMAND: validationBinary,
-    TRADEEDGE_SHADOW_READINESS_URL: 'http://127.0.0.1:8080/readyz',
-  }
-  const control = spawn(controlBinary, [], { cwd: repository, env: environment, detached: true, stdio: 'ignore' })
-  control.once('error', () => {})
-  control.unref()
-}
-
-export async function launch({ spawn = nodeSpawn, fetcher = fetch, node = process.execPath, webDirectory, log = console } = {}) {
-  const resolvedWeb = webDirectory ?? path.dirname(path.dirname(fileURLToPath(import.meta.url)))
-  const repository = path.dirname(resolvedWeb)
-  try {
-    await runCommand(spawn, 'docker', ['version', '--format', '{{.Server.Version}}'], { cwd: repository })
-  } catch {
-    throw new Error('Docker is unavailable. Start Docker Desktop, then run npm run dev again.')
-  }
-  try {
-    await runCommand(spawn, 'docker', ['compose', '--env-file', '.env', 'stop', 'tradeedge-console', 'tradeedge-control'], { cwd: repository })
-    if (!await controlAvailable(fetcher)) await startControl(spawn, repository)
-    await waitForControl(fetcher)
+    const response = await fetcher(HEALTH_URL, { signal: AbortSignal.timeout(2_000) })
+    return response.ok ? { reachable: true, reason: 'healthy' } : { reachable: false, reason: `HTTP_${response.status}` }
   } catch (error) {
-    try { await runCommand(spawn, 'docker', ['compose', '--env-file', '.env', 'logs', '--tail', '40', 'tradeedge-control'], { cwd: repository }) } catch { /* diagnostics are best effort */ }
-    throw error
+    const code = error?.cause?.code ?? error?.code
+    const reason = code === 'ECONNREFUSED' || /refused/i.test(error?.message ?? '') ? 'connection_refused' : (error instanceof Error ? error.message : 'unreachable')
+    return { reachable: false, reason }
   }
+}
+
+export async function waitForControl(fetcher, inspect, { attempts = 40, interval = 500, sleep = delay } = {}) {
+  let lastProbe = { reason: 'not_probed' }; let lastContainer = { state: 'unknown', health: 'unknown', exitCode: null }
+  for (let attempt = 0; attempt < attempts; attempt += 1) {
+    lastProbe = await probeControl(fetcher)
+    if (lastProbe.reachable) return
+    lastContainer = await inspect()
+    if (lastContainer.state === 'exited' || lastContainer.state === 'dead') {
+      const error = new Error(`container exited${lastContainer.exitCode == null ? '' : ` with code ${lastContainer.exitCode}`}`)
+      error.diagnostics = { container: lastContainer, health: lastContainer.health, reason: error.message }
+      throw error
+    }
+    if (attempt + 1 < attempts) await sleep(interval)
+  }
+  const health = lastContainer.health === 'unhealthy' ? 'unhealthy' : 'timeout'
+  const error = new Error(`control-plane health timed out after ${attempts} attempts: ${lastProbe.reason}`)
+  error.diagnostics = { container: lastContainer, health, reason: error.message }
+  throw error
+}
+
+async function reportFailure(spawn, paths, error, log) {
+  let container = error?.diagnostics?.container
+  if (!container) { try { container = await inspectControl(spawn, paths) } catch { container = { state: 'unknown', health: 'unknown' } } }
+  log.error('CONTROL_PLANE_START=FAIL')
+  log.error(`CONTAINER_STATE=${container.state ?? 'unknown'}`)
+  log.error(`HEALTH=${error?.diagnostics?.health ?? container.health ?? 'unknown'}`)
+  log.error(`REASON=${error instanceof Error ? error.message : String(error)}`)
+  try { await runCommand(spawn, 'docker', composeArgs(paths, 'logs', '--tail', '40', 'tradeedge-control'), { cwd: paths.repository }) } catch { /* best effort */ }
+}
+
+export async function ensureControl({ spawn, fetcher, paths, log, waitOptions } = {}) {
+  const currentProbe = await probeControl(fetcher)
+  const current = await inspectControl(spawn, paths)
+  if (currentProbe.reachable && current.state === 'running') { log.info('TradeEdge control plane is already healthy; reusing it.'); return }
+  await captureCommand(spawn, 'docker', composeArgs(paths, 'up', '-d', 'tradeedge-control'), { cwd: paths.repository })
+  await waitForControl(fetcher, () => inspectControl(spawn, paths), waitOptions)
+}
+
+export async function launch({ spawn = nodeSpawn, fetcher = fetch, node = process.execPath, paths = resolveDevelopmentPaths(), log = console, waitOptions } = {}) {
+  try { await runCommand(spawn, 'docker', ['version', '--format', '{{.Server.Version}}'], { cwd: paths.repository }) }
+  catch { throw new Error('Docker is unavailable. Start Docker Desktop, then run npm run dev again.') }
+  try { await ensureControl({ spawn, fetcher, paths, log, waitOptions }) }
+  catch (error) { await reportFailure(spawn, paths, error, log); throw error }
   log.info('TradeEdge control plane is ready. Starting operator console…')
-  const viteEntry = path.join(resolvedWeb, 'node_modules', 'vite', 'bin', 'vite.js')
-  const vite = spawn(node, [viteEntry], { cwd: resolvedWeb, stdio: 'inherit' })
+  const vite = spawn(node, [path.join(paths.webDirectory, 'node_modules', 'vite', 'bin', 'vite.js')], { cwd: paths.webDirectory, stdio: 'inherit' })
   const stop = () => { if (!vite.killed) vite.kill('SIGINT') }
   process.once('SIGINT', stop); process.once('SIGTERM', stop)
   return await new Promise((resolve, reject) => {
