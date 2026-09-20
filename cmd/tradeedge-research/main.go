@@ -16,6 +16,7 @@ import (
 	"github.com/bibhuyash/tradeedge/internal/domain"
 	"github.com/bibhuyash/tradeedge/internal/research/backtest"
 	"github.com/bibhuyash/tradeedge/internal/research/cost"
+	"github.com/bibhuyash/tradeedge/internal/research/dataset"
 	"github.com/bibhuyash/tradeedge/internal/research/features"
 	"github.com/bibhuyash/tradeedge/internal/research/model"
 	"github.com/bibhuyash/tradeedge/internal/research/report"
@@ -43,6 +44,9 @@ func main() {
 	}
 }
 func run(args []string, stdout io.Writer) error {
+	if len(args) > 0 && args[0] == "dataset" {
+		return runDataset(args[1:], stdout)
+	}
 	set := flag.NewFlagSet("tradeedge-research", flag.ContinueOnError)
 	set.SetOutput(io.Discard)
 	datasetPath := set.String("dataset", "", "versioned historical dataset JSON")
@@ -99,6 +103,61 @@ func run(args []string, stdout io.Writer) error {
 		return err
 	}
 	_, err = stdout.Write(append(raw, '\n'))
+	return err
+}
+
+func runDataset(args []string, stdout io.Writer) error {
+	if len(args) == 0 {
+		return errors.New("usage: tradeedge-research dataset <import|validate|inspect>")
+	}
+	switch args[0] {
+	case "import":
+		set := flag.NewFlagSet("dataset import", flag.ContinueOnError)
+		set.SetOutput(io.Discard)
+		input := set.String("input", "", "historical observations CSV")
+		instruments := set.String("instrument-master", "", "point-in-time instrument CSV")
+		calendarPath := set.String("calendar", "", "explicit calendar JSON")
+		output := set.String("output", "", "canonical dataset JSON")
+		source := set.String("source", "", "source name")
+		sourceVersion := set.String("source-version", "", "source version")
+		interval := set.Int("interval-minutes", 1, "expected interval")
+		if set.Parse(args[1:]) != nil || set.NArg() != 0 || *input == "" || *instruments == "" || *calendarPath == "" || *output == "" || *source == "" {
+			return errors.New("usage: tradeedge-research dataset import --input <csv> --instrument-master <csv> --calendar <json> --output <json> --source <name>")
+		}
+		cal, err := dataset.LoadCalendar(*calendarPath)
+		if err != nil {
+			return fmt.Errorf("load calendar: %w", err)
+		}
+		artifact, err := dataset.ImportCSV(*input, *instruments, cal, dataset.ImportConfig{Source: *source, SourceVersion: *sourceVersion, IntervalMinutes: *interval})
+		if err != nil {
+			return fmt.Errorf("import dataset: %w", err)
+		}
+		if err = dataset.Save(*output, artifact); err != nil {
+			return fmt.Errorf("save dataset: %w", err)
+		}
+		return printDatasetSummary(stdout, artifact)
+	case "validate", "inspect":
+		set := flag.NewFlagSet("dataset "+args[0], flag.ContinueOnError)
+		set.SetOutput(io.Discard)
+		path := set.String("dataset", "", "canonical dataset JSON")
+		if set.Parse(args[1:]) != nil || set.NArg() != 0 || *path == "" {
+			return errors.New("usage: tradeedge-research dataset " + args[0] + " --dataset <json>")
+		}
+		artifact, err := dataset.Load(*path)
+		if err != nil {
+			return fmt.Errorf("load dataset: %w", err)
+		}
+		if err = dataset.ValidateArtifact(artifact); err != nil {
+			return fmt.Errorf("validate dataset: %w", err)
+		}
+		return printDatasetSummary(stdout, artifact)
+	default:
+		return errors.New("usage: tradeedge-research dataset <import|validate|inspect>")
+	}
+}
+
+func printDatasetSummary(w io.Writer, d dataset.CanonicalDataset) error {
+	_, err := fmt.Fprintf(w, "DATASET_VERSION=%s\nOBSERVATIONS=%d\nTRADING_DAYS=%d\nQUALITY=%s\n", d.Manifest.DatasetVersion, len(d.Observations), d.Quality.TradingDaysPresent, d.Quality.QualificationState)
 	return err
 }
 func decodeConfig(raw []byte) (runConfig, error) {
