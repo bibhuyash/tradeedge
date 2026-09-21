@@ -53,6 +53,8 @@ services:
       TRADEEDGE_ZERODHA_READ_RETRIES: "0"
       TRADEEDGE_ZERODHA_MAPPING_MAX_AGE: ${TRADEEDGE_ZERODHA_MAPPING_MAX_AGE:-24h}
       TRADEEDGE_ZERODHA_READ_ONLY: "true"
+      TRADEEDGE_TELEGRAM_BOT_TOKEN: ${TRADEEDGE_TELEGRAM_BOT_TOKEN:?required}
+      TRADEEDGE_TELEGRAM_CHAT_ID: ${TRADEEDGE_TELEGRAM_CHAT_ID:?required}
     healthcheck:
       test: ["CMD", "curl", "--fail", "--silent", "http://127.0.0.1:8081/healthz"]
       interval: 5s

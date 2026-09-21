@@ -10,23 +10,24 @@ function spawnForStates(states, calls = []) { return vi.fn((command, args) => { 
 const quiet = () => ({ info: vi.fn(), error: vi.fn() })
 
 describe('development launcher', () => {
-  it('reuses a healthy control plane without stopping or recreating it', async () => {
+  it('refreshes the control-plane image and reuses it without an explicit stop', async () => {
     const calls = []; const spawn = spawnForStates([{ State: 'running', Health: 'healthy' }], calls)
     await launch({ spawn, fetcher: vi.fn(async () => ({ ok: true })), node: '/node', paths, log: quiet() })
-    expect(calls.flat().join(' ')).not.toMatch(/\bstop\b|\bup\b/)
+		expect(calls.some((call) => call.includes('up') && call.includes('--build') && call.includes('tradeedge-control'))).toBe(true)
+		expect(calls.flat().join(' ')).not.toMatch(/\bstop\b/)
   })
 
-  it.each([['stopped', { State: 'exited', Health: '', ExitCode: 0 }], ['missing', null]])('starts a %s control plane with compose up', async (_name, initial) => {
-    const calls = []; const spawn = spawnForStates([initial], calls)
+	it.each(['stopped', 'missing'])('starts a %s control plane with compose up', async () => {
+		const calls = []; const spawn = spawnForStates([{ State: 'running', Health: 'starting' }], calls)
     const fetcher = vi.fn().mockRejectedValueOnce(Object.assign(new Error('connect ECONNREFUSED'), { code: 'ECONNREFUSED' })).mockResolvedValue({ ok: true })
-    await ensureControl({ spawn, fetcher, paths, log: quiet(), waitOptions: { attempts: 2, interval: 0 } })
+    await ensureControl({ spawn, fetcher, paths, log: quiet(), waitOptions: { attempts: 3, interval: 0 } })
     expect(calls.some((call) => call.includes('up') && call.includes('-d') && call.includes('tradeedge-control'))).toBe(true)
   })
 
   it('performs bounded recovery for an unhealthy control plane', async () => {
     const calls = []; const spawn = spawnForStates([{ State: 'running', Health: 'unhealthy' }, { State: 'running', Health: 'starting' }], calls)
     const fetcher = vi.fn().mockResolvedValueOnce({ ok: false, status: 503 }).mockResolvedValueOnce({ ok: false, status: 503 }).mockResolvedValue({ ok: true })
-    await ensureControl({ spawn, fetcher, paths, log: quiet(), waitOptions: { attempts: 2, interval: 0 } })
+		await ensureControl({ spawn, fetcher, paths, log: quiet(), waitOptions: { attempts: 3, interval: 0 } })
     expect(fetcher).toHaveBeenCalledTimes(3); expect(calls.some((call) => call.includes('up'))).toBe(true)
   })
 
@@ -53,9 +54,16 @@ describe('development launcher', () => {
   })
 
   it('starts Vite only after the control plane is reachable', async () => {
-    const sequence = []; const spawn = vi.fn((command, args) => { if (args?.includes('ps')) return child({ stdout: `${JSON.stringify({ State: 'exited', Health: '', ExitCode: 0 })}\n` }); if (command === '/node') sequence.push('vite'); return child() })
+		const sequence = []; const spawn = vi.fn((command, args) => { if (args?.includes('ps')) return child({ stdout: `${JSON.stringify({ State: 'running', Health: 'starting', ExitCode: 0 })}\n` }); if (command === '/node') sequence.push('vite'); return child() })
     const fetcher = vi.fn().mockImplementationOnce(async () => { sequence.push('initial-fail'); throw new Error('refused') }).mockImplementationOnce(async () => { sequence.push('health-ok'); return { ok: true } })
-    await launch({ spawn, fetcher, node: '/node', paths, log: quiet(), waitOptions: { attempts: 1, interval: 0 } }); expect(sequence).toEqual(['initial-fail', 'health-ok', 'vite'])
+    await launch({ spawn, fetcher, node: '/node', paths, log: quiet(), waitOptions: { attempts: 2, interval: 0 } }); expect(sequence).toEqual(['initial-fail', 'health-ok', 'vite'])
+  })
+
+  it('never polls the runtime port before Vite starts', async () => {
+    const urls = []; const fetcher = vi.fn(async (url) => { urls.push(String(url)); return { ok: true } })
+    await launch({ spawn: spawnForStates([{ State: 'running', Health: 'healthy' }]), fetcher, node: '/node', paths, log: quiet() })
+    expect(urls.filter((url) => url.includes(':8080'))).toHaveLength(0)
+    expect(urls.every((url) => url.includes(':8081'))).toBe(true)
   })
 
   it('distinguishes an exited container during polling', async () => {

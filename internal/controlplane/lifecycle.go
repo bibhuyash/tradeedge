@@ -41,6 +41,10 @@ type marketSource struct {
 	now        func() time.Time
 }
 
+func (m marketSource) TradingDate() string {
+	return m.now().In(time.FixedZone("IST", 19800)).Format("2006-01-02")
+}
+
 func (m marketSource) Closed(ctx context.Context) (bool, string, error) {
 	if err := ctx.Err(); err != nil {
 		return false, "", err
@@ -68,6 +72,30 @@ type readinessClient struct {
 	client  *http.Client
 	timeout time.Duration
 }
+
+// delegatedRuntime keeps Docker ownership on the host-side development
+// launcher. The control plane reports lifecycle intent and observes readiness;
+// it never needs access to the Docker daemon.
+type delegatedRuntime struct{ readiness readinessClient }
+
+func (r delegatedRuntime) Status(ctx context.Context) (bool, bool, error) {
+	request, err := http.NewRequestWithContext(ctx, http.MethodGet, r.readiness.url, nil)
+	if err != nil {
+		return false, false, err
+	}
+	response, err := r.readiness.client.Do(request)
+	if err != nil {
+		return false, false, nil
+	}
+	defer response.Body.Close()
+	var body struct {
+		Status string `json:"status"`
+	}
+	ready := response.StatusCode == http.StatusOK && json.NewDecoder(response.Body).Decode(&body) == nil && body.Status == "ready"
+	return true, ready, nil
+}
+
+func (delegatedRuntime) StartShadow(context.Context) error { return nil }
 
 func (r readinessClient) Ready(ctx context.Context) (bool, error) {
 	deadline := time.NewTimer(r.timeout)
@@ -111,5 +139,9 @@ func newPreparationConfig(config Config, clock session.Clock) preparation.Config
 }
 
 func newLifecycle(config Config, service *session.Service, clock session.Clock, runtime operatorstartup.RuntimeManager) (*operatorstartup.Service, error) {
-	return operatorstartup.New(preparationSource{config: newPreparationConfig(config, clock), runner: preparation.CommandRunner{Directory: config.Repository}}, runtime, readinessClient{url: config.ShadowReadinessURL, client: &http.Client{Timeout: 2 * time.Second}, timeout: config.StartupTimeout}, sessionSource{service}, marketSource{policyPath: filepath.Join(config.Repository, ".cache", "market-validation", "config", "nse-calendar-policy-2026.json"), now: clock.Now})
+	readiness := readinessClient{url: config.ShadowReadinessURL, client: &http.Client{Timeout: 2 * time.Second}, timeout: config.StartupTimeout}
+	if runtime == nil {
+		runtime = delegatedRuntime{readiness: readiness}
+	}
+	return operatorstartup.New(preparationSource{config: newPreparationConfig(config, clock), runner: preparation.CommandRunner{Directory: config.Repository}}, runtime, readiness, sessionSource{service}, marketSource{policyPath: filepath.Join(config.Repository, ".cache", "market-validation", "config", "nse-calendar-policy-2026.json"), now: clock.Now})
 }

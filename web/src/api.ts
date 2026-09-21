@@ -10,11 +10,28 @@ export type Signal = { Underlying: string; SignalTime: string; Direction: string
 export type QualificationSeries = { Underlying: string; Records?: Signal[]; Open?: { OptionID: string; Quantity: number; EntryMinor: number; CurrentMarkMinor: number }; Trades?: { GrossPnLMinor: number }[] }
 export type Startup = { state: 'LOGIN_REQUIRED'|'AUTHENTICATED'|'PREPARING'|'STARTING_SHADOW'|'WAITING_FOR_READINESS'|'READY'|'MARKET_CLOSED'|'FAILED'; current_step?: string; reason?: string; steps: { name: string; state: string; error?: string }[] }
 type RuntimeResponse = { Mode?: string; Strategy?: string; Candidate?: string; Qualification?: string; Revision?: number; BrokerOrders?: string; Status?: Underlying[] }
+export type TopLevelView = 'CONTROL_UNAVAILABLE'|'LOGIN'|'MARKET_CLOSED'|'PREPARING'|'FAILED'|'RUNTIME'
+export type OperatorState = { view: TopLevelView; session: Session; startup: Startup }
 
 export class APIError extends Error { constructor(message: string) { super(message) } }
 export function runtimePollingEnabled(state: Startup['state'] | 'RUNNING' | undefined): boolean { return state === 'READY' || state === 'RUNNING' }
 export function systemDisplayState(controlUnavailable: boolean): string { return controlUnavailable ? 'OFFLINE' : 'ONLINE' }
 export function clearRequestToken(input: { value: string } | null): void { if (input) input.value = '' }
+export async function continueAfterAuthentication(token: string, input: { value: string } | null, operations: { exchange: (token: string) => Promise<unknown>; refreshSession: () => Promise<unknown>; start: () => Promise<unknown>; refreshStartup: () => Promise<unknown> }): Promise<void> {
+  await operations.exchange(token)
+  clearRequestToken(input)
+  await operations.refreshSession()
+  await operations.start()
+  await operations.refreshStartup()
+}
+export function topLevelView(controlUnavailable: boolean, sessionState: string | undefined, startupState: Startup['state'] | undefined): TopLevelView {
+  if (controlUnavailable || sessionState === undefined || startupState === undefined) return 'CONTROL_UNAVAILABLE'
+  if (sessionState !== 'AUTHENTICATED') return 'LOGIN'
+  if (startupState === 'MARKET_CLOSED') return 'MARKET_CLOSED'
+  if (startupState === 'FAILED') return 'FAILED'
+  if (['LOGIN_REQUIRED', 'AUTHENTICATED', 'PREPARING', 'STARTING_SHADOW', 'WAITING_FOR_READINESS'].includes(startupState)) return 'PREPARING'
+  return 'RUNTIME'
+}
 export function integrationDisplayState(sessionState: string | undefined, status: IntegrationStatus | undefined, unavailable: boolean): string {
   if (sessionState === 'LOGIN_REQUIRED' || sessionState === 'EXPIRED') return 'OFFLINE'
   if (unavailable || status === undefined) return 'UNAVAILABLE'
@@ -40,6 +57,7 @@ export const api = {
   loginURL: () => request<{ login_url: string }>('/control/api/v1/session/login-url'),
   exchange: (requestToken: string) => request<Session>('/control/api/v1/session/exchange', { method: 'POST', body: JSON.stringify({ request_token: requestToken }) }),
   startup: async () => { const value = await request<Startup>('/control/api/v1/operator/startup'); shadowExpected = runtimePollingEnabled(value.state); return value },
+  operatorState: async () => { const value = await request<OperatorState>('/control/api/v1/operator/state'); shadowExpected = runtimePollingEnabled(value.startup.state); return value },
   start: async () => { const value = await request<Startup>('/control/api/v1/operator/startup', { method: 'POST' }); shadowExpected = runtimePollingEnabled(value.state); return value },
   observations: () => shadowRequest<{ items: Observation[] }>('/shadow/api/v1/market-data/observations/latest'),
   marketReadiness: () => shadowRequest<Readiness>('/shadow/api/v1/market-data/readiness'),

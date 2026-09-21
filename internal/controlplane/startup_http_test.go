@@ -90,3 +90,37 @@ func TestStartupResponseDoesNotExposeSecrets(t *testing.T) {
 		}
 	}
 }
+
+func TestMarketClosedPostTriggersReevaluation(t *testing.T) {
+	startup := &httpStartup{status: operatorstartup.Status{State: operatorstartup.MarketClosed, Reason: "WEEKEND"}}
+	request := httptest.NewRequest(http.MethodPost, "/api/v1/operator/startup", nil)
+	response := httptest.NewRecorder()
+	NewHandler(httpSession{}, startup).ServeHTTP(response, request)
+	deadline := time.Now().Add(time.Second)
+	for time.Now().Before(deadline) {
+		startup.mu.Lock()
+		calls := startup.starts
+		startup.mu.Unlock()
+		if calls == 1 {
+			return
+		}
+		time.Sleep(time.Millisecond)
+	}
+	t.Fatal("market-closed lifecycle was not reevaluated")
+}
+
+func TestOperatorStateUsesAuthoritativePrecedence(t *testing.T) {
+	tests := []struct {
+		name    string
+		session session.Status
+		startup operatorstartup.Status
+		view    string
+	}{{"login beats weekend", session.Status{State: session.StateLoginRequired}, operatorstartup.Status{State: operatorstartup.MarketClosed, Reason: "WEEKEND"}, "LOGIN"}, {"expired beats holiday", session.Status{State: session.StateExpired}, operatorstartup.Status{State: operatorstartup.MarketClosed, Reason: "HOLIDAY"}, "LOGIN"}, {"authenticated closed", session.Status{State: session.StateAuthenticated}, operatorstartup.Status{State: operatorstartup.MarketClosed}, "MARKET_CLOSED"}, {"authenticated ready", session.Status{State: session.StateAuthenticated}, operatorstartup.Status{State: operatorstartup.Ready}, "RUNTIME"}}
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			if got := operatorView(test.session, test.startup); got != test.view {
+				t.Fatalf("view=%s", got)
+			}
+		})
+	}
+}

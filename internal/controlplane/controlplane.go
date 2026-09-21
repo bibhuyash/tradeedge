@@ -12,7 +12,6 @@ import (
 
 	brokerzerodha "github.com/bibhuyash/tradeedge/internal/adapters/broker/zerodha"
 	"github.com/bibhuyash/tradeedge/internal/adapters/sessionfile"
-	"github.com/bibhuyash/tradeedge/internal/operator/runtimecompose"
 	operatorstartup "github.com/bibhuyash/tradeedge/internal/operator/startup"
 	"github.com/bibhuyash/tradeedge/internal/session"
 )
@@ -118,12 +117,6 @@ func New(ctx context.Context, config Config, dependencies Dependencies) (*Applic
 	startup := dependencies.Startup
 	if startup == nil {
 		runtime := dependencies.Runtime
-		if runtime == nil {
-			runtime, err = runtimecompose.New(config.Repository)
-			if err != nil {
-				return nil, errors.New("configure Compose runtime manager")
-			}
-		}
 		startup, err = newLifecycle(config, service, clock, runtime)
 		if err != nil {
 			return nil, errors.New("configure startup lifecycle")

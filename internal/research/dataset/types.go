@@ -15,8 +15,10 @@ import (
 )
 
 const (
-	SchemaVersion         = "tradeedge.research.canonical-dataset/v1"
-	ManifestSchemaVersion = "tradeedge.research.dataset-manifest/v1"
+	SchemaVersion           = "tradeedge.research.canonical-dataset/v1"
+	ManifestSchemaVersion   = "tradeedge.research.dataset-manifest/v1"
+	SchemaVersionV2         = "tradeedge.research.canonical-dataset/v2"
+	ManifestSchemaVersionV2 = "tradeedge.research.dataset-manifest/v2"
 )
 
 var ErrInvalid = errors.New("invalid research dataset input")
@@ -46,6 +48,12 @@ const (
 	MissingRequiredReference     FindingCode = "MISSING_REQUIRED_REFERENCE"
 	NonMonotonicCumulativeVolume FindingCode = "NON_MONOTONIC_CUMULATIVE_VOLUME"
 	NonMonotonicOI               FindingCode = "NON_MONOTONIC_OI"
+	InvalidOHLC                  FindingCode = "INVALID_OHLC"
+	InvalidVolume                FindingCode = "INVALID_VOLUME"
+	InvalidOpenInterest          FindingCode = "INVALID_OPEN_INTEREST"
+	DuplicateContract            FindingCode = "DUPLICATE_CONTRACT"
+	ExpiryInconsistency          FindingCode = "EXPIRY_INCONSISTENCY"
+	MisalignedInterval           FindingCode = "MISALIGNED_INTERVAL"
 )
 
 type QualityFinding struct {
@@ -90,6 +98,21 @@ type Observation struct {
 	Raw               map[string]string `json:"raw,omitempty"`
 }
 
+// HistoricalBar is a completed source bar. Its values become observable only
+// at EndTime; StartTime is never treated as the information timestamp.
+type HistoricalBar struct {
+	SourceSequence int       `json:"source_sequence"`
+	InstrumentID   string    `json:"instrument_id"`
+	StartTime      time.Time `json:"start_time"`
+	EndTime        time.Time `json:"end_time"`
+	OpenMinor      int64     `json:"open_minor"`
+	HighMinor      int64     `json:"high_minor"`
+	LowMinor       int64     `json:"low_minor"`
+	CloseMinor     int64     `json:"close_minor"`
+	Volume         *int64    `json:"volume,omitempty"`
+	OpenInterest   *int64    `json:"open_interest,omitempty"`
+}
+
 func (o Observation) identity() string {
 	h := sha256.Sum256([]byte(o.InstrumentID + "|" + o.ExchangeTimestamp.UTC().Format(time.RFC3339Nano)))
 	return hex.EncodeToString(h[:])
@@ -98,9 +121,10 @@ func (o Observation) identity() string {
 type QualificationState string
 
 const (
-	Qualified QualificationState = "QUALIFIED"
-	Degraded  QualificationState = "DEGRADED"
-	Rejected  QualificationState = "REJECTED"
+	Qualified     QualificationState = "QUALIFIED"
+	ResearchReady QualificationState = "RESEARCH_READY"
+	Degraded      QualificationState = "DEGRADED"
+	Rejected      QualificationState = "REJECTED"
 )
 
 type Coverage struct {
@@ -123,6 +147,7 @@ type DatasetQualityReport struct {
 	FuturesCoverage     Coverage           `json:"futures_coverage"`
 	OptionsCoverage     Coverage           `json:"options_coverage"`
 	MissingIntervals    int                `json:"missing_intervals"`
+	MissingBars         int                `json:"missing_bars,omitempty"`
 	DuplicateEvents     int                `json:"duplicate_events"`
 	OutOfOrderEvents    int                `json:"out_of_order_events"`
 	InvalidRecords      int                `json:"invalid_records"`
@@ -134,17 +159,40 @@ type DatasetQualityReport struct {
 }
 
 type DatasetManifest struct {
-	SchemaVersion           string    `json:"schema_version"`
-	DatasetVersion          string    `json:"dataset_version"`
-	Source                  string    `json:"source"`
-	SourceVersion           string    `json:"source_version,omitempty"`
-	CalendarVersion         string    `json:"calendar_version"`
-	InstrumentMasterVersion string    `json:"instrument_master_version"`
-	Start                   time.Time `json:"start"`
-	End                     time.Time `json:"end"`
-	RecordCount             int       `json:"record_count"`
-	ContentChecksum         string    `json:"content_checksum"`
-	ConfigurationChecksum   string    `json:"configuration_checksum"`
+	SchemaVersion           string     `json:"schema_version"`
+	DatasetVersion          string     `json:"dataset_version"`
+	Source                  string     `json:"source"`
+	SourceVersion           string     `json:"source_version,omitempty"`
+	CalendarVersion         string     `json:"calendar_version"`
+	InstrumentMasterVersion string     `json:"instrument_master_version"`
+	Start                   time.Time  `json:"start"`
+	End                     time.Time  `json:"end"`
+	RecordCount             int        `json:"record_count"`
+	ContentChecksum         string     `json:"content_checksum"`
+	ConfigurationChecksum   string     `json:"configuration_checksum"`
+	AcquiredAt              time.Time  `json:"acquired_at,omitempty"`
+	Market                  string     `json:"market,omitempty"`
+	DataClass               string     `json:"data_class,omitempty"`
+	Interval                string     `json:"interval,omitempty"`
+	RequestedStart          string     `json:"requested_start,omitempty"`
+	RequestedEnd            string     `json:"requested_end,omitempty"`
+	RawChecksum             string     `json:"raw_checksum,omitempty"`
+	NormalizedChecksum      string     `json:"normalized_checksum,omitempty"`
+	RawFiles                RawFileSet `json:"raw_files,omitempty"`
+	RealData                bool       `json:"real_data"`
+	ContractCount           int        `json:"contract_count,omitempty"`
+}
+
+type RawFileProvenance struct {
+	Role     string `json:"role"`
+	SourceID string `json:"source_id"`
+	SHA256   string `json:"sha256"`
+}
+
+type RawFileSet struct {
+	Bars        RawFileProvenance `json:"bars"`
+	Instruments RawFileProvenance `json:"instruments"`
+	Calendar    RawFileProvenance `json:"calendar"`
 }
 
 type CanonicalDataset struct {
@@ -152,13 +200,29 @@ type CanonicalDataset struct {
 	Manifest      DatasetManifest      `json:"manifest"`
 	Instruments   []Instrument         `json:"instruments"`
 	Observations  []Observation        `json:"observations"`
+	Bars          []HistoricalBar      `json:"bars,omitempty"`
+	Calendar      *Calendar            `json:"calendar,omitempty"`
 	Quality       DatasetQualityReport `json:"quality"`
 }
 
 // HistoricalSource converts a qualified canonical artifact into the M1 model.
 // Invalid/degraded artifacts remain inspectable but cannot silently backtest.
 func (d CanonicalDataset) HistoricalSource() (model.Dataset, error) {
-	if d.Quality.QualificationState == Rejected {
+	return d.historicalSource(false)
+}
+
+// HistoricalSourceAllowDegraded requires an explicit call site decision; a
+// rejected artifact is never admitted by this production API.
+func (d CanonicalDataset) HistoricalSourceAllowDegraded() (model.Dataset, error) {
+	return d.historicalSource(true)
+}
+
+func (d CanonicalDataset) historicalSource(allowDegraded bool) (model.Dataset, error) {
+	state := d.Quality.QualificationState
+	if state == Qualified {
+		state = ResearchReady
+	}
+	if state == Rejected || (state == Degraded && !allowDegraded) || (state != ResearchReady && state != Degraded) {
 		return model.Dataset{}, ErrInvalid
 	}
 	byID := make(map[string]domain.InstrumentID)
@@ -177,8 +241,13 @@ func (d CanonicalDataset) HistoricalSource() (model.Dataset, error) {
 		byID[encoded.ID] = i.ID()
 		currencies[encoded.ID] = encoded.Currency
 	}
-	obs := make([]model.Observation, 0, len(d.Observations))
-	for _, encoded := range d.Observations {
+	encodedObservations := append([]Observation(nil), d.Observations...)
+	if len(d.Bars) > 0 {
+		_, cutoff := barBounds(d.Bars)
+		encodedObservations = append(encodedObservations, d.CompletedObservations(cutoff)...)
+	}
+	obs := make([]model.Observation, 0, len(encodedObservations))
+	for _, encoded := range encodedObservations {
 		// M1's Observation contract predates M2 and cannot represent missing
 		// volume. Refuse the conversion rather than fabricate zero.
 		if encoded.Volume == nil {
