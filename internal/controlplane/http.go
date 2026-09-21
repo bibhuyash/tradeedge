@@ -107,7 +107,7 @@ func NewHandler(service SessionService, startupServices ...StartupService) http.
 			writeJSON(writer, http.StatusOK, startup.Status(request.Context()))
 		case http.MethodPost:
 			status := startup.Status(request.Context())
-			if status.State != operatorstartup.Ready && status.State != operatorstartup.MarketClosed && status.State != operatorstartup.Preparing && status.State != operatorstartup.StartingShadow && status.State != operatorstartup.WaitingForReadiness {
+			if status.State != operatorstartup.Ready && status.State != operatorstartup.Preparing && status.State != operatorstartup.StartingShadow && status.State != operatorstartup.WaitingForReadiness {
 				go startup.Start(context.Background())
 			}
 			writeJSON(writer, http.StatusAccepted, startup.Status(request.Context()))
@@ -115,7 +115,40 @@ func NewHandler(service SessionService, startupServices ...StartupService) http.
 			methodNotAllowed(writer, http.MethodGet+", "+http.MethodPost)
 		}
 	})
+	mux.HandleFunc("/api/v1/operator/state", func(writer http.ResponseWriter, request *http.Request) {
+		if request.Method != http.MethodGet {
+			methodNotAllowed(writer, http.MethodGet)
+			return
+		}
+		if startup == nil {
+			writeJSON(writer, http.StatusServiceUnavailable, map[string]string{"view": "CONTROL_UNAVAILABLE", "reason": "startup_unavailable"})
+			return
+		}
+		sessionStatus, err := service.Status(request.Context())
+		if err != nil {
+			writeJSON(writer, http.StatusServiceUnavailable, map[string]string{"view": "CONTROL_UNAVAILABLE", "reason": "session_unavailable"})
+			return
+		}
+		startupStatus := startup.Status(request.Context())
+		writeJSON(writer, http.StatusOK, map[string]any{"view": operatorView(sessionStatus, startupStatus), "session": sessionStatus, "startup": startupStatus})
+	})
 	return mux
+}
+
+func operatorView(sessionStatus session.Status, startupStatus operatorstartup.Status) string {
+	if sessionStatus.State != session.StateAuthenticated {
+		return "LOGIN"
+	}
+	switch startupStatus.State {
+	case operatorstartup.MarketClosed:
+		return "MARKET_CLOSED"
+	case operatorstartup.Failed:
+		return "FAILED"
+	case operatorstartup.Ready:
+		return "RUNTIME"
+	default:
+		return "PREPARING"
+	}
 }
 
 func errorResponse(status session.Status, code string) map[string]any {

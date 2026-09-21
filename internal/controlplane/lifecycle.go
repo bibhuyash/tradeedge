@@ -41,6 +41,10 @@ type marketSource struct {
 	now        func() time.Time
 }
 
+func (m marketSource) TradingDate() string {
+	return m.now().In(time.FixedZone("IST", 19800)).Format("2006-01-02")
+}
+
 func (m marketSource) Closed(ctx context.Context) (bool, string, error) {
 	if err := ctx.Err(); err != nil {
 		return false, "", err

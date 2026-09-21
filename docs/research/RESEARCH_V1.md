@@ -107,3 +107,33 @@ tradeedge-research dataset inspect --dataset dataset.json
 Commands print `DATASET_VERSION`, `OBSERVATIONS`, `TRADING_DAYS`, and `QUALITY`.
 The importer has no network, credentials, broker, order, SHADOW, PAPER, or LIVE
 capability.
+
+## M3 real historical bars
+
+M3 adds `tradeedge.research.canonical-dataset/v2`. It stores completed OHLC
+bars directly rather than manufacturing ticks from candles. A bar is visible
+only at its end time; conversion to the M1 observation contract uses the close
+at that time and deliberately leaves bid and ask absent. Consequently an OHLC
+dataset cannot fabricate an executable spread.
+
+The first adapter is a mapped CSV bundle. Its versioned manifest binds licensed
+bar, point-in-time instrument, and calendar files by SHA-256, declares column
+mappings and timestamp semantics, and records source provenance. Provider
+identifiers terminate in the adapter. The canonical artifact records no local
+paths, tokens, or credentials. Acquisition time is provenance but is excluded
+from dataset identity; identical source bytes and semantics normalize to the
+same dataset ID.
+
+M3 quality states are `RESEARCH_READY`, `DEGRADED`, and `REJECTED`. Validation
+recomputes findings from canonical bars and the embedded versioned calendar.
+Normal replay accepts only `RESEARCH_READY`; `--allow-degraded` is an explicit
+operator decision, while `REJECTED` has no production override.
+
+```text
+tradeedge-research dataset import --adapter mapped-csv --bundle bundle.json --output dataset.json
+tradeedge-research dataset validate --dataset dataset.json --output quality.json
+tradeedge-research dataset inspect --dataset dataset.json
+```
+
+Real source files and generated artifacts belong under `.cache/research-data/`
+and are not repository content. See `docs/runbooks/RESEARCH_V1_M3_REAL_DATA.md`.

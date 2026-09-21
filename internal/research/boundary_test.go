@@ -13,8 +13,8 @@ import (
 func TestResearchImportBoundary(t *testing.T) {
 	_, current, _, _ := runtime.Caller(0)
 	root := filepath.Clean(filepath.Join(filepath.Dir(current), "..", ".."))
-	targets := []string{filepath.Join(root, "internal", "research"), filepath.Join(root, "cmd", "tradeedge-research")}
-	banned := []string{"/broker", "/execution", "/shadowruntime", "/tradingruntime", "/adapters/broker", "net/http"}
+	targets := []string{filepath.Join(root, "internal", "research"), filepath.Join(root, "internal", "adapters", "researchdata"), filepath.Join(root, "cmd", "tradeedge-research")}
+	banned := []string{"/broker", "/execution", "/shadowruntime", "/tradingruntime", "/adapters/broker", "/integration/zerodha", "upstox", "net/http"}
 	for _, target := range targets {
 		err := filepath.WalkDir(target, func(path string, entry os.DirEntry, err error) error {
 			if err != nil {

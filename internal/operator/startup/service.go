@@ -36,6 +36,7 @@ type Step struct {
 }
 type Status struct {
 	State       State  `json:"state"`
+	TradingDate string `json:"trading_date,omitempty"`
 	CurrentStep string `json:"current_step,omitempty"`
 	Reason      string `json:"reason,omitempty"`
 	Steps       []Step `json:"steps"`
@@ -53,6 +54,7 @@ type SessionSource interface {
 	Authenticated(context.Context) (bool, error)
 }
 type MarketSource interface {
+	TradingDate() string
 	Closed(context.Context) (closed bool, reason string, err error)
 }
 
@@ -66,6 +68,7 @@ type Service struct {
 	status      Status
 	running     bool
 	done        chan struct{}
+	tradingDate string
 }
 
 func New(preparation PreparationService, runtime RuntimeManager, readiness ReadinessClient, session SessionSource, market MarketSource) (*Service, error) {
@@ -78,12 +81,22 @@ func New(preparation PreparationService, runtime RuntimeManager, readiness Readi
 func (s *Service) Status(context.Context) Status {
 	s.mu.Lock()
 	defer s.mu.Unlock()
+	date := s.market.TradingDate()
+	if date != "" && s.tradingDate != "" && date != s.tradingDate && !s.running {
+		s.tradingDate = date
+		s.status = Status{State: Authenticated, TradingDate: date, Steps: []Step{{Name: "TRADING_DATE", State: StepPass}}}
+	}
 	return clone(s.status)
 }
 
 func (s *Service) Start(ctx context.Context) Status {
+	date := s.market.TradingDate()
 	s.mu.Lock()
-	if s.status.State == Ready {
+	if date != "" && date != s.tradingDate {
+		s.tradingDate = date
+		s.status = Status{State: Authenticated, TradingDate: date, Steps: []Step{{Name: "TRADING_DATE", State: StepPass}}}
+	}
+	if s.status.State == Ready && s.status.TradingDate == date {
 		status := clone(s.status)
 		s.mu.Unlock()
 		return status
@@ -101,23 +114,23 @@ func (s *Service) Start(ctx context.Context) Status {
 	s.running, s.done = true, make(chan struct{})
 	s.mu.Unlock()
 	defer func() { s.mu.Lock(); s.running = false; close(s.done); s.mu.Unlock() }()
-	return s.run(ctx)
+	return s.run(ctx, date)
 }
 
-func (s *Service) run(ctx context.Context) Status {
+func (s *Service) run(ctx context.Context, tradingDate string) Status {
 	authenticated, err := s.session.Authenticated(ctx)
 	if err != nil {
 		return s.fail("SESSION", err)
 	}
 	if !authenticated {
-		return s.set(Status{State: LoginRequired})
+		return s.set(Status{State: LoginRequired, TradingDate: tradingDate})
 	}
 	closed, reason, err := s.market.Closed(ctx)
 	if err != nil {
 		return s.fail("MARKET_SESSION", err)
 	}
 	if closed {
-		return s.set(Status{State: MarketClosed, Reason: reason, Steps: []Step{{Name: "SESSION", State: StepPass}, {Name: "MARKET_SESSION", State: StepPass}}})
+		return s.set(Status{State: MarketClosed, TradingDate: tradingDate, Reason: reason, Steps: []Step{{Name: "SESSION", State: StepPass}, {Name: "MARKET_SESSION", State: StepPass}}})
 	}
 	running, healthy, err := s.runtime.Status(ctx)
 	if err != nil {
@@ -131,9 +144,9 @@ func (s *Service) run(ctx context.Context) Status {
 			}
 			return s.fail("READINESS", readyErr)
 		}
-		return s.set(Status{State: Ready, Steps: []Step{{Name: "SESSION", State: StepPass}, {Name: "START_SHADOW", State: StepPass}, {Name: "READINESS", State: StepPass}}})
+		return s.set(Status{State: Ready, TradingDate: tradingDate, Steps: []Step{{Name: "SESSION", State: StepPass}, {Name: "START_SHADOW", State: StepPass}, {Name: "READINESS", State: StepPass}}})
 	}
-	s.set(Status{State: Preparing, CurrentStep: "PREPARATION", Steps: []Step{{Name: "SESSION", State: StepPass}, {Name: "PREPARATION", State: StepRunning}}})
+	s.set(Status{State: Preparing, TradingDate: tradingDate, CurrentStep: "PREPARATION", Steps: []Step{{Name: "SESSION", State: StepPass}, {Name: "PREPARATION", State: StepRunning}}})
 	if err := s.preparation.Prepare(ctx); err != nil {
 		return s.fail("PREPARATION", err)
 	}
@@ -142,12 +155,12 @@ func (s *Service) run(ctx context.Context) Status {
 		return s.fail("RUNTIME", err)
 	}
 	if !running || !healthy {
-		s.set(Status{State: StartingShadow, CurrentStep: "START_SHADOW", Steps: []Step{{Name: "SESSION", State: StepPass}, {Name: "PREPARATION", State: StepPass}, {Name: "START_SHADOW", State: StepRunning}}})
+		s.set(Status{State: StartingShadow, TradingDate: tradingDate, CurrentStep: "START_SHADOW", Steps: []Step{{Name: "SESSION", State: StepPass}, {Name: "PREPARATION", State: StepPass}, {Name: "START_SHADOW", State: StepRunning}}})
 		if err := s.runtime.StartShadow(ctx); err != nil {
 			return s.fail("START_SHADOW", err)
 		}
 	}
-	s.set(Status{State: WaitingForReadiness, CurrentStep: "READINESS", Steps: []Step{{Name: "SESSION", State: StepPass}, {Name: "PREPARATION", State: StepPass}, {Name: "START_SHADOW", State: StepPass}, {Name: "READINESS", State: StepRunning}}})
+	s.set(Status{State: WaitingForReadiness, TradingDate: tradingDate, CurrentStep: "READINESS", Steps: []Step{{Name: "SESSION", State: StepPass}, {Name: "PREPARATION", State: StepPass}, {Name: "START_SHADOW", State: StepPass}, {Name: "READINESS", State: StepRunning}}})
 	ready, err := s.readiness.Ready(ctx)
 	if err != nil || !ready {
 		if err == nil {
@@ -155,12 +168,15 @@ func (s *Service) run(ctx context.Context) Status {
 		}
 		return s.fail("READINESS", err)
 	}
-	return s.set(Status{State: Ready, Steps: []Step{{Name: "SESSION", State: StepPass}, {Name: "PREPARATION", State: StepPass}, {Name: "START_SHADOW", State: StepPass}, {Name: "READINESS", State: StepPass}}})
+	return s.set(Status{State: Ready, TradingDate: tradingDate, Steps: []Step{{Name: "SESSION", State: StepPass}, {Name: "PREPARATION", State: StepPass}, {Name: "START_SHADOW", State: StepPass}, {Name: "READINESS", State: StepPass}}})
 }
 
 func (s *Service) set(status Status) Status {
 	s.mu.Lock()
 	defer s.mu.Unlock()
+	if status.TradingDate == "" {
+		status.TradingDate = s.tradingDate
+	}
 	s.status = clone(status)
 	return clone(status)
 }

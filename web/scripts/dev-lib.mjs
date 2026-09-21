@@ -84,11 +84,8 @@ async function reportFailure(spawn, paths, error, log) {
 }
 
 export async function ensureControl({ spawn, fetcher, paths, log, waitOptions } = {}) {
-  const currentProbe = await probeControl(fetcher)
-  const current = await inspectControl(spawn, paths)
-  if (currentProbe.reachable && current.state === 'running') { log.info('TradeEdge control plane is already healthy; reusing it.'); return }
-  await captureCommand(spawn, 'docker', composeArgs(paths, 'up', '-d', 'tradeedge-control'), { cwd: paths.repository })
-  await waitForControl(fetcher, () => inspectControl(spawn, paths), waitOptions)
+	await captureCommand(spawn, 'docker', composeArgs(paths, 'up', '-d', '--build', 'tradeedge-control'), { cwd: paths.repository })
+	await waitForControl(fetcher, () => inspectControl(spawn, paths), waitOptions)
 }
 
 export async function launch({ spawn = nodeSpawn, fetcher = fetch, node = process.execPath, paths = resolveDevelopmentPaths(), log = console, waitOptions } = {}) {

@@ -163,9 +163,9 @@ func ImportCSV(observationPath, instrumentPath string, calendar Calendar, config
 	configHash := sha256.Sum256(configRaw)
 	versionHash := sha256.Sum256([]byte(hex.EncodeToString(contentHash[:]) + "|" + hex.EncodeToString(configHash[:])))
 	start, end := bounds(observations)
-	manifest := DatasetManifest{ManifestSchemaVersion, hex.EncodeToString(versionHash[:]), config.Source, config.SourceVersion, calendar.Version, masterVersion, start, end, len(observations), hex.EncodeToString(contentHash[:]), hex.EncodeToString(configHash[:])}
+	manifest := DatasetManifest{SchemaVersion: ManifestSchemaVersion, DatasetVersion: hex.EncodeToString(versionHash[:]), Source: config.Source, SourceVersion: config.SourceVersion, CalendarVersion: calendar.Version, InstrumentMasterVersion: masterVersion, Start: start, End: end, RecordCount: len(observations), ContentChecksum: hex.EncodeToString(contentHash[:]), ConfigurationChecksum: hex.EncodeToString(configHash[:])}
 	report := buildReport(manifest.DatasetVersion, instruments, observations, calendar, findings, config.BlockingSeverities)
-	return CanonicalDataset{SchemaVersion, manifest, instruments, sortedObservations(observations), report}, nil
+	return CanonicalDataset{SchemaVersion: SchemaVersion, Manifest: manifest, Instruments: instruments, Observations: sortedObservations(observations), Quality: report}, nil
 }
 
 func loadInstruments(path string) ([]Instrument, string, error) {
@@ -246,6 +246,12 @@ func loadInstruments(path string) ([]Instrument, string, error) {
 	sort.Slice(out, func(i, j int) bool { return out[i].ID < out[j].ID })
 	sum := sha256.Sum256(raw)
 	return out, hex.EncodeToString(sum[:]), nil
+}
+
+// LoadInstrumentCSV decodes the provider-neutral point-in-time instrument
+// format used by research source adapters.
+func LoadInstrumentCSV(path string) ([]Instrument, string, error) {
+	return loadInstruments(path)
 }
 
 func coverageFindings(obs []Observation, instruments []Instrument, c Calendar, interval time.Duration) []QualityFinding {
@@ -420,7 +426,7 @@ func Load(path string) (CanonicalDataset, error) {
 	dec := json.NewDecoder(bytes.NewReader(raw))
 	dec.DisallowUnknownFields()
 	var d CanonicalDataset
-	if dec.Decode(&d) != nil || d.SchemaVersion != SchemaVersion {
+	if dec.Decode(&d) != nil || (d.SchemaVersion != SchemaVersion && d.SchemaVersion != SchemaVersionV2) {
 		return CanonicalDataset{}, ErrInvalid
 	}
 	var extra any
@@ -432,6 +438,9 @@ func Load(path string) (CanonicalDataset, error) {
 
 // ValidateArtifact detects mutation of canonical content after import.
 func ValidateArtifact(d CanonicalDataset) error {
+	if d.SchemaVersion == SchemaVersionV2 {
+		return validateV2Checksum(d)
+	}
 	content := struct {
 		Instruments  []Instrument  `json:"instruments"`
 		Observations []Observation `json:"observations"`

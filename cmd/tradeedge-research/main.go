@@ -11,8 +11,10 @@ import (
 	"fmt"
 	"io"
 	"os"
+	"sort"
 	"strings"
 
+	"github.com/bibhuyash/tradeedge/internal/adapters/researchdata/csvbundle"
 	"github.com/bibhuyash/tradeedge/internal/domain"
 	"github.com/bibhuyash/tradeedge/internal/research/backtest"
 	"github.com/bibhuyash/tradeedge/internal/research/cost"
@@ -51,6 +53,7 @@ func run(args []string, stdout io.Writer) error {
 	set.SetOutput(io.Discard)
 	datasetPath := set.String("dataset", "", "versioned historical dataset JSON")
 	configPath := set.String("config", "", "versioned research run configuration JSON")
+	allowDegraded := set.Bool("allow-degraded", false, "explicitly permit a DEGRADED canonical dataset")
 	if err := set.Parse(args); err != nil || set.NArg() != 0 || strings.TrimSpace(*datasetPath) == "" || strings.TrimSpace(*configPath) == "" {
 		return errors.New("usage: tradeedge-research -dataset <json> -config <json>")
 	}
@@ -58,7 +61,21 @@ func run(args []string, stdout io.Writer) error {
 	if err != nil {
 		return fmt.Errorf("read dataset: %w", err)
 	}
-	dataset, err := model.DecodeDataset(datasetRaw)
+	var researchDataset model.Dataset
+	if artifact, loadErr := dataset.Load(*datasetPath); loadErr == nil {
+		report, validateErr := dataset.Revalidate(artifact)
+		if validateErr != nil {
+			return fmt.Errorf("validate canonical dataset: %w", validateErr)
+		}
+		artifact.Quality = report
+		if *allowDegraded {
+			researchDataset, err = artifact.HistoricalSourceAllowDegraded()
+		} else {
+			researchDataset, err = artifact.HistoricalSource()
+		}
+	} else {
+		researchDataset, err = model.DecodeDataset(datasetRaw)
+	}
 	if err != nil {
 		return fmt.Errorf("decode dataset: %w", err)
 	}
@@ -90,7 +107,7 @@ func run(args []string, stdout io.Writer) error {
 	if err != nil {
 		return err
 	}
-	engine, err := backtest.NewEngine(backtest.NewDatasetSource(dataset), features.Engine{}, strategy, fillModel, costModel, backtest.Config{PolicyVersion: config.EnginePolicy, StartingCapital: capital, Quantity: quantity})
+	engine, err := backtest.NewEngine(backtest.NewDatasetSource(researchDataset), features.Engine{}, strategy, fillModel, costModel, backtest.Config{PolicyVersion: config.EnginePolicy, StartingCapital: capital, Quantity: quantity})
 	if err != nil {
 		return err
 	}
@@ -121,7 +138,25 @@ func runDataset(args []string, stdout io.Writer) error {
 		source := set.String("source", "", "source name")
 		sourceVersion := set.String("source-version", "", "source version")
 		interval := set.Int("interval-minutes", 1, "expected interval")
-		if set.Parse(args[1:]) != nil || set.NArg() != 0 || *input == "" || *instruments == "" || *calendarPath == "" || *output == "" || *source == "" {
+		adapter := set.String("adapter", "", "historical source adapter")
+		bundle := set.String("bundle", "", "mapped CSV bundle manifest")
+		if set.Parse(args[1:]) != nil || set.NArg() != 0 {
+			return errors.New("usage: tradeedge-research dataset import --input <csv> --instrument-master <csv> --calendar <json> --output <json> --source <name>")
+		}
+		if *adapter != "" || *bundle != "" {
+			if *adapter != "mapped-csv" || *bundle == "" || *output == "" {
+				return errors.New("usage: tradeedge-research dataset import --adapter mapped-csv --bundle <json> --output <json>")
+			}
+			artifact, err := dataset.ImportSource(csvbundle.New(*bundle))
+			if err != nil {
+				return fmt.Errorf("import mapped CSV bundle: %w", err)
+			}
+			if err = dataset.Save(*output, artifact); err != nil {
+				return fmt.Errorf("save dataset: %w", err)
+			}
+			return printDatasetSummary(stdout, artifact)
+		}
+		if *input == "" || *instruments == "" || *calendarPath == "" || *output == "" || *source == "" {
 			return errors.New("usage: tradeedge-research dataset import --input <csv> --instrument-master <csv> --calendar <json> --output <json> --source <name>")
 		}
 		cal, err := dataset.LoadCalendar(*calendarPath)
@@ -140,6 +175,7 @@ func runDataset(args []string, stdout io.Writer) error {
 		set := flag.NewFlagSet("dataset "+args[0], flag.ContinueOnError)
 		set.SetOutput(io.Discard)
 		path := set.String("dataset", "", "canonical dataset JSON")
+		qualityOutput := set.String("output", "", "machine-readable quality report JSON")
 		if set.Parse(args[1:]) != nil || set.NArg() != 0 || *path == "" {
 			return errors.New("usage: tradeedge-research dataset " + args[0] + " --dataset <json>")
 		}
@@ -147,8 +183,28 @@ func runDataset(args []string, stdout io.Writer) error {
 		if err != nil {
 			return fmt.Errorf("load dataset: %w", err)
 		}
-		if err = dataset.ValidateArtifact(artifact); err != nil {
+		report, err := dataset.Revalidate(artifact)
+		if err != nil {
 			return fmt.Errorf("validate dataset: %w", err)
+		}
+		artifact.Quality = report
+		if args[0] == "validate" && *qualityOutput != "" {
+			raw, e := json.MarshalIndent(report, "", "  ")
+			if e != nil {
+				return e
+			}
+			raw = append(raw, '\n')
+			f, e := os.OpenFile(*qualityOutput, os.O_WRONLY|os.O_CREATE|os.O_EXCL, 0444)
+			if e != nil {
+				return e
+			}
+			if _, e = f.Write(raw); e != nil {
+				_ = f.Close()
+				return e
+			}
+			if e = f.Close(); e != nil {
+				return e
+			}
 		}
 		return printDatasetSummary(stdout, artifact)
 	default:
@@ -157,7 +213,32 @@ func runDataset(args []string, stdout io.Writer) error {
 }
 
 func printDatasetSummary(w io.Writer, d dataset.CanonicalDataset) error {
-	_, err := fmt.Fprintf(w, "DATASET_VERSION=%s\nOBSERVATIONS=%d\nTRADING_DAYS=%d\nQUALITY=%s\n", d.Manifest.DatasetVersion, len(d.Observations), d.Quality.TradingDaysPresent, d.Quality.QualificationState)
+	underlyingSet := map[string]bool{}
+	for _, i := range d.Instruments {
+		underlyingSet[i.Underlying] = true
+	}
+	underlyings := make([]string, 0, len(underlyingSet))
+	for v := range underlyingSet {
+		underlyings = append(underlyings, v)
+	}
+	sort.Strings(underlyings)
+	status := d.Quality.QualificationState
+	if status == dataset.Qualified {
+		status = dataset.ResearchReady
+	}
+	rawChecksum := d.Manifest.RawChecksum
+	if rawChecksum == "" {
+		rawChecksum = "N/A"
+	}
+	normalized := d.Manifest.NormalizedChecksum
+	if normalized == "" {
+		normalized = d.Manifest.ContentChecksum
+	}
+	barCount := len(d.Bars)
+	if barCount == 0 {
+		barCount = len(d.Observations)
+	}
+	_, err := fmt.Fprintf(w, "DATASET_ID=%s\nSOURCE=%s\nREAL_DATA=%t\nUNDERLYINGS=%s\nSTART=%s\nEND=%s\nINTERVAL=%s\nTRADING_DAYS=%d\nBAR_COUNT=%d\nCONTRACT_COUNT=%d\nMISSING_BARS=%d\nDUPLICATES=%d\nQUALITY_STATUS=%s\nRAW_CHECKSUM=%s\nNORMALIZED_CHECKSUM=%s\n", d.Manifest.DatasetVersion, d.Manifest.Source, d.Manifest.RealData, strings.Join(underlyings, ","), d.Manifest.Start.UTC().Format("2006-01-02T15:04:05Z"), d.Manifest.End.UTC().Format("2006-01-02T15:04:05Z"), d.Manifest.Interval, d.Quality.TradingDaysPresent, barCount, d.Manifest.ContractCount, d.Quality.MissingBars, d.Quality.DuplicateEvents, status, rawChecksum, normalized)
 	return err
 }
 func decodeConfig(raw []byte) (runConfig, error) {

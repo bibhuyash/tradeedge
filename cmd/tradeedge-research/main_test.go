@@ -7,8 +7,10 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/bibhuyash/tradeedge/internal/domain"
+	"github.com/bibhuyash/tradeedge/internal/research/dataset"
 )
 
 func TestOfflineHarnessProducesCanonicalReport(t *testing.T) {
@@ -46,6 +48,19 @@ func TestOfflineHarnessProducesCanonicalReport(t *testing.T) {
 	}
 	if !strings.Contains(first.String(), `"dataset_version":"SYNTHETIC_DATASET/v1"`) || !strings.Contains(first.String(), `"trades":1`) {
 		t.Fatalf("unexpected report: %s", first.String())
+	}
+}
+
+func TestDatasetInspectSummaryIncludesM3AcceptanceFields(t *testing.T) {
+	d := dataset.CanonicalDataset{Manifest: dataset.DatasetManifest{DatasetVersion: "id", Source: "vendor", RealData: true, Start: time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC), End: time.Date(2026, 1, 2, 0, 0, 0, 0, time.UTC), Interval: "1m", ContractCount: 2, RawChecksum: "raw", NormalizedChecksum: "normalized"}, Instruments: []dataset.Instrument{{Underlying: "NIFTY"}, {Underlying: "BANKNIFTY"}}, Bars: []dataset.HistoricalBar{{}, {}, {}}, Quality: dataset.DatasetQualityReport{TradingDaysPresent: 2, MissingBars: 1, DuplicateEvents: 0, QualificationState: dataset.ResearchReady}}
+	var out bytes.Buffer
+	if err := printDatasetSummary(&out, d); err != nil {
+		t.Fatal(err)
+	}
+	for _, field := range []string{"DATASET_ID=id", "SOURCE=vendor", "REAL_DATA=true", "UNDERLYINGS=BANKNIFTY,NIFTY", "BAR_COUNT=3", "MISSING_BARS=1", "QUALITY_STATUS=RESEARCH_READY", "RAW_CHECKSUM=raw", "NORMALIZED_CHECKSUM=normalized"} {
+		if !strings.Contains(out.String(), field) {
+			t.Errorf("missing %s in %s", field, out.String())
+		}
 	}
 }
 
