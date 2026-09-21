@@ -3,6 +3,7 @@ import { fileURLToPath } from 'node:url'
 import path from 'node:path'
 
 const HEALTH_URL = 'http://127.0.0.1:8081/healthz'
+const OPERATOR_URL = 'http://127.0.0.1:8081/api/v1/operator/state'
 const delay = (milliseconds) => new Promise((resolve) => setTimeout(resolve, milliseconds))
 
 export function resolveDevelopmentPaths(scriptUrl = import.meta.url) {
@@ -88,17 +89,41 @@ export async function ensureControl({ spawn, fetcher, paths, log, waitOptions } 
 	await waitForControl(fetcher, () => inspectControl(spawn, paths), waitOptions)
 }
 
+export async function coordinateShadow({ spawn, fetcher, paths, signal, sleep = delay, log = console }) {
+  let started = false
+  while (!signal.aborted) {
+    try {
+      const response = await fetcher(OPERATOR_URL, { signal: AbortSignal.timeout(2_000) })
+      if (response.ok) {
+        const state = await response.json()
+        const wantsRuntime = ['STARTING_SHADOW', 'WAITING_FOR_READINESS'].includes(state?.startup?.state)
+        if (wantsRuntime && !started) {
+          started = true
+          await captureCommand(spawn, 'docker', composeArgs(paths, 'up', '-d', 'tradeedge-shadow'), { cwd: paths.repository })
+          log.info('TradeEdge SHADOW runtime started by host orchestrator.')
+        }
+        if (!wantsRuntime && state?.startup?.state !== 'READY') started = false
+      }
+    } catch (error) {
+      if (!signal.aborted) log.error(`SHADOW_ORCHESTRATION=${error instanceof Error ? error.message : String(error)}`)
+    }
+    if (!signal.aborted) await sleep(500)
+  }
+}
+
 export async function launch({ spawn = nodeSpawn, fetcher = fetch, node = process.execPath, paths = resolveDevelopmentPaths(), log = console, waitOptions } = {}) {
   try { await runCommand(spawn, 'docker', ['version', '--format', '{{.Server.Version}}'], { cwd: paths.repository }) }
   catch { throw new Error('Docker is unavailable. Start Docker Desktop, then run npm run dev again.') }
   try { await ensureControl({ spawn, fetcher, paths, log, waitOptions }) }
   catch (error) { await reportFailure(spawn, paths, error, log); throw error }
   log.info('TradeEdge control plane is ready. Starting operator console…')
+  const coordinator = new AbortController()
+  const coordination = coordinateShadow({ spawn, fetcher, paths, signal: coordinator.signal, log })
   const vite = spawn(node, [path.join(paths.webDirectory, 'node_modules', 'vite', 'bin', 'vite.js')], { cwd: paths.webDirectory, stdio: 'inherit' })
-  const stop = () => { if (!vite.killed) vite.kill('SIGINT') }
+  const stop = () => { coordinator.abort(); if (!vite.killed) vite.kill('SIGINT') }
   process.once('SIGINT', stop); process.once('SIGTERM', stop)
   return await new Promise((resolve, reject) => {
     vite.once('error', reject)
-    vite.once('exit', (code, signal) => { process.removeListener('SIGINT', stop); process.removeListener('SIGTERM', stop); if (code === 0 || signal === 'SIGINT') resolve(); else reject(new Error(`Vite exited with code ${code ?? 'unknown'}`)) })
+    vite.once('exit', (code, signal) => { coordinator.abort(); void coordination; process.removeListener('SIGINT', stop); process.removeListener('SIGTERM', stop); if (code === 0 || signal === 'SIGINT') resolve(); else reject(new Error(`Vite exited with code ${code ?? 'unknown'}`)) })
   })
 }
